@@ -1,3 +1,0 @@
-* Print an error if, while expanding ns:local, ns is not known.
-
-* Add default_ns(Name) to rdf_save/2.
