@@ -2163,7 +2163,7 @@ pl-comp.c
 #define VMI(Name,na,a)		Name ## _LBL: \
 				  count(Name, PC); \
 				  START_PROF(Name, #Name);
-#define VMI_CALL(n)		goto n ## _LBL;
+#define VMI_GOTO(n)		goto n ## _LBL;
 #define NEXT_INSTRUCTION	{ DbgPrintInstruction(FR, PC); \
 				  END_PROF(); \
 				  goto *(void *)((long)(*PC++)); \
@@ -2177,9 +2177,11 @@ pl-comp.c
 
 code thiscode;
 
-#define VMI(Name)		case Name: \
+#define VMI(Name,na,a)		case Name: \
+				  case_ ## Name:
 				  count(Name, PC); \
 				  START_PROF(Name, #Name);
+#define VMI_GOTO(n)		goto case_ ## n;
 #define NEXT_INSTRUCTION	{ DbgPrintInstruction(FR, PC); \
 				  END_PROF(); \
                                   goto next_instruction; \

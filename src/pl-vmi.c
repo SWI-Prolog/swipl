@@ -59,7 +59,7 @@ Virtual machine instructions can return with one of:
 	* CLAUSE_FAILED
 	Backtrack
 
-	* VMI_CALL(VMI)
+	* VMI_GOTO(VMI)
 	Continue executing another virtual instruction
 
 Virtual machine instruction names.  Prefixes:
@@ -288,7 +288,11 @@ TBD:	Deal with multiple identical instructions
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 VMI(H_MPZ, 0, CA1_MPZ)
-SEPERATE_VMI;
+{ SEPERATE_VMI;
+  VMI_GOTO(H_STRING)
+}
+
+
 VMI(H_STRING, 0, CA1_STRING)
 { Word k;
 
@@ -366,7 +370,7 @@ the argument stack.
 VMI(H_FUNCTOR, 1, CA1_FUNC)
 { requireStack(argument, sizeof(Word));
   *aTop++ = ARGP + 1;
-  VMI_CALL(H_RFUNCTOR);
+  VMI_GOTO(H_RFUNCTOR);
 }
 
 VMI(H_RFUNCTOR, 1, CA1_FUNC)
@@ -413,7 +417,7 @@ VMI(H_LIST, 0, 0)
 { requireStack(argument, sizeof(Word));
   *aTop++ = ARGP + 1;
 
-  VMI_CALL(H_RLIST);
+  VMI_GOTO(H_RLIST);
 } 
 
 
@@ -533,7 +537,10 @@ H_STRING.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 VMI(B_MPZ, 0, CA1_MPZ)
-SEPERATE_VMI;
+{ SEPERATE_VMI;
+  VMI_GOTO(B_STRING);
+}
+
 VMI(B_STRING, 0, CA1_STRING)
 { *ARGP++ = globalIndirectFromCode(&PC);
   NEXT_INSTRUCTION;
@@ -657,7 +664,7 @@ B_RFUNCTOR: right-argument recursive version of B_FUNCTOR
 VMI(B_FUNCTOR, 1, CA1_FUNC)
 { requireStack(argument, sizeof(Word));
   *aTop++ = ARGP+1;
-  VMI_CALL(B_RFUNCTOR);
+  VMI_GOTO(B_RFUNCTOR);
 }
 
 
@@ -683,7 +690,7 @@ B_RLIST: Right-argument recursive B_LIST
 VMI(B_LIST, 0, 0)
 { requireStack(argument, sizeof(Word));
   *aTop++ = ARGP+1;
-  VMI_CALL(B_RLIST);
+  VMI_GOTO(B_RLIST);
 }
 
 
@@ -1081,7 +1088,7 @@ VMI(I_DEPART, 1, CA1_PROC)
   }
 #endif /*TAILRECURSION*/
 
-  VMI_CALL(I_CALL);
+  VMI_GOTO(I_CALL);
 }
 
 
@@ -1240,7 +1247,7 @@ VMI(I_EXITFACT, 0, 0)
     goto wakeup;
   }
 #endif
-  VMI_CALL(I_EXIT);
+  VMI_GOTO(I_EXIT);
 }
 
 
@@ -1269,12 +1276,14 @@ VMI(I_CUT, 0, 0)
     }
 
     if ( (ch = findStartChoice(FR, BFR)) )
-      m = ch->mark;
-    dbg_discardChoicesAfter(FR PASS_LD);
-    lTop = (LocalFrame) argFrameP(FR, CL->clause->variables);
-    if ( ch )
-    { ch = newChoice(CHP_DEBUG, FR PASS_LD);
+    { m = ch->mark;
+      dbg_discardChoicesAfter(FR PASS_LD);
+      lTop = (LocalFrame) argFrameP(FR, CL->clause->variables);
+      ch = newChoice(CHP_DEBUG, FR PASS_LD);
       ch->mark = m;
+    } else
+    { dbg_discardChoicesAfter(FR PASS_LD);
+      lTop = (LocalFrame) argFrameP(FR, CL->clause->variables);
     }
     ARGP = argFrameP(lTop, 0);
     if ( exception_term )
@@ -1349,11 +1358,15 @@ look-ahead.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 VMI(C_NOT, 2, CA1_VAR)
-  SEPERATE_VMI;
+{ SEPERATE_VMI;
+  VMI_GOTO(C_IFTHENELSE);
+}
+
+
 VMI(C_IFTHENELSE, 2, CA1_VAR)
 { varFrame(FR, *PC++) = (word) BFR; /* == C_MARK */
 
-  VMI_CALL(C_OR);
+  VMI_GOTO(C_OR);
 }
 
 
@@ -1391,6 +1404,7 @@ conditions should be rare (I hope :-).
 
 TBD: Untangle jumps betweem these two VMIs
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+/*SHAREDVARS*/
 { Choice och;
   LocalFrame fr;
   Choice ch;
@@ -1448,7 +1462,7 @@ c_cut:
 		    loffset(BFR), loffset(lTop)));
   NEXT_INSTRUCTION;
 }
-}					/* TBD: end of shared variables */
+}/*SHAREDVARS*/
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1458,7 +1472,7 @@ end <C>. See pl-comp.c and C_SOFTCUT implementation for details.
 VMI(C_SOFTIF, 2, CA1_VAR)
 { varFrame(FR, *PC++) = (word) lTop; /* see C_SOFTCUT */
 
-  VMI_CALL(C_OR);
+  VMI_GOTO(C_OR);
 }
 
 
@@ -1664,6 +1678,7 @@ VMI(A_DOUBLE, WORDS_PER_DOUBLE, CA1_FLOAT)
 A_VAR: Push a variable.  This can be any term
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
+/*SHAREDVARS*/
 { int offset;
 VMI(A_VAR, 1, 0)
 { Number n;
@@ -1727,7 +1742,8 @@ VMI(A_VAR2, 0, 0)
 { offset = VAROFFSET(2);
   goto a_var_n;
 }
-}
+}/*SHAREDVARS*/
+
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1739,6 +1755,7 @@ A_FUNC2, function
 TBD: Keep knowledge on #argument in function!
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
+/*SHAREDVARS*/
 { int an;
   code fn;
 
@@ -1778,7 +1795,7 @@ common_an:
   ARGP = (Word) n;
   NEXT_INSTRUCTION;
 }
-}					/* TBD: Untangle */
+}/*SHAREDVARS*/
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Translation of the arithmic comparison predicates (<, >, =<,  >=,  =:=).
@@ -1795,6 +1812,7 @@ A_GT		% compare
 EXIT
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
+/*SHAREDVARS*/
 { int cmp;
   Number n;
   int rc;
@@ -1839,7 +1857,8 @@ VMI(A_NE, 0, 0)
 { cmp = NE;
   goto acmp;
 }
-}					/* TBD: Untangle */
+}/*SHAREDVARS*/
+
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 A_IS: Translation of is/2. The stack has two pushed values: the variable
@@ -1909,6 +1928,7 @@ cases (i.e. X = Y, not X = 5).
 
 The VMI for these calls are ICALL_FVN, proc, var-index ...
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+/*SHAREDVARS*/
 { int nvars;
   Procedure fproc;
   Word v;
@@ -2062,7 +2082,7 @@ increase lTop too to prepare for asynchronous interrupts.
     }
   }
 }
-}
+}/*SHAREDVARS*/
 #endif /*O_INLINE_FOREIGNS*/
 
 
@@ -2445,6 +2465,7 @@ VMI(I_CUT_BLOCK, 0, 0)
 		 *	    META-CALLING	*
 		 *******************************/
 
+/*SHAREDVARS*/
 { Module module;
   functor_t functor;
   int arity;
@@ -2656,8 +2677,7 @@ continue as with a normal call.
   NFR->context = module;
   goto normal_call;
 }  
-
-}					/* TBD: Untangle */
+}/*SHAREDVARS*/
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 I_APPLY is the code generated by the Prolog goal $apply/2 (see reference
