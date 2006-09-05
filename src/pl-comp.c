@@ -32,114 +32,6 @@
 #define setHandle(h, w)		(*valTermRef(h) = (w))
 #define valHandleP(h)		valTermRef(h)
 
-#define CODE(c, n, a, e)	{ n, c, a, e }
-
-const code_info codeTable[] = {
-/*     ID		name	     #args #argtype */
-  CODE(I_NOP,		"i_nop",	0, 0),
-  CODE(I_ENTER,		"i_enter",	0, 0),
-  CODE(I_CALL,		"i_call",	1, CA1_PROC),
-  CODE(I_DEPART,	"i_depart",	1, CA1_PROC),
-  CODE(I_EXIT,		"i_exit",	0, 0),
-  CODE(B_FUNCTOR,	"b_functor",	1, CA1_FUNC),
-  CODE(B_RFUNCTOR,	"b_rfunctor",	1, CA1_FUNC),
-  CODE(H_FUNCTOR,	"h_functor",	1, CA1_FUNC),
-  CODE(H_RFUNCTOR,	"h_rfunctor",	1, CA1_FUNC),
-  CODE(I_POPF,		"i_pop",	0, 0),
-  CODE(B_VAR,		"b_var",	1, CA1_VAR),
-  CODE(H_VAR,		"h_var",	1, CA1_VAR),
-  CODE(B_CONST,		"b_const",	1, CA1_DATA),
-  CODE(H_CONST,		"h_const",	1, CA1_DATA),
-  CODE(B_STRING,	"b_string",	0, CA1_STRING),
-  CODE(H_STRING,	"h_string",	0, CA1_STRING),
-  CODE(B_MPZ,		"b_mpz",	0, CA1_MPZ),
-  CODE(H_MPZ,		"h_mpz",	0, CA1_MPZ),
-  CODE(B_INTEGER,	"b_integer",	1, CA1_INTEGER),
-  CODE(H_INTEGER,	"h_integer",	1, CA1_INTEGER),
-  CODE(B_INT64,		"b_int64",	WORDS_PER_INT64, CA1_INT64),
-  CODE(H_INT64,		"h_int64",	WORDS_PER_INT64, CA1_INT64),
-  CODE(B_FLOAT,		"b_float",	WORDS_PER_DOUBLE, CA1_FLOAT),
-  CODE(H_FLOAT,		"h_float",	WORDS_PER_DOUBLE, CA1_FLOAT),
-  CODE(B_FIRSTVAR,	"b_firstvar",	1, CA1_VAR),
-  CODE(H_FIRSTVAR,	"h_firstvar",	1, CA1_VAR),
-  CODE(B_VOID,		"b_void",	0, 0),
-  CODE(H_VOID,		"h_void",	0, 0),
-  CODE(B_ARGFIRSTVAR,	"b_argfirstvar",1, CA1_VAR),
-  CODE(B_ARGVAR,	"b_argvar",	1, CA1_VAR),
-  CODE(H_NIL,		"h_nil",	0, 0),
-  CODE(B_NIL,		"b_nil",	0, 0),
-  CODE(H_LIST,		"h_list",	0, 0),
-  CODE(H_RLIST,		"h_rlist",	0, 0),
-  CODE(B_LIST,		"b_list",	0, 0),
-  CODE(B_RLIST,		"h_rlist",	0, 0),
-  CODE(B_VAR0,		"b_var0",	0, 0),
-  CODE(B_VAR1,		"b_var1",	0, 0),
-  CODE(B_VAR2,		"b_var2",	0, 0),
-  CODE(I_USERCALL0,	"i_usercall0",	0, 0),
-  CODE(I_USERCALLN,	"i_usercalln",	1, 0),
-  CODE(I_CUT,		"i_cut",	0, 0),
-  CODE(I_APPLY,		"i_apply",	0, 0),
-  CODE(A_ENTER,		"a_enter",	0, 0),
-  CODE(A_INTEGER,	"a_integer",	1, CA1_INTEGER),
-  CODE(A_INT64,		"a_int64",	WORDS_PER_INT64, CA1_INT64),
-  CODE(A_MPZ,		"a_mpz",	0, CA1_MPZ),
-  CODE(A_DOUBLE,	"a_double",	WORDS_PER_DOUBLE, CA1_FLOAT),
-  CODE(A_VAR0,		"a_var0",	0, 0),
-  CODE(A_VAR1,		"a_var1",	0, 0),
-  CODE(A_VAR2,		"a_var2",	0, 0),
-  CODE(A_VAR,		"a_var",	1, 0),
-  CODE(A_FUNC0,		"a_func0",	1, 0),
-  CODE(A_FUNC1,		"a_func1",	1, 0),
-  CODE(A_FUNC2,		"a_func2",	1, 0),
-  CODE(A_FUNC,		"a_func",	2, 0),
-  CODE(A_LT,		"a_lt",		0, 0),
-  CODE(A_GT,		"a_gt",		0, 0),
-  CODE(A_LE,		"a_le",		0, 0),
-  CODE(A_GE,		"a_ge",		0, 0),
-  CODE(A_EQ,		"a_eq",		0, 0),
-  CODE(A_NE,		"a_ne",		0, 0),
-  CODE(A_IS,		"a_is",		0, 0),
-  CODE(C_OR,		"c_or",		1, 0),
-  CODE(C_JMP,		"c_jmp",	1, 0),
-  CODE(C_MARK,		"c_mark",	1, CA1_VAR),
-  CODE(C_CUT,		"c_cut",	1, CA1_VAR),
-  CODE(C_IFTHENELSE,	"c_ifthenelse",	2, CA1_VAR),
-  CODE(C_VAR,		"c_var",	1, CA1_VAR),
-  CODE(C_END,		"c_end",	0, 0),
-  CODE(C_NOT,		"c_not",	2, CA1_VAR),
-  CODE(C_FAIL,		"c_fail",	0, 0),
-#if O_BLOCK
-  CODE(I_CUT_BLOCK,	"i_cut_block",	0, 0),
-  CODE(B_EXIT,		"b_exit",	0, 0),
-#endif
-#if O_INLINE_FOREIGNS
-  CODE(I_CALL_FV0,	"i_call_fv0",	1, CA1_PROC),
-  CODE(I_CALL_FV1,	"i_call_fv1",	2, CA1_PROC), /* , var */
-  CODE(I_CALL_FV2,	"i_call_fv2",	3, CA1_PROC), /* , var, var */
-#endif
-  CODE(I_FAIL,		"i_fail",	0, 0),
-  CODE(I_TRUE,		"i_true",	0, 0),
-#ifdef O_SOFTCUT
-  CODE(C_SOFTIF,	"c_softif",	2, CA1_VAR),
-  CODE(C_SOFTCUT,	"c_softcut",	1, CA1_VAR),
-#endif
-  CODE(I_EXITFACT,	"i_exitfact",	0, 0),
-  CODE(D_BREAK,		"d_break",	0, 0),
-#if O_CATCHTHROW
-  CODE(I_CATCH,		"i_catch",      0, 0),
-  CODE(I_EXITCATCH,	"i_exitcatch",  0, 0),
-  CODE(B_THROW,		"b_throw",	0, 0),
-#endif
-  CODE(I_CONTEXT,	"i_context",	1, CA1_MODULE),
-  CODE(C_LCUT,		"c_lcut",	1, CA1_VAR),
-  CODE(I_CALLCLEANUP,	"i_callcleanup",0, 0),
-  CODE(I_EXITCLEANUP,	"i_exitcleanup",0, 0),
-/*List terminator */
-  CODE(0,		NULL,		0, 0)
-};
-
-forwards void	checkCodeTable(void);
-
 static void
 checkCodeTable(void)
 { const code_info *ci;
@@ -150,7 +42,7 @@ checkCodeTable(void)
       sysError("Wrong entry in codeTable: %d", n);
   }
 
-  if ( --n != I_HIGHEST )
+  if ( n != I_HIGHEST )
     sysError("Mismatch in checkCodeTable()");
 }
 
@@ -164,7 +56,7 @@ codes.  Normally the switch in translated (in pseudo assembler) to:
 next_instruction:
 	r1 = *PC;
 	PC += sizeof(code);
-	if ( r1 > I_HIGHEST ) goto default;
+	if ( r1 >= I_HIGHEST ) goto default;
 	r1 = jmp_table[r1 * 4];
 	goto r1;
 
@@ -215,7 +107,7 @@ initWamTable(void)
   wam_table[0] = (code) (interpreter_jmp_table[0]);
   maxcoded = mincoded = wam_table[0];
 
-  for(n = 1; n <= I_HIGHEST; n++)
+  for(n = 1; n < I_HIGHEST; n++)
   { wam_table[n] = (code) (interpreter_jmp_table[n]);
     if ( wam_table[n] > maxcoded )
       maxcoded = wam_table[n];
@@ -228,7 +120,7 @@ initWamTable(void)
   dewam_table = (char *)allocHeap(((maxcoded-dewam_table_offset) + 1) *
 				  sizeof(char));
   
-  for(n = 0; n <= I_HIGHEST; n++)
+  for(n = 0; n < I_HIGHEST; n++)
     dewam_table[wam_table[n]-dewam_table_offset] = (char) n;
 
   checkCodeTable();
@@ -1189,7 +1081,8 @@ current localframe and a B_VAR instruction is generated for it.
 #ifdef O_DEBUG
 static char *
 vName(Word adr)
-{ static char name[32];
+{ GET_LD
+  static char name[32];
 
   deRef(adr);
 
