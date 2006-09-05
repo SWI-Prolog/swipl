@@ -187,33 +187,6 @@ DbgPrintInstruction(LocalFrame FR, Code PC)
 #include "pl-alloc.c"
 #include "pl-index.c"
 
-		 /*******************************
-		 *	    ASYNC HOOKS		*
-		 *******************************/
-
-#if O_ASYNC_HOOK
-
-static struct
-{ PL_async_hook_t	hook;		/* the hook function */
-  unsigned int		mask;		/* the mask */
-} async;
-
-
-PL_async_hook_t
-PL_async_hook(unsigned int count, PL_async_hook_t hook)
-{ PL_async_hook_t old = async.hook;
-
-  async.hook = hook;
-  async.mask = 1;
-  while(async.mask < count)
-    async.mask <<= 1;
-  async.mask--;
-
-  return old;
-}
-
-
-#endif /*O_ASYNC_HOOK*/
 
 		 /*******************************
 		 *	     SIGNALS		*

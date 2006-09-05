@@ -60,7 +60,8 @@ Virtual machine instructions can return with one of:
 	Backtrack
 
 	* VMI_GOTO(VMI)
-	Continue executing another virtual instruction
+	Continue executing another virtual instruction.  Note this is
+	called GOTO as it is a jump rather than a call.
 
 Virtual machine instruction names.  Prefixes:
 
@@ -70,6 +71,26 @@ Virtual machine instruction names.  Prefixes:
   A_	Arithmetic compilation specific
   C_	Control (compilation of ;/2, etc.)
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+				ISSUES
+
+
+Sometime multiple instructions share variables. This   is done using the
+code below, so we can at  least   identify  them easily. Ultimately, the
+dependencies must be removed, probably  mostly   by  moving the reusable
+code into functions.
+
+	BEGIN_SHAREDVARS
+	Decls
+	VMI(...)
+	VMI(...)
+	END_SHAREDVARS
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+#define BEGIN_SHAREDVARS {
+#define END_SHAREDVARS   }
+
 
 		 /*******************************
 		 *	    DEBUGGING		*
@@ -798,6 +819,7 @@ VMI(I_CALL, 1, CA1_PROC)
 This is the common part of the call variations.  By now the following is
 true:
 
+  - NFR				Points to new frame
   - arguments, nodebug		filled
   - context			filled with context for
 				transparent predicate
@@ -859,12 +881,6 @@ retry_continue:
     }
   }
 
-#if O_ASYNC_HOOK			/* Asynchronous hooks */
-  if ( async.hook &&
-       !((++LD->statistics.inferences & async.mask)) )
-  (*async.hook)();			/* check the hook */
-    else
-#endif
   LD->statistics.inferences++;
 
 
@@ -1401,11 +1417,9 @@ choices created since the mark, but not   the mark itself. The test-case
 is  a  :-  \+  (b,  !,  fail),    which   should  succeed.  The  current
 implementation  walks  twice  over  the    choice-points,  but  cuts  in
 conditions should be rare (I hope :-).
-
-TBD: Untangle jumps betweem these two VMIs
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-/*SHAREDVARS*/
-{ Choice och;
+BEGIN_SHAREDVARS
+  Choice och;
   LocalFrame fr;
   Choice ch;
 
@@ -1419,13 +1433,13 @@ VMI(C_LCUT, 1, CA1_VAR)
       goto c_cut;
     }
   }
-  assert(BFR == och);		/* no choicepoint yet */
+  assert(BFR == och);			/* no choicepoint yet */
   NEXT_INSTRUCTION;
 }
 
 VMI(C_CUT, 1, CA1_VAR)
 { och = (Choice) varFrame(FR, *PC);
-  PC++;				/* cannot be in macro! */
+  PC++;					/* cannot be in macro! */
 c_cut:
   if ( !och || FR > och->frame )	/* most recent frame to keep */
     fr = FR;
@@ -1451,8 +1465,8 @@ c_cut:
   { lTop = addPointer(och, sizeof(*och));
   } else
   { int nvar = (true(fr->predicate, FOREIGN)
-			  ? fr->predicate->functor->arity
-			  : fr->clause->clause->variables);
+			? fr->predicate->functor->arity
+			: fr->clause->clause->variables);
     lTop = (LocalFrame) argFrameP(fr, nvar);
   }
 
@@ -1462,7 +1476,7 @@ c_cut:
 		    loffset(BFR), loffset(lTop)));
   NEXT_INSTRUCTION;
 }
-}/*SHAREDVARS*/
+END_SHAREDVARS
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1678,8 +1692,9 @@ VMI(A_DOUBLE, WORDS_PER_DOUBLE, CA1_FLOAT)
 A_VAR: Push a variable.  This can be any term
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-/*SHAREDVARS*/
-{ int offset;
+BEGIN_SHAREDVARS
+  int offset;
+
 VMI(A_VAR, 1, 0)
 { Number n;
   Word p, p2;
@@ -1742,7 +1757,7 @@ VMI(A_VAR2, 0, 0)
 { offset = VAROFFSET(2);
   goto a_var_n;
 }
-}/*SHAREDVARS*/
+END_SHAREDVARS
 
 
 
@@ -1755,8 +1770,8 @@ A_FUNC2, function
 TBD: Keep knowledge on #argument in function!
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-/*SHAREDVARS*/
-{ int an;
+BEGIN_SHAREDVARS
+  int an;
   code fn;
 
 VMI(A_FUNC0, 1, 0)
@@ -1795,7 +1810,7 @@ common_an:
   ARGP = (Word) n;
   NEXT_INSTRUCTION;
 }
-}/*SHAREDVARS*/
+END_SHAREDVARS
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Translation of the arithmic comparison predicates (<, >, =<,  >=,  =:=).
@@ -1812,8 +1827,8 @@ A_GT		% compare
 EXIT
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-/*SHAREDVARS*/
-{ int cmp;
+BEGIN_SHAREDVARS
+  int cmp;
   Number n;
   int rc;
   
@@ -1857,7 +1872,7 @@ VMI(A_NE, 0, 0)
 { cmp = NE;
   goto acmp;
 }
-}/*SHAREDVARS*/
+END_SHAREDVARS
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1928,8 +1943,8 @@ cases (i.e. X = Y, not X = 5).
 
 The VMI for these calls are ICALL_FVN, proc, var-index ...
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-/*SHAREDVARS*/
-{ int nvars;
+BEGIN_SHAREDVARS
+  int nvars;
   Procedure fproc;
   Word v;
 
@@ -2082,7 +2097,7 @@ increase lTop too to prepare for asynchronous interrupts.
     }
   }
 }
-}/*SHAREDVARS*/
+END_SHAREDVARS
 #endif /*O_INLINE_FOREIGNS*/
 
 
@@ -2465,8 +2480,8 @@ VMI(I_CUT_BLOCK, 0, 0)
 		 *	    META-CALLING	*
 		 *******************************/
 
-/*SHAREDVARS*/
-{ Module module;
+BEGIN_SHAREDVARS
+  Module module;
   functor_t functor;
   int arity;
   Word args;
@@ -2488,7 +2503,7 @@ VMI(I_USERCALL0, 0, 0)
 { word goal;
   Word a;
 
-i_usercall0:
+i_usercall0:				/* from call_cleanup/3 and catch/3 */
   module = NULL;
   NFR = lTop;
   a = argFrameP(NFR, 0);		/* get the goal */
@@ -2514,9 +2529,7 @@ atom is referenced by the goal-term anyway.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
   if ( isTextAtom(goal = *a) )
-  { /*if ( *a == ATOM_cut )		NOT ISO
-      goto i_cut; */
-    functor = lookupFunctorDef(goal, 0);
+  { functor = lookupFunctorDef(goal, 0);
     arity   = 0;
     args    = NULL;
   } else if ( isTerm(goal) )
@@ -2544,10 +2557,10 @@ atom is referenced by the goal-term anyway.
 				module PASS_LD)) )
 	goto b_throw;
 
-      DEF			 = NFR->predicate;
+      DEF 		  = NFR->predicate;
       SECURE(assert(DEF == PROCEDURE_dcall1->definition));
-      NFR->flags	         = FR->flags;
-      NFR->parent	 = FR;
+      NFR->flags          = FR->flags;
+      NFR->parent	  = FR;
       NFR->programPointer = PC;
 #ifdef O_PROFILE
       NFR->prof_node      = FR->prof_node;	    
@@ -2677,7 +2690,7 @@ continue as with a normal call.
   NFR->context = module;
   goto normal_call;
 }  
-}/*SHAREDVARS*/
+END_SHAREDVARS
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 I_APPLY is the code generated by the Prolog goal $apply/2 (see reference

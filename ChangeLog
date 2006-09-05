@@ -7,6 +7,8 @@
 					http://gollem.science.uva.nl/bugzilla/
 					--------------------------------------
 
+  * REMOVED: PL_async_hook().  Not needed anymore.
+
 ==========================
 BRANCH 5.7.0 (Sep 4, 2007)
 ==========================
