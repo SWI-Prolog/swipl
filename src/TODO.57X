@@ -1,0 +1,26 @@
+---+ Planning for kernel revision 5.7.X
+
+---++ VMI Restructuring
+
+Use a single definition:
+
+	BEGIN_VMI(Param, ...)
+	{
+	}
+
+VMI Info:
+
+	Name
+	# args
+	argtype
+
+Generate:
+
+	* Table in pl-comp.c
+	* Enum for type `code' (now in pl-inc.h)
+	* GCC-2 Labels in VM switch
+
+Loose ends:
+
+	- VMIs sharing variables (TBD: Untangle)
+	- Variable sharing in calling variations
