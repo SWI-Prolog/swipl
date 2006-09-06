@@ -3573,6 +3573,15 @@ PRED_IMPL("$wam_list", 1, wam_list, 0)
 }
 
 
+		 /*******************************
+		 *	 CLAUSE <-> PROLOG	*
+		 *******************************/
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Translate between a clause  and  a   Prolog  description  of the virtual
+machine code.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
 static Code unify_vmi_list(term_t t, Clause clause,
 			   Code bp, Code ep, code end);
 
@@ -3802,50 +3811,142 @@ PRED_IMPL("$vm_list_clause", 2, vm_list_clause, 0)
 }
 
 
-
-
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-$fetch_vm(+Clause, +Offset, -NextOffset, -Instruction)
-	fetches the virtual machine instruction at the indicated position
-	and return NextOffset with the offset of the next instruction, or
-	[] if there is no next instruction.  Instruction is unified with
-	a descriptive term of the instruction, but for now only with the
-	name of the instruction.
+$vm_assert(+PI, :VM, -Ref)
+    Create a clause from VM and assert it to the predicate PI.  Ref
+    is unified with a reference to the new clause.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static
-PRED_IMPL("$fetch_vm", 4, fetch_vm, 0)
+static int
+vm_compile_instruction(term_t t, CompileInfo ci)
 { GET_LD
-  Clause clause = NULL;
-  int pcoffset;
-  Code PC;
-  code op;
-  const code_info *ci;
+  atom_t name;
+  int arity;
 
-  term_t ref = A1;
-  term_t offset = A2;
-  term_t noffset = A3;
-  term_t instruction = A4;
+  if ( PL_get_name_arity(t, &name, &arity) )
+  { const char *nm = PL_atom_chars(name);
+    int i;
 
-  if ( !get_clause_ptr_ex(ref, &clause) ||
-       !PL_get_integer_ex(offset, &pcoffset) )
-    fail;
-  if ( pcoffset < 0 || pcoffset >= (int)clause->code_size )
-    return PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_program_counter, offset);
+    for(i=0; i<I_HIGHEST; i++)		/* TBD: Index */
+    { if ( strcasecmp(codeTable[i].name, nm) == 0 )
+      { if ( arity == 0 )
+	{ assert(codeTable[i].arguments == 0);
+	  Output_0(ci, codeTable[i].code);
+	  return TRUE;
+	} else if ( arity == 1 )
+	{ term_t a = PL_new_term_ref();
+	  _PL_get_arg(1, t, a);
 
-  PC = clause->codes + pcoffset;
-  op = fetchop(PC);
-  ci = &codeTable[op];
-  
-  pcoffset = pcoffset + 1 + ci->arguments;
+	  switch(codeTable[i].argtype)
+	  { case CA1_VAR:
+	    { int vn;
 
-  if ( PL_unify_integer(noffset, pcoffset) &&
-       PL_unify_atom_chars(instruction, ci->name) )
-    succeed;
+	      if ( !PL_get_integer_ex(a, &vn) )
+		fail;
+	      Output_1(ci, codeTable[i].code, VAROFFSET(vn));
+	      succeed;
+	    }
+	    case CA1_DATA:
+	    { word val = _PL_get_atomic(a);
 
-  fail;
+	      if ( isAtom(val) ||
+		   (isInteger(val) && storage(val) == STG_INLINE) )
+	      { Output_1(ci, codeTable[i].code, val);
+		succeed;
+	      }
+
+	      return PL_error(NULL, 0, NULL, ERR_TYPE,
+			      ATOM_atomic, a);
+	    }
+	    case CA1_PROC:
+	    { Procedure proc;
+
+	      if ( get_procedure(a, &proc, 0, GP_CREATE|GP_NAMEARITY) )
+	      { Output_1(ci, codeTable[i].code, (code)proc);
+		succeed;
+	      }
+	      fail;
+	    }
+	  }
+	}
+	return PL_error(NULL, 0, NULL, ERR_TYPE,
+			PL_new_atom("vmi"), t);
+      }
+    }
+
+    return PL_error(NULL, 0, NULL, ERR_EXISTENCE,
+		    PL_new_atom("vmi"), t);
+		    
+  }
+
+  return PL_error(NULL, 0, NULL, ERR_TYPE,
+		  PL_new_atom("vmi"), t);
 }
 
+
+static int
+vm_compile(term_t t, CompileInfo ci)
+{ GET_LD
+  term_t head = PL_new_term_ref();
+
+  while(PL_get_list(t, head, t))
+  { if ( !vm_compile_instruction(head, ci) )
+      fail;
+  }
+
+  if ( !PL_get_nil(t) )
+    return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_list, t);
+  
+  succeed;
+}
+
+
+static
+PRED_IMPL("$vm_assert", 3, vm_assert, PL_FA_TRANSPARENT)
+{ GET_LD
+  Procedure proc;
+  compileInfo ci;
+  struct clause clause;
+  Clause cl;
+  Module module = NULL;
+  int size;
+  
+  if ( !get_procedure(A1, &proc, 0, GP_DEFINE|GP_NAMEARITY) )
+    fail;
+  PL_strip_module(A2, &module, A2);
+
+  ci.islocal      = FALSE;
+  ci.subclausearg = 0;
+  ci.arity        = proc->definition->functor->arity;
+  ci.argvars      = 0;
+
+  clause.flags      = 0;
+  clause.procedure  = proc;
+  clause.code_size  = 0;
+  clause.source_no  = clause.line_no = 0;
+  ci.clause	    = &clause;
+  ci.module	    = module;
+  initBuffer(&ci.codes);
+
+  if ( !vm_compile(A2, &ci) )
+  { discardBuffer(&ci.codes);
+    fail;
+  }
+
+  clause.code_size = entriesBuffer(&ci.codes, code);
+  size  = sizeofClause(clause.code_size);
+  cl = allocHeap(size);
+  memcpy(cl, &clause, sizeofClause(0));
+  GD->statistics.codes += clause.code_size;
+  memcpy(cl->codes, baseBuffer(&ci.codes, code), sizeOfBuffer(&ci.codes));
+  discardBuffer(&ci.codes);
+
+					/* TBD: see assert_term() */
+  if ( !assertProcedure(proc, cl, CL_END PASS_LD) )
+    fail;
+
+  return PL_unify_pointer(A3, cl);
+}
 
 
 		 /*******************************
@@ -4388,7 +4489,7 @@ BeginPredDefs(comp)
   PRED_DEF("assertz", 2, assertz2, PL_FA_TRANSPARENT)
   PRED_DEF("asserta", 2, asserta2, PL_FA_TRANSPARENT)
   PRED_DEF("compile_predicates",  1, compile_predicates, PL_FA_TRANSPARENT)
-  PRED_DEF("$fetch_vm", 4, fetch_vm, 0)
   PRED_DEF("$wam_list", 1, wam_list, 0)
   PRED_DEF("$vm_list_clause", 2, vm_list_clause, 0)
+  PRED_DEF("$vm_assert", 3, vm_assert, PL_FA_TRANSPARENT)
 EndPredDefs
