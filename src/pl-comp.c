@@ -3815,6 +3815,13 @@ PRED_IMPL("$vm_list_clause", 2, vm_list_clause, 0)
 $vm_assert(+PI, :VM, -Ref)
     Create a clause from VM and assert it to the predicate PI.  Ref
     is unified with a reference to the new clause.
+
+TBD:
+	- C_OR, C_IFTHENELSE, C_IFTHEN branching
+	- Automatic variable balancing
+	- Computation of Prolog vars and size of stack-frame
+	- Complete argument support
+	- Complete datatype support
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static int
