@@ -117,6 +117,7 @@ typedef Record		record_t;	/* handle to a recorded term */
 typedef struct PL_local_data *PL_engine_t; /* handle to a engine */
 #else
 typedef	unsigned long	atom_t;		/* Prolog atom */
+typedef unsigned long	functor_t;	/* Name/arity pair */
 typedef void *		module_t;	/* Prolog module */
 typedef void *		predicate_t;	/* Prolog procedure */
 typedef void *		record_t;	/* Prolog recorded term */
@@ -126,7 +127,6 @@ typedef unsigned long	PL_fid_t;	/* opaque foreign context handle */
 typedef void *		control_t;	/* non-deterministic control arg */
 typedef void *		PL_engine_t;	/* opaque engine handle */
 #endif
-typedef unsigned long	functor_t;	/* Name/arity pair */
 typedef unsigned long	PL_atomic_t;	/* same a word */
 typedef unsigned long	foreign_t;	/* return type of foreign functions */
 typedef wchar_t	        pl_wchar_t;	/* Prolog wide character */

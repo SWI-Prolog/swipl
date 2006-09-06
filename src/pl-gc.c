@@ -2304,7 +2304,7 @@ update_environments(LocalFrame fr, Code PC, long ls, long gs, long ts)
 	update_pointer(&fr->clause->clause->codes, ls);
       }
 
-					/* update saved BFR's from C_MARK */
+					/* update saved BFR's from C_IFTHEN */
       if ( PC && false(fr->predicate, FOREIGN) )
       { Clause cl = fr->clause->clause;
 	unsigned int marks;

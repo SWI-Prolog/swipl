@@ -704,6 +704,7 @@ typedef unsigned long		term_t;		/* external term-reference */
 typedef unsigned long		word;		/* Anonymous 4 byte object */
 typedef word *			Word;		/* a pointer to anything */
 typedef word			atom_t;		/* encoded atom */
+typedef word			functor_t;	/* encoded functor */
 typedef unsigned long		code;		/* bytes codes */
 typedef code *			Code;		/* pointer to byte codes */
 typedef int			Char;		/* char that can pass EOF */
@@ -1118,7 +1119,7 @@ struct clause
   unsigned short	variables;	/* # of variables for frame */
   unsigned short	prolog_vars;	/* # real Prolog variables */
 #ifdef O_SHIFT_STACKS
-  unsigned short	marks;		/* C_MARK reserved */
+  unsigned short	marks;		/* C_IFTHEN reserved */
   unsigned short	line_no;	/* Source line-number */
 #else
   unsigned int		line_no; 	/* Source line-number */

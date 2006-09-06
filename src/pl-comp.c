@@ -840,8 +840,8 @@ A ; B, A -> B, A -> B ; C, \+ A
     The compilation of these statements are  a  bit  more  tricky.   Two
     mechanisms support this compilation:
     
-	C_MARK var	Mark for `soft-cut'
-	C_CUT  var	Cut alternatives generated since C_MARK var
+	C_IFTHEN var	Mark for `soft-cut'
+	C_CUT  var	Cut alternatives generated since C_IFTHEN var
 
     and
 	
@@ -990,7 +990,7 @@ compileBody(Word body, code call, compileInfo *ci ARG_LD)
 	int rv;
 	cutInfo cutsave = ci->cut;
 
-	Output_1(ci, C_MARK, var);
+	Output_1(ci, C_IFTHEN, var);
 	ci->cut.var = var;		/* Cut locally in the condition */
 	ci->cut.instruction = C_CUT;
 	if ( (rv=compileBody(argTermP(*body, 0), I_CALL, ci PASS_LD)) != TRUE )
@@ -2764,7 +2764,7 @@ decompileBody(decompileInfo *di, code end, Code until ARG_LD)
 			    pushed++;
 			    continue;
 			  }
-      case C_MARK:				/* A -> B */
+      case C_IFTHEN:				/* A -> B */
 			    PC++;
 			    decompileBody(di, C_CUT, (Code)NULL PASS_LD);   /* A */
 			    PC += 2;
@@ -3389,7 +3389,7 @@ pl_xr_member(term_t ref, term_t term, control_t h)
 }
 
 		 /*******************************
-		 *	     WAM_LIST		*
+		 *	     VM LISTING		*
 		 *******************************/
 
 #define VARNUM(i) ((i) - (ARGOFFSET / (int) sizeof(word)))
@@ -3425,7 +3425,7 @@ wamListInstruction(IOSTREAM *out, Clause clause, Code bp)
     case B_ARGVAR:
     case H_VAR:
     case C_VAR:
-    case C_MARK:
+    case C_IFTHEN:
     case C_SOFTCUT:
     case C_CUT:			/* var */
     case C_LCUT:
@@ -3573,6 +3573,237 @@ PRED_IMPL("$wam_list", 1, wam_list, 0)
 }
 
 
+static Code unify_vmi_list(term_t t, Clause clause,
+			   Code bp, Code ep, code end);
+
+typedef union
+{ atom_t a;
+  functor_t f;
+} i_name;
+
+static i_name inames[I_HIGHEST];
+
+static atom_t
+op_name(const code_info *info)
+{ if ( !inames[info->code].a )
+  { char tmp[32];
+    strcpy(tmp, info->name);
+    strlwr(tmp);
+    inames[info->code].a = PL_new_atom(tmp);
+  }
+
+  return inames[info->code].a;
+}
+
+
+static atom_t
+op_functor(const code_info *info, int n)
+{ if ( !inames[info->code].f )
+  { char tmp[32];
+    strcpy(tmp, info->name);
+    strlwr(tmp);
+    inames[info->code].f = PL_new_functor(PL_new_atom(tmp), n);
+  }
+
+  return inames[info->code].f;
+}
+
+
+
+static Code
+unify_vmi(term_t t, Clause clause, Code bp)
+{ GET_LD
+  code op = decode(*bp);
+  const code_info *ci;
+
+  if ( op == D_BREAK )
+    op = decode(replacedBreak(bp));
+
+  ci = &codeTable[op];
+  bp++;					/* skip the instruction */
+
+  switch(op)
+  { case C_OR:
+    { int to_jump = (int) *bp++;
+      term_t av = PL_new_term_refs(2);
+      Code ep = bp+to_jump;
+
+      if ( !(bp=unify_vmi_list(av+0, clause, bp, ep-2, -1)) )
+	return NULL;
+      assert(decode(*bp) == C_JMP);
+      bp++;
+      to_jump = (int) *bp++;
+      if ( !(bp=unify_vmi_list(av+1, clause, bp, bp+to_jump, -1)) )
+	return NULL;
+      PL_cons_functor_v(av+0, op_functor(ci, 2), av);
+      PL_unify(t, av+0);
+      return bp;
+    }
+    case C_IFTHENELSE:
+    case C_SOFTIF:
+    case C_NOT:
+    { int vn = VARNUM(*bp++);
+      int to_jump = (int) *bp++;
+      Code ep = bp+to_jump;
+      term_t av = PL_new_term_refs(4);
+
+      PL_unify_integer(av+0, vn);
+      if ( !(bp=unify_vmi_list(av+1, clause, bp, ep,
+			       encode(op == C_SOFTIF ? C_LCUT : C_CUT))) )
+	return NULL;
+      assert(decode(*bp) == C_CUT);
+      bp += 2;
+      if ( !(bp=unify_vmi_list(av+2, clause, bp, ep-2, -1)) )
+	return NULL;
+      assert(decode(*bp) == C_JMP);
+      bp++;
+      to_jump = (int) *bp++;
+      if ( !(bp=unify_vmi_list(av+3, clause, bp, bp+to_jump, -1)) )
+	return NULL;
+      PL_cons_functor_v(av+0, op_functor(ci, 4), av);
+      PL_unify(t, av+0);
+      return bp;
+    }
+    case C_IFTHEN:			/* If -> Then */
+    { int vn =  VARNUM(*bp++);
+      term_t av = PL_new_term_refs(2);
+
+      PL_unify_integer(av+0, vn);
+      if ( !(bp=unify_vmi_list(av+1, clause, bp, NULL, encode(C_CUT))) )
+	return NULL;
+      assert(decode(*bp) == C_CUT);
+      bp += 2;
+      if ( !(bp=unify_vmi_list(av+2, clause, bp, NULL, encode(C_END))) )
+	return NULL;
+      bp++;
+      PL_cons_functor_v(av+0, op_functor(ci, 3), av);
+      PL_unify(t, av+0);
+      return bp;
+    }
+    default:
+      if ( ci->arguments == 0 )
+      { PL_unify_atom(t, op_name(ci));
+	return bp;
+      }
+      switch(codeTable[op].argtype)
+      { case CA1_VAR:
+	{ int vn =  VARNUM(*bp++);
+
+	  PL_unify_term(t, PL_FUNCTOR, op_functor(ci, 1),
+			     PL_INTEGER, vn);
+	  return bp;
+	}
+	case CA1_INTEGER:
+	{ long i = (long)*bp++;
+	  PL_unify_term(t, PL_FUNCTOR, op_functor(ci, 1),
+			     PL_LONG, i);
+	  return bp;
+	}
+	case CA1_FLOAT:
+	{ double d;
+	  Word dp = (Word)&d;
+
+	  cpDoubleData(dp, bp);
+	  bp += WORDS_PER_DOUBLE;
+
+	  PL_unify_term(t, PL_FUNCTOR, op_functor(ci, 1),
+			     PL_FLOAT, d);
+	  return bp;
+	}
+	case CA1_INT64:
+	{ int64_t n;
+	  Word dp = (Word)&n;
+
+	  cpInt64Data(dp, bp);
+	  bp += WORDS_PER_INT64;
+
+	  PL_unify_term(t, PL_FUNCTOR, op_functor(ci, 1),
+			     PL_INT64, n);
+	  return bp;
+	}
+	case CA1_DATA:
+	{ term_t tmp = PL_new_term_ref();
+	  _PL_unify_atomic(tmp, *bp++);
+	  PL_unify_term(t, PL_FUNCTOR, op_functor(ci, 1),
+			     PL_TERM, tmp);
+	  PL_reset_term_refs(tmp);
+	  return bp;
+	}
+	case CA1_FUNC:
+	{ functor_t f = (functor_t) *bp++;
+	  term_t tmp = PL_new_term_ref();
+	  unify_functor(tmp, f, GP_NAMEARITY);
+	  PL_unify_term(t, PL_FUNCTOR, op_functor(ci, 1),
+			     PL_TERM, tmp);
+	  PL_reset_term_refs(tmp);
+	  return bp;
+	}
+	case CA1_MODULE:
+	{ Module m = (Module)*bp++;
+	  PL_unify_term(t, PL_FUNCTOR, op_functor(ci, 1),
+			     PL_ATOM, m->name);
+	  return bp;
+	}
+	case CA1_PROC:
+	{ Procedure proc = (Procedure)*bp++;
+	  term_t tmp = PL_new_term_ref();
+	  
+	  unify_definition(tmp, proc->definition, 0,
+			   GP_HIDESYSTEM|GP_NAMEARITY);
+	  PL_unify_term(t, PL_FUNCTOR, op_functor(ci, 1),
+			     PL_TERM, tmp);
+	  PL_reset_term_refs(tmp);
+	  return bp;
+
+	}
+	default:
+	  Sdprintf("Cannot list %s at %d\n", ci->name, bp-clause->codes-1);
+	  return NULL;
+      }
+  }
+
+  return bp;
+}
+
+
+static Code
+unify_vmi_list(term_t t, Clause clause, Code bp, Code ep, code end)
+{ GET_LD
+  term_t tail = PL_copy_term_ref(t);
+  term_t head = PL_new_term_ref();
+
+  while( (!ep || bp < ep) && *bp != end )
+  { PL_put_variable(head);
+    if ( !PL_unify_list(tail, head, tail) )
+      return NULL;
+    if ( !(bp=unify_vmi(head, clause, bp)) )
+      return NULL;
+  }
+  if ( !PL_unify_nil(tail) )
+    return NULL;
+  PL_reset_term_refs(tail);
+
+  return bp;
+}
+
+
+static
+PRED_IMPL("$vm_list_clause", 2, vm_list_clause, 0)
+{ Clause clause = NULL;
+  Code bp, ep;
+
+  if ( !get_clause_ptr_ex(A1, &clause) )
+    fail;
+
+  bp = clause->codes;
+  ep = bp + clause->code_size;
+
+  return unify_vmi_list(A2, clause, bp, ep, -1) ? TRUE : FALSE;
+}
+
+
+
+
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 $fetch_vm(+Clause, +Offset, -NextOffset, -Instruction)
 	fetches the virtual machine instruction at the indicated position
@@ -3669,7 +3900,7 @@ find_if_then_end(Code PC)
 	PC = elseloc + elseloc[-1];
 	break;
       }
-      case C_MARK:
+      case C_IFTHEN:
       { Code cutloc = find_code1(&PC[1], C_CUT, PC[0]);
 	PC = find_if_then_end(cutloc+2) + 1; /* returns location of C_END */
 	break;
@@ -3850,8 +4081,8 @@ pl_clause_term_position(term_t ref, term_t pc, term_t locterm)
 
 	goto after_construct;
       }
-      case C_MARK:		/* A -> B */
-				/* C_MARK <var> <A> C_CUT <var> <B> C_END */
+      case C_IFTHEN:		/* A -> B */
+				/* C_IFTHEN <var> <A> C_CUT <var> <B> C_END */
       { Code cutloc = find_code1(&PC[1], C_CUT, PC[0]);
 	
 	endloc = find_if_then_end(cutloc+2);
@@ -4159,4 +4390,5 @@ BeginPredDefs(comp)
   PRED_DEF("compile_predicates",  1, compile_predicates, PL_FA_TRANSPARENT)
   PRED_DEF("$fetch_vm", 4, fetch_vm, 0)
   PRED_DEF("$wam_list", 1, wam_list, 0)
+  PRED_DEF("$vm_list_clause", 2, vm_list_clause, 0)
 EndPredDefs

@@ -1353,13 +1353,13 @@ VMI(C_OR, 1, 0)
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-C_MARK saves the value of BFR  (current   backtrack  frame) into a local
+C_IFTHEN saves the value of BFR  (current   backtrack  frame) into a local
 frame slot reserved by the compiler.  Note that the variable to hold the
 local-frame pointer is  *not*  reserved   in  clause->variables,  so the
 garbage collector won't see it.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-VMI(C_MARK, 1, CA1_VAR)
+VMI(C_IFTHEN, 1, CA1_VAR)
 { varFrame(FR, *PC++) = (word) BFR;
 
   NEXT_INSTRUCTION;
@@ -1367,7 +1367,7 @@ VMI(C_MARK, 1, CA1_VAR)
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-C_IFTHENELSE: contraction of C_MARK and C_OR.  This contraction has been
+C_IFTHENELSE: contraction of C_IFTHEN and C_OR.  This contraction has been
 made to help the decompiler distinguis between (a ; b) -> c and a -> b ;
 c,  which  would  otherwise  only  be    possible  to  distinguis  using
 look-ahead.
@@ -1380,7 +1380,7 @@ VMI(C_NOT, 2, CA1_VAR)
 
 
 VMI(C_IFTHENELSE, 2, CA1_VAR)
-{ varFrame(FR, *PC++) = (word) BFR; /* == C_MARK */
+{ varFrame(FR, *PC++) = (word) BFR; /* == C_IFTHEN */
 
   VMI_GOTO(C_OR);
 }
@@ -1401,7 +1401,7 @@ VMI(C_VAR, 1, CA1_VAR)
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-C_CUT will  destroy  all  backtrack  points  created  after  the  C_MARK
+C_CUT will  destroy  all  backtrack  points  created  after  the  C_IFTHEN
 instruction in this clause.  It assumes the value of BFR has been stored
 in the nth-variable slot of the current local frame.
 
