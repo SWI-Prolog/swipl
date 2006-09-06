@@ -2018,8 +2018,8 @@ increase lTop too to prepare for asynchronous interrupts.
       NFR->predicate      = def;
       NFR->programPointer = PC;
       NFR->parent         = FR;
-      NFR->flags		 = FR->flags;
-      NFR->clause	 = NULL; /* for handling exceptions */
+      NFR->flags	  = FR->flags;
+      NFR->clause	  = NULL; /* for handling exceptions */
 #ifdef O_LOGICAL_UPDATE
       NFR->generation     = GD->generation;
 #endif

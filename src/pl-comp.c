@@ -3560,11 +3560,11 @@ wamListClause(Clause clause)
 }
 
 
-word
-pl_wam_list(term_t ref)
+static
+PRED_IMPL("$wam_list", 1, wam_list, 0)
 { Clause clause = NULL;
 
-  if ( !get_clause_ptr_ex(ref, &clause) )
+  if ( !get_clause_ptr_ex(A1, &clause) )
     fail;
 
   wamListClause(clause);
@@ -3582,14 +3582,19 @@ $fetch_vm(+Clause, +Offset, -NextOffset, -Instruction)
 	name of the instruction.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-word
-pl_fetch_vm(term_t ref, term_t offset, term_t noffset, term_t instruction)
+static
+PRED_IMPL("$fetch_vm", 4, fetch_vm, 0)
 { GET_LD
   Clause clause = NULL;
   int pcoffset;
   Code PC;
   code op;
   const code_info *ci;
+
+  term_t ref = A1;
+  term_t offset = A2;
+  term_t noffset = A3;
+  term_t instruction = A4;
 
   if ( !get_clause_ptr_ex(ref, &clause) ||
        !PL_get_integer_ex(offset, &pcoffset) )
@@ -4152,4 +4157,6 @@ BeginPredDefs(comp)
   PRED_DEF("assertz", 2, assertz2, PL_FA_TRANSPARENT)
   PRED_DEF("asserta", 2, asserta2, PL_FA_TRANSPARENT)
   PRED_DEF("compile_predicates",  1, compile_predicates, PL_FA_TRANSPARENT)
+  PRED_DEF("$fetch_vm", 4, fetch_vm, 0)
+  PRED_DEF("$wam_list", 1, wam_list, 0)
 EndPredDefs
