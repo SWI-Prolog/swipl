@@ -1761,6 +1761,19 @@ collect_phase(LocalFrame fr, Choice ch, Word *saved_bar_at)
 		*             MAIN              *
 		*********************************/
 
+static void
+gcRequest(int req)
+{ GET_LD
+  if ( gc_status.requested != req )
+  { gc_status.requested = req;
+    updateAlerted(LD);
+    DEBUG(1, if ( req )
+	     { Sdprintf("%s overflow: Posted garbage collect request\n",
+			s->name);
+	     });
+  }
+}
+
 #if O_DYNAMIC_STACKS
 void
 considerGarbageCollect(Stack s)
@@ -1769,20 +1782,19 @@ considerGarbageCollect(Stack s)
   { long used  = (char *)s->top   - (char *)s->base;
     long free  = (char *)s->limit - (char *)s->top;
     long limit = (char *)s->limit - (char *)s->base;
+    int req = FALSE;
 
     if ( used > s->factor*s->gced_size + s->small )
     { DEBUG(2, Sdprintf("GC: request on %s, factor=%d, last=%ld, small=%ld\n",
 			s->name, s->factor, s->gced_size, s->small));
-      gc_status.requested = TRUE;
+      req = TRUE;
     } else if ( free < limit/8 && used > s->gced_size + limit/32 ) 
     { DEBUG(2, Sdprintf("GC: request on low free\n"));
-      gc_status.requested = TRUE;
+      req = TRUE;
     }
 
-    DEBUG(1, if ( gc_status.requested)
-	     { Sdprintf("%s overflow: Posted garbage collect request\n",
-			s->name);
-	     });
+    if ( req )
+      gcRequest(req);
   }
 }
 #endif /* O_DYNAMIC_STACKS */
@@ -2083,7 +2095,7 @@ garbageCollect(LocalFrame fr, Choice ch)
   enterGC();
   blockSignals(&mask);
   blockGC(PASS_LD1);			/* avoid recursion due to */
-  gc_status.requested = FALSE;		/* printMessage() */
+  gcRequest(FALSE);			/* printMessage() */
 
   gc_status.active = TRUE;
   if ( verbose )

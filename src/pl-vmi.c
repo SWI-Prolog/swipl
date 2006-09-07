@@ -876,7 +876,13 @@ retry_continue:
   clear(FR, FR_SKIPPED|FR_WATCHED|FR_CATCHED);
 
   if ( LD->alerted )
-  { if ( is_signalled(PASS_LD1) )
+  { if ( LD->outofstack )
+    { enterDefinition(DEF);		/* exception will lower! */
+      outOfStack(LD->outofstack, STACK_OVERFLOW_RAISE);
+      goto b_throw;
+    }
+
+    if ( is_signalled(PASS_LD1) )
     { SAVE_REGISTERS(qid);
       PL_handle_signals();
       LOAD_REGISTERS(qid);
@@ -898,6 +904,10 @@ retry_continue:
       FR->prof_node = profCall(DEF PASS_LD);
     else
       FR->prof_node = NULL;
+#endif
+#if O_DYNAMIC_STACKS
+    if ( gc_status.requested )
+     garbageCollect(FR, BFR);
 #endif
   }
 
@@ -929,12 +939,7 @@ be able to access these!
   if ( false(DEF, HIDE_CHILDS) )	/* was SYSTEM */
     clear(FR, FR_NODEBUG);
 
-#if O_DYNAMIC_STACKS
-  if ( gc_status.requested )
-  { garbageCollect(FR, BFR);
-  }
-#else /*O_DYNAMIC_STACKS*/
-#if O_SHIFT_STACKS
+#if O_SHIFT_STACKS			/* TBD: can we use alerted? */
   { int gshift = narrowStack(global);
     int lshift = narrowStack(local);
     int tshift = narrowStack(trail);
@@ -961,17 +966,7 @@ be able to access these!
       }
     }
   }
-#else /*O_SHIFT_STACKS*/
-  if ( narrowStack(global) || narrowStack(trail) )
-    garbageCollect(FR);
 #endif /*O_SHIFT_STACKS*/
-#endif /*O_DYNAMIC_STACKS*/
-
-  if ( LD->outofstack )			/* TBD: sit on signalled */
-  { enterDefinition(DEF);		/* exception will lower! */
-    outOfStack(LD->outofstack, STACK_OVERFLOW_RAISE);
-    goto b_throw;
-  }
 
   if ( DEF->codes )			/* entry point for new supervisors */
   { ARGP = argFrameP(FR, 0);

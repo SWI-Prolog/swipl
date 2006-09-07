@@ -632,6 +632,7 @@ outOfStack(Stack s, stack_overflow_action how)
   switch(how)
   { case STACK_OVERFLOW_FATAL:
       LD->outofstack = s;
+      updateAlerted(LD);
       warning("Out of %s stack", s->name);
 
       pl_abort(ABORT_FATAL);
@@ -642,6 +643,7 @@ outOfStack(Stack s, stack_overflow_action how)
     { fid_t fid = PL_open_foreign_frame();
       LD->outofstack = NULL;
       gc_status.requested = FALSE;	/* can't have that */
+      updateAlerted(LD);
       PL_unify_term(LD->exception.tmp,
 		    PL_FUNCTOR, FUNCTOR_error2,
 		      PL_FUNCTOR, FUNCTOR_resource_error1,
@@ -659,6 +661,7 @@ outOfStack(Stack s, stack_overflow_action how)
     }
     case STACK_OVERFLOW_SIGNAL:
       LD->outofstack = s;
+      updateAlerted(LD);
       succeed;
   }
   assert(0);
