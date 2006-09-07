@@ -1115,7 +1115,6 @@ struct clause
     unsigned long erased;		/* Generation I was erased */
   } generation;
 #endif /*O_LOGICAL_UPDATE*/
-  unsigned int		code_size;	/* size of ->codes */
   unsigned short	variables;	/* # of variables for frame */
   unsigned short	prolog_vars;	/* # real Prolog variables */
 #ifdef O_SHIFT_STACKS
@@ -1131,6 +1130,7 @@ struct clause
 		/* HAS_BREAKPOINTS Break-instructions in the clause */
 		/* GOAL_CLAUSE	   Temporary 'islocal' clause (no head) */
 		/* COMMIT_CLAUSE   Clause will commit (execute !) */
+  code		code_size;		/* size of ->codes */
   code		codes[1];		/* VM codes of clause */
 };
 
@@ -1192,13 +1192,14 @@ struct local_definitions
 
 struct definition
 { FunctorDef	functor;		/* Name/Arity of procedure */
+  Module	module;			/* module of the predicate */
+  Code		codes;			/* Executable code */
   union
   { ClauseRef	clauses;		/* clause list of procedure */
     Func	function;		/* function pointer of procedure */
     LocalDefinitions local;		/* P_THREAD_LOCAL predicates */
   } definition;
   ClauseRef	lastClause;		/* last clause of list */
-  Module	module;			/* module of the predicate */
   int		references;		/* reference count */
   unsigned int  erased_clauses;		/* #erased but not reclaimed clauses */
 #ifdef O_PLMT

@@ -85,9 +85,13 @@ Then
 
 Simple way forward:
 
-	* Keep Definition around and get things out one-by-one?
-	* Create alternative compiler?
-		- I_CALL must be same?
+	* Add ->codes to definition
+	    - Jump to it if it exists
+	    - Keep (most of) the rest
+		- Simply ignore ->codes for debugging
+	    - Index: if only one clause create the jump
+	    - Link one and only clause
+	    	TBD: Unlink on eraseClause
 ================================================================
 ---+ Debugging
 
@@ -140,8 +144,51 @@ Problems:
 	- Clauses 
 
 ================================================================
-Prolog representation of VM
+Cleanup:
 
-	* Instruction:
-	name(Arg, ...)
-	* Branching: c_or(Left, Right)
+	- Associate all special conditions under one test:
+		- Profiling
+		- Debugging
+		- Signalled
+		- OutOfStack
+		- GC requested
+
+================================================================
+bench_peirera(1) on 5.6.18
+----------------------------------------------------------------
+tail_call_atom_atom    took 1.17-0.20=0.97/79412 =      12.2 usec/iter.
+binary_call_atom_atom  took 1.06-0.14=0.92/54545 =      16.9 usec/iter.
+cons_list              took 1.07-0.13=0.94/51429 =      18.3 usec/iter.
+walk_list              took 1.15-0.17=0.98/65854 =      14.9 usec/iter.
+walk_list_rec          took 1.14-0.17=0.97/66667 =      14.5 usec/iter.
+args(1)                took 1.17-0.17=1.00/67500 =      14.8 usec/iter.
+args(2)                took 1.15-0.12=1.03/47368 =      21.7 usec/iter.
+args(4)                took 1.06-0.08=0.98/31034 =      31.6 usec/iter.
+args(8)                took 1.05-0.05=1.00/20225 =      49.4 usec/iter.
+args(16)               took 1.03-0.03=1.00/11538 =      86.7 usec/iter.
+cons_term              took 1.13-0.13=1.00/52941 =      18.9 usec/iter.
+walk_term              took 1.18-0.17=1.01/66667 =      15.1 usec/iter.
+walk_term_rec          took 1.16-0.16=1.00/68354 =      14.6 usec/iter.
+shallow_backtracking   took 1.51-0.55=0.96/207692 =      4.6 usec/iter.
+deep_backtracking      took 1.12-0.11=1.01/41860 =      24.1 usec/iter.
+choice_point           took 1.19-0.15=1.04/58065 =      17.9 usec/iter.
+trail_variables        took 1.18-0.16=1.02/60000 =      17.0 usec/iter.
+medium_unify           took 2.85-1.88=0.97/736364 =      1.3 usec/iter.
+deep_unify             took 1.58-0.57=1.01/220909 =      4.6 usec/iter.
+integer_add            took 1.04-0.04=1.00/16071 =      62.2 usec/iter.
+floating_add           took 1.05-0.04=1.01/15517 =      65.1 usec/iter.
+arg(1)                 took 1.07-0.07=1.00/27692 =      36.1 usec/iter.
+arg(2)                 took 1.08-0.08=1.00/27692 =      36.1 usec/iter.
+arg(4)                 took 1.04-0.07=0.97/26866 =      36.1 usec/iter.
+arg(8)                 took 1.08-0.07=1.01/27692 =      36.5 usec/iter.
+arg(16)                took 1.06-0.07=0.99/26866 =      36.8 usec/iter.
+index                  took 1.09-0.14=0.95/56250 =      16.9 usec/iter.
+assert_unit            took 0.87-0.01=0.86/789 =      1090.0 usec/iter.
+access_unit            took 1.03-0.05=0.98/16981 =      57.7 usec/iter.
+slow_access_unit       took 1.02-0.00=1.02/1098 =      929.0 usec/iter.
+setof                  took 0.96-0.02=0.94/7500 =      125.3 usec/iter.
+pair_setof             took 1.00-0.02=0.98/6250 =      156.8 usec/iter.
+double_setof           took 0.98-0.01=0.97/1098 =      883.4 usec/iter.
+bagof                  took 1.01-0.02=0.99/10112 =      97.9 usec/iter.
+34 benchmarks took 33.48 seconds
+================================================================
