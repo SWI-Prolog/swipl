@@ -1893,7 +1893,7 @@ for the result (a word) and the number holding the result. For example:
    a(X) :- X is sin(3).
 
   I_ENTER
-  B_VAR 0			push left argument of is/2
+  B_VAR 0		push left argument of is/2
   A_INTEGER 3		push integer as number
   A_FUNC <sin>		run function on it
   A_IS			bind value
@@ -1938,6 +1938,28 @@ VMI(A_IS, 0, 0)
   }
 
   BODY_FAILED;
+}
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+A_FIRSTVAR_IS: Deal with the very common case that the local variable is
+a firstvar of the current frame. There   are numerous advantages to this
+case: we know the left-side is a var and we do not need to trail.
+
+TBD: link with following B_VAR? How  frequent?   Likely  very: we are in
+body mode and in most cases the result is used only once.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+VMI(A_FIRSTVAR_IS, 1, CA1_VAR)
+{ Word k = varFrameP(FR, *PC++);
+  Number n = (Number)ARGP;
+
+  n--;				/* pop the number */
+  *k = put_number(n);
+  clearNumber(n);
+
+  ARGP = argFrameP(lTop, 0);
+  NEXT_INSTRUCTION;
 }
 
 
