@@ -51,13 +51,23 @@ are available.
 	* ARGP
 	Argument pointer
 
+	* CL
+	Running clause (= FR->clause)
+
+	* DEF
+	Running definition
+
 Virtual machine instructions can return with one of:
 
 	* NEXT_INSTRUCTION
 	Proceed
 
 	* CLAUSE_FAILED
-	Backtrack
+	Failed unifying the head: backtrack to next clause
+
+	* BODY_FAILED
+	* FRAME_FAILED
+	Other failures: deep backtracking.
 
 	* VMI_GOTO(VMI)
 	Continue executing another virtual instruction.  Note this is
@@ -827,6 +837,7 @@ true:
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 normal_call:
+					/* ensure room for next args */
   requireStack(local, (int)argFrameP((LocalFrame)NULL, MAXARITY));
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -864,21 +875,30 @@ retry_continue:
 
   clear(FR, FR_SKIPPED|FR_WATCHED|FR_CATCHED);
 
-  if ( is_signalled(PASS_LD1) )
-  { SAVE_REGISTERS(qid);
-    PL_handle_signals();
-    LOAD_REGISTERS(qid);
-    if ( exception_term )
-    { CL = NULL;
-
-      enterDefinition(DEF);
+  if ( LD->alerted )
+  { if ( is_signalled(PASS_LD1) )
+    { SAVE_REGISTERS(qid);
+      PL_handle_signals();
+      LOAD_REGISTERS(qid);
+      if ( exception_term )
+      { CL = NULL;
+	
+	enterDefinition(DEF);
 				  /* The catch is not yet installed, */
 				  /* so we ignore it */
-      if ( FR->predicate == PROCEDURE_catch3->definition )
-	set(FR, FR_CATCHED);
+	if ( FR->predicate == PROCEDURE_catch3->definition )
+	  set(FR, FR_CATCHED);
 
-      goto b_throw;
+	goto b_throw;
+      }
     }
+
+#ifdef O_PROFILE	
+    if ( LD->profile.active )
+      FR->prof_node = profCall(DEF PASS_LD);
+    else
+      FR->prof_node = NULL;
+#endif
   }
 
   LD->statistics.inferences++;
@@ -903,13 +923,6 @@ be able to access these!
       goto b_throw;
     }
   }
-
-#ifdef O_PROFILE	
-  if ( LD->profile.active )
-    FR->prof_node = profCall(DEF PASS_LD);
-  else
-    FR->prof_node = NULL;
-#endif
 
   if ( false(DEF, METAPRED) )
     FR->context = DEF->module;
@@ -1039,7 +1052,6 @@ values found in the clause,  give  a   reference  to  the clause and set
 
   { ClauseRef next;
 
-    lTop = (LocalFrame) argFrameP(FR, DEF->functor->arity);
     if ( !(CL = firstClause(ARGP, FR, DEF, &next PASS_LD)) )
     { DEBUG(9, Sdprintf("No clause matching index.\n"));
       if ( debugstatus.debugging )
@@ -1057,9 +1069,6 @@ values found in the clause,  give  a   reference  to  the clause and set
       ch->value.clause = next;
     } else if ( debugstatus.debugging )
       newChoice(CHP_DEBUG, FR PASS_LD);
-
-		    /* require space for the args of the next frame */
-    requireStack(local, (int)argFrameP((LocalFrame)NULL, MAXARITY));
   }
 
   SECURE(

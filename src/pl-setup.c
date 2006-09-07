@@ -776,6 +776,9 @@ PL_handle_signals()
 
   if ( exception_term )
     return -1;
+  if ( done )
+    updateAlerted(ld);
+
   return done;
 }
 

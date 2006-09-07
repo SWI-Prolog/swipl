@@ -297,9 +297,7 @@ typedef struct PL_local_data
 #endif
   pl_stacks_t   stacks;			/* Prolog runtime stacks */
   ulong		bases[STG_MASK+1];	/* area base addresses */
-#ifdef O_PLMT
-  int		cancel_counter;		/* check cancellation */
-#endif
+  int		alerted;		/* Special mode. See updateAlerted() */
   ulong		pending_signals;	/* PL_raise() pending signals */
   record_t	pending_exception;	/* Pending exception from signal */
   int		current_signal;		/* Currently handled signal */

@@ -90,6 +90,8 @@ COMMON(Definition) 	getProcDefinition(Procedure proc);
 COMMON(void) 		fix_term_ref_count(void);
 COMMON(word) 		pl_unify_with_occurs_check(term_t t1, term_t t2);
 COMMON(fid_t) 		PL_open_signal_foreign_frame(void);
+COMMON(void)		updateAlerted(PL_local_data_t *ld);
+COMMON(int)		raiseSignal(PL_local_data_t *ld, int sig);
 
 /* pl-atom.c */
 COMMON(word) 		lookupAtom(const char *s, unsigned int len);

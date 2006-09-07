@@ -3308,12 +3308,8 @@ PL_open_resource(Module m,
 int
 PL_raise(int sig)
 { GET_LD
-  if ( sig > 0 && sig <= MAXSIGNAL && LD )
-  { LD->pending_signals |= (1L << (sig-1));
-    return TRUE;
-  }
 
-  return FALSE;
+  return raiseSignal(LD, sig);
 }
 
 
