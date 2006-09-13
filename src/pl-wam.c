@@ -1928,7 +1928,7 @@ PL_open_query(Module ctx, int flags, Procedure proc, term_t args)
     lTop = addPointer(lTop, sizeof(word));
 #endif
 
-  requireStack(local, sizeof(struct queryFrame));
+  requireStack(local, sizeof(struct queryFrame)+MAXARITY*sizeof(word));
 
   qf	     = (QueryFrame) lTop;
   fr         = &qf->frame;
@@ -1936,8 +1936,6 @@ PL_open_query(Module ctx, int flags, Procedure proc, term_t args)
   fr->flags  = FR_INBOX;
   def        = getProcDefinedDefinition(fr, NULL, proc PASS_LD);
   arity	     = def->functor->arity;
-
-  requireStack(local, sizeof(struct queryFrame)+arity*sizeof(word));
 
   SECURE(checkStacks(environment_frame, NULL));
   assert((ulong)fli_context > (ulong)environment_frame);
@@ -2222,8 +2220,6 @@ Prolog exception.
 setjmp()/longjmp clobbers register variables. FR   is  restored from the
 environment. BFR is volatile, and qid is an argument. These are the only
 variables used in the B_THROW instruction.
-
-Is there a way to make the compiler keep its mouth shut!?
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
   if ( setjmp(QF->exception_jmp_env) != 0 )
