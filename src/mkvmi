@@ -10,6 +10,8 @@ ctable=pl-codetable.c
 jtable=pl-jumptable.ic
 ctype=pl-vmi.h
 
+PAT="^\(VMI(\)"
+
 ################################################################
 # pl-codetable.c
 ################################################################
@@ -32,7 +34,7 @@ cat > $ctable << EOS
 const code_info codeTable[] = {
 /* ID #args #argtype */
 EOS
-grep "^VMI(" $in |
+grep "$PAT" $in |
 	sed "s/^VMI(\([A-Z_0-9]*\), *\([A-Z_0-9]*\), *\([A-Z_0-9]*\))/  CODE(\1, \2, \3),/" >> $ctable
 cat >> $ctable << EOS
   { NULL, 0, 0, 0 }
@@ -57,7 +59,7 @@ cat > $jtable << EOS
   {
 EOS
 
-grep "^VMI(" $in |
+grep "$PAT" $in |
 	sed "s/^VMI(\([A-Z_0-9]*\), *\([A-Z_0-9]*\), *\([A-Z_0-9]*\))/    \&\&\1_LBL,/" >> $jtable
 
 cat >> $jtable << EOS
@@ -82,7 +84,7 @@ typedef enum
 {
 EOS
 
-grep "^VMI(" $in |
+grep "$PAT" $in |
 	sed "s/^VMI(\([A-Z_0-9]*\), *\([A-Z_0-9]*\), *\([A-Z_0-9]*\))/  \1,/" >> $ctype
 
 cat >> $ctype << EOS

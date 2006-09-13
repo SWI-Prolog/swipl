@@ -997,7 +997,7 @@ be able to access these!
 	PC = &exit;
 	goto wakeup;
       }
-      goto exit_builtin_cont;
+      VMI_GOTO(I_EXIT);
 #endif
     }
 
@@ -1181,7 +1181,6 @@ careful.
   }
 #endif /*O_DEBUGGER*/
 
-exit_builtin_cont:			/* tracer already by callForeign() */
   if ( (void *)BFR <= (void *)FR ) /* deterministic */
   { if ( false(DEF, FOREIGN) )
     { FR->clause = NULL;		/* leaveDefinition() destroys clause */
@@ -1964,6 +1963,65 @@ VMI(A_FIRSTVAR_IS, 1, CA1_VAR)
 
 
 		 /*******************************
+		 *	     FOREIGN		*
+		 *******************************/
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+	I_FOPEN
+	I_FCALLDET0-10 f/n
+	I_FEXITDET
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+#if 0
+ VMI(I_FOPEN, 0, 0)
+{ FliFrame ffr = argFrameP(FR, DEF->functor->arity);
+
+  lTop = (LocalFrame)(ffr+1);
+  fr->size = 0;
+  Mark(fr->mark);
+  fr->parent = fli_context;
+  fr->magic = FLI_MAGIC;
+  fli_context = fr;
+
+  NEXT_INSTRUCTION;
+}
+
+
+ VMI(I_FEXIT, 0, 0)
+{ ffr = fli_context;
+
+  while((void*)ffr > (void*)FR)
+  { assert(fr->magic == FLI_MAGIC);
+    ffr = ffr->parent;
+  }
+
+  fli_context = ffr;
+  NEXT_INSTRUCTION;
+}
+
+
+ VMI(I_DETFOREIGN0, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  int rc;
+
+  fid_t fid = PL_open_foreign_frame();
+  SAVE_REGISTERS(qid);
+  rc = (*f)();
+  LOAD_REGISTERS(qid);
+  PL_close_foreign_frame(fid);
+
+  if ( exception_term )
+    goto b_throw;
+
+  if ( rc )
+    VMI_GOTO(I_EXIT);
+
+  FRAME_FAILED;
+}
+#endif
+
+
+		 /*******************************
 		 *	  INLINED FOREIGNS	*
 		 *******************************/
 
@@ -2222,7 +2280,7 @@ VMI(I_EXITCATCH, 0, 0)
     BFR = BFR->parent;
   }
 
-  goto exit_builtin_cont;
+  VMI_GOTO(I_EXIT);
 }
 
 
