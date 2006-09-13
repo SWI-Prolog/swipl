@@ -601,6 +601,7 @@ initBuildIns(void)
   PROCEDURE_dcall1	     = lookupProcedure(FUNCTOR_dcall1,		  m);
   PROCEDURE_call_cleanup3    = lookupProcedure(FUNCTOR_call_cleanup3,	  m); 
   PROCEDURE_dthread_init0    = lookupProcedure(FUNCTOR_dthread_init0,	  m);
+  PROCEDURE_dc_call_prolog   = lookupProcedure(FUNCTOR_dc_call_prolog0,   m);
 #ifdef O_ATTVAR
   PROCEDURE_dwakeup1	     = lookupProcedure(FUNCTOR_dwakeup1,	  m);
 #endif

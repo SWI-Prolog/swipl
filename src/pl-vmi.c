@@ -1193,34 +1193,6 @@ careful.
   { clear(FR, FR_INBOX);
   }
 
-  if ( !FR->parent )		/* query exit */
-  { QF = QueryFromQid(qid);	/* may be shifted: recompute */
-    QF->solutions++;
-
-    assert(FR == &QF->frame);
-
-    if ( BFR == &QF->choice )	/* No alternatives */
-    { set(QF, PL_Q_DETERMINISTIC);
-      lTop = (LocalFrame)argFrameP(FR, DEF->functor->arity);
-      
-      if ( true(FR, FR_WATCHED) )
-	frameFinished(FR, FINISH_EXIT PASS_LD);
-    }
-
-#ifdef O_PROFILE
-    if ( LD->profile.active )
-    { LocalFrame parent = parentFrame(FR);
-      
-      if ( parent )
-	profExit(parent->prof_node PASS_LD);
-      else
-	profExit(NULL PASS_LD);
-    }
-#endif
-
-    succeed;
-  }
-
   {
 #if O_DEBUGGER
      LocalFrame leave;
@@ -1275,6 +1247,42 @@ VMI(I_EXITFACT, 0, 0)
 #endif
   VMI_GOTO(I_EXIT);
 }
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Created for the return of the toplevel query.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+VMI(I_EXITQUERY, 0, 0)
+{ assert(!FR->parent);
+
+  QF = QueryFromQid(qid);		/* may be shifted: recompute */
+  QF->solutions++;
+
+  assert(FR == &QF->top_frame);
+
+  if ( BFR == &QF->choice )		/* No alternatives */
+  { set(QF, PL_Q_DETERMINISTIC);
+    lTop = (LocalFrame)argFrameP(FR, DEF->functor->arity);
+    
+    if ( true(FR, FR_WATCHED) )
+      frameFinished(FR, FINISH_EXIT PASS_LD);
+  }
+
+#ifdef O_PROFILE
+  if ( LD->profile.active )
+  { LocalFrame parent = parentFrame(FR);
+    
+    if ( parent )
+      profExit(parent->prof_node PASS_LD);
+    else
+      profExit(NULL PASS_LD);
+  }
+#endif
+
+  succeed;
+}
+
 
 
 		 /*******************************

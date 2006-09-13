@@ -181,3 +181,4 @@
 #define FUNCTOR_warning3     MK_FUNCTOR(180, 3)
 #define FUNCTOR_xor2         MK_FUNCTOR(181, 2)
 #define FUNCTOR_xpceref1     MK_FUNCTOR(182, 1)
+#define FUNCTOR_dc_call_prolog0 MK_FUNCTOR(183, 0)

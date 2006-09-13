@@ -3068,7 +3068,7 @@ find_query(LocalFrame fr)
     while(fr->parent)
       fr = fr->parent;
     
-    qf = (QueryFrame)addPointer(fr, -(long)offsetof(struct queryFrame, frame));
+    qf = (QueryFrame)addPointer(fr, -(long)offsetof(struct queryFrame, top_frame));
 
     return qf;
   }

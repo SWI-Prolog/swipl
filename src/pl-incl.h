@@ -1329,7 +1329,8 @@ struct queryFrame
   LocalFrame	saved_environment;	/* Parent local-frame */
 					/* Do not put anything between */
 					/* or check parentFrame() */
-  struct localFrame frame;		/* The local frame */
+  struct localFrame top_frame;		/* The (dummy) top local frame */
+  struct localFrame frame;		/* The initial frame */
 };
 
 
@@ -1875,6 +1876,7 @@ typedef struct
 #define PROCEDURE_dwakeup1		(GD->procedures.dwakeup1)
 #define PROCEDURE_dthread_init0		(GD->procedures.dthread_init0)
 #define PROCEDURE_exception_hook4	(GD->procedures.exception_hook4)
+#define PROCEDURE_dc_call_prolog	(GD->procedures.dc_call_prolog0)
 
 extern const code_info codeTable[]; /* Instruction info (read-only) */
 
