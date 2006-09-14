@@ -92,7 +92,7 @@ prof_report_field(prof_record *pr)
     double av  = (double)(pr->ticks/pr->calls-overhead)/CPU_MHz();
     double tot = av*(double)pr->calls;
 
-    printf("%7d %10.3f %10.3f %20.3f %s\n",
+    printf("%9d %10.3f %10.3f %20.3f %s\n",
 	   pr->calls, f, av, tot, pr->name);
   }
   memset(pr, 0, sizeof(*pr));
@@ -112,7 +112,7 @@ prof_report()
   printf("------------------------------------------------------\n");
   printf("Pentium rdtsc timing in micro-seconds (%.0f MHz CPU)\n", CPU_MHz());
   printf("------------------------------------------------------\n");
-  printf("%7s %10s %10s %20s %s\n",
+  printf("%9s %10s %10s %20s %s\n",
 	 "calls", "fastest", "av", "total", "statement");
   printf("------------------------------------------------------\n");
   overhead = 0;

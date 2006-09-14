@@ -274,6 +274,7 @@ parms.h:	Makefile
 $(OBJ):		parms.h $(srcdir)/pl-funct.ih
 pl-wam.o:	pl-alloc.c pl-index.c pl-fli.c pl-vmi.c
 pl-read.o:	pl-umap.c
+pl-prof.o:	pentium.c
 $(srcdir)/pl-vmi.ih $(srcdir)/pl-jumptable.ic $(srcdir)/pl-codetable.c: $(srcdir)/pl-vmi.c
 		cd $(srcdir) && ./mkvmi
 
