@@ -204,6 +204,8 @@ in several virtual machine instructions.  Currently covers:
 	* GC Requested
 	* out-of-stack signalled
 	* active depth-limit
+	* attributed variable wakeup
+	* debugmode active
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 void
@@ -224,6 +226,9 @@ updateAlerted(PL_local_data_t *ld)
 #endif
 #ifdef O_ATTVAR
   if ( !isVar(ld->attvar.head) )		mask |= ALERT_WAKEUP;
+#endif
+#ifdef O_DEBUGGER
+  if ( ld->_debugstatus.debugging )		mask |= ALERT_DEBUG;
 #endif
 
   ld->alerted = mask;

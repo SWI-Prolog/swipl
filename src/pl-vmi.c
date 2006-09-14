@@ -891,6 +891,7 @@ retry_continue:
     FR->context = DEF->module;
   if ( false(DEF, HIDE_CHILDS) )	/* was SYSTEM */
     clear(FR, FR_NODEBUG);
+  LD->statistics.inferences++;
 
   if ( LD->alerted )
   { if ( LD->outofstack )
@@ -941,19 +942,18 @@ retry_continue:
       }
     }
 #endif
-  }
 
-  LD->statistics.inferences++;
 #if O_DEBUGGER
-  if ( debugstatus.debugging )
-  { CL = DEF->definition.clauses;
-    set(FR, FR_INBOX);
-    switch(tracePort(FR, BFR, CALL_PORT, NULL PASS_LD))
-    { case ACTION_FAIL:	goto frame_failed;
-      case ACTION_IGNORE: goto exit_builtin;
+    if ( debugstatus.debugging )
+    { CL = DEF->definition.clauses;
+      set(FR, FR_INBOX);
+      switch(tracePort(FR, BFR, CALL_PORT, NULL PASS_LD))
+      { case ACTION_FAIL:	goto frame_failed;
+	case ACTION_IGNORE: goto exit_builtin;
+      }
     }
-  }
 #endif /*O_DEBUGGER*/
+  }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Undefined predicate detection and handling.   trapUndefined() takes care
@@ -1238,27 +1238,31 @@ interception. Second, there should be some room for optimisation here.
 
 VMI(I_EXITFACT, 0, 0)
 {
+  if ( LD->alerted )
+  {
 #if O_DEBUGGER
-  if ( debugstatus.debugging )
-  { switch(tracePort(FR, BFR, UNIFY_PORT, PC PASS_LD))
-    { case ACTION_RETRY:
-	goto retry;
+    if ( debugstatus.debugging )
+    { switch(tracePort(FR, BFR, UNIFY_PORT, PC PASS_LD))
+      { case ACTION_RETRY:
+	  goto retry;
+      }
     }
-  }
 #endif /*O_DEBUGGER*/
 #ifdef O_ATTVAR
-  if ( LD->alerted & ALERT_WAKEUP )
-  { if ( *valTermRef(LD->attvar.head) ) /* can be faster */
-    { static code exit;
-    
-      exit = encode(I_EXIT);
-      PC = &exit;
-      ARGP = argFrameP(lTop, 0);	    /* needed? */
-      goto wakeup;
+    if ( LD->alerted & ALERT_WAKEUP )
+    { if ( *valTermRef(LD->attvar.head) ) /* can be faster */
+      { static code exit;
+      
+	exit = encode(I_EXIT);
+	PC = &exit;
+	ARGP = argFrameP(lTop, 0);	    /* needed? */
+	goto wakeup;
+      }
+      LD->alerted &= ~ALERT_WAKEUP;
     }
-    LD->alerted &= ~ALERT_WAKEUP;
-  }
 #endif
+  }
+
   VMI_GOTO(I_EXIT);
 }
 
