@@ -1298,6 +1298,7 @@ VMI(I_EXITQUERY, 0, 0)
   }
 #endif
 
+  END_PROF();
   succeed;
 }
 

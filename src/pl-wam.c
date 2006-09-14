@@ -2152,9 +2152,10 @@ pl-comp.c
 #define VMI(Name,na,a)		Name ## _LBL: \
 				  count(Name, PC); \
 				  START_PROF(Name, #Name);
-#define VMI_GOTO(n)		goto n ## _LBL;
-#define NEXT_INSTRUCTION	{ DbgPrintInstruction(FR, PC); \
-				  END_PROF(); \
+#define VMI_GOTO(n)		END_PROF(); \
+				goto n ## _LBL;
+#define NEXT_INSTRUCTION	{ END_PROF(); \
+				  DbgPrintInstruction(FR, PC); \
 				  goto *(void *)((long)(*PC++)); \
 				}
 #ifndef ASM_NOP

@@ -1710,9 +1710,10 @@ ar_minmax(Number n1, Number n2, Number r, int ismax)
   }
 
   if ( c1 == &cp1 )
-    clearNumber(c1);
-  else if ( c2 == &cp2 )
-    clearNumber(c2);
+  { clearNumber(c1);
+  } else if ( c2 == &cp2 )
+  { clearNumber(c2);
+  }
 
   if ( !ismax )
     which = !which;

@@ -34,10 +34,13 @@ COMMON(void) 	initGMP(void);
 COMMON(void)	get_integer(word w, number *n);
 COMMON(void)	promoteToMPZNumber(number *n);
 COMMON(void)	promoteToMPQNumber(number *n);
-COMMON(void)	clearNumber(Number n);
+COMMON(void)	clearGMPNumber(Number n);
 COMMON(void)	addMPZToBuffer(Buffer b, mpz_t mpz);
 COMMON(char *)	loadMPZFromCharp(const char *data, Word r, Word *store);
 COMMON(char *)	skipMPZOnCharp(const char *data);
+
+#define clearNumber(n) \
+	if ( (n)->type != V_INTEGER ) clearGMPNumber(n)
 #else /*O_GMP*/
 
 #define get_integer(w, n) \
@@ -51,6 +54,11 @@ COMMON(char *)	skipMPZOnCharp(const char *data);
 
 #endif /*O_GMP*/
 
+#define same_type_numbers(n1, n2) \
+	if ( (n1)->type != (n2)->type ) \
+	  make_same_type_numbers(n1, n2)
+
+
 		 /*******************************
 		 *	 COMMON FUNCTIONS	*
 		 *******************************/
@@ -60,7 +68,7 @@ COMMON(void)	get_number(word w, Number n  ARG_LD);
 COMMON(int)	PL_get_number(term_t t, Number n);
 COMMON(word)	put_number__LD(Number n ARG_LD);
 COMMON(void)	promoteToRealNumber(Number n);
-COMMON(void)	same_type_numbers(Number n1, Number n2);
+COMMON(void)	make_same_type_numbers(Number n1, Number n2);
 COMMON(void)    promoteNumber(Number n1, numtype type);
 COMMON(int)	cmpNumbers(Number n1, Number n2);
 COMMON(void)	cpNumber(Number to, Number from);
