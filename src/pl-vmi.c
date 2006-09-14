@@ -1182,10 +1182,8 @@ careful.
 #endif /*O_DEBUGGER*/
 
   if ( (void *)BFR <= (void *)FR ) /* deterministic */
-  { if ( false(DEF, FOREIGN) )
-    { FR->clause = NULL;		/* leaveDefinition() destroys clause */
-      leaveDefinition(DEF);
-    }
+  { FR->clause = NULL;		/* leaveDefinition() destroys clause */
+    leaveDefinition(DEF);	/* dynamic pred only */
     lTop = FR;
     DEBUG(3, Sdprintf("Deterministic exit of %s, lTop = #%ld\n",
 		      predicateName(FR->predicate), loffset(lTop)));
@@ -2217,6 +2215,8 @@ call_cleanup(:Goal, -Reason, :Cleanup) is tranalated into
    1 i_callcleanup
    2 i_exitcleanup
    3 i_exit
+
+We set FR_WATCHED to get a cleanup call if the frame fails or is cutted.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 VMI(I_CALLCLEANUP, 0, 0)
