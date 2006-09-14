@@ -111,6 +111,7 @@ assignAttVar(Word av, Word value ARG_LD)
     assert(isVar(*head));
     *head = consPtr(wake, TAG_COMPOUND|STG_GLOBAL);
     Trail(head);
+    LD->alerted |= ALERT_WAKEUP;
     DEBUG(1, Sdprintf("new wakeup\n"));
   }
 
