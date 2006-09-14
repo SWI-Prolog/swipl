@@ -203,6 +203,7 @@ in several virtual machine instructions.  Currently covers:
         * Activation of the profiler
 	* GC Requested
 	* out-of-stack signalled
+	* active depth-limit
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 void
@@ -215,6 +216,9 @@ updateAlerted(PL_local_data_t *ld)
 #endif
 #ifdef O_PLMT
        || ld->exit_requested
+#endif
+#ifdef O_LIMIT_DEPTH
+       || ld->depth_info.limit != DEPTH_NO_LIMIT
 #endif
      )
     ld->alerted = TRUE;
@@ -2036,6 +2040,7 @@ PL_open_query(Module ctx, int flags, Procedure proc, term_t args)
 
   environment_frame = fr;
   DEBUG(2, Sdprintf("QID=%d\n", QidFromQuery(qf)));
+  updateAlerted(LD);
 
   return QidFromQuery(qf);
 }
@@ -2076,6 +2081,7 @@ restore_after_query(QueryFrame qf)
     depth_reached = qf->saved_depth_reached;
 #endif /*O_LIMIT_DEPTH*/
   }
+  updateAlerted(LD);
   SECURE(checkStacks(environment_frame, NULL));
 }
 
