@@ -874,6 +874,10 @@ retry_continue:
 #endif
 
   clear(FR, FR_SKIPPED|FR_WATCHED|FR_CATCHED);
+  if ( false(DEF, METAPRED) )
+    FR->context = DEF->module;
+  if ( false(DEF, HIDE_CHILDS) )	/* was SYSTEM */
+    clear(FR, FR_NODEBUG);
 
   if ( LD->alerted )
   { if ( LD->outofstack )
@@ -927,7 +931,16 @@ retry_continue:
   }
 
   LD->statistics.inferences++;
-
+#if O_DEBUGGER
+  if ( debugstatus.debugging )
+  { CL = DEF->definition.clauses;
+    set(FR, FR_INBOX);
+    switch(tracePort(FR, BFR, CALL_PORT, NULL PASS_LD))
+    { case ACTION_FAIL:	goto frame_failed;
+      case ACTION_IGNORE: goto exit_builtin;
+    }
+  }
+#endif /*O_DEBUGGER*/
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Undefined predicate detection and handling.   trapUndefined() takes care
@@ -948,11 +961,6 @@ be able to access these!
       goto b_throw;
     }
   }
-
-  if ( false(DEF, METAPRED) )
-    FR->context = DEF->module;
-  if ( false(DEF, HIDE_CHILDS) )	/* was SYSTEM */
-    clear(FR, FR_NODEBUG);
 
 #if O_SHIFT_STACKS			/* TBD: can we use alerted? */
   { int gshift = narrowStack(global);
@@ -1024,17 +1032,6 @@ be able to access these!
 
     goto frame_failed;
   } 
-
-#if O_DEBUGGER
-  if ( debugstatus.debugging )
-  { CL = DEF->definition.clauses;
-    set(FR, FR_INBOX);
-    switch(tracePort(FR, BFR, CALL_PORT, NULL PASS_LD))
-    { case ACTION_FAIL:	goto frame_failed;
-      case ACTION_IGNORE: goto exit_builtin;
-    }
-  }
-#endif /*O_DEBUGGER*/
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Call a normal Prolog predicate.  Just   load  the machine registers with

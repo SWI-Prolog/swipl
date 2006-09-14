@@ -505,28 +505,6 @@ callForeign(LocalFrame frame, frg_code control ARG_LD)
   term_t h0 = argFrameP(frame, 0) - (Word)lBase;
   FliFrame ffr;
 
-#ifdef O_DEBUGGER
-retry:
-  if ( debugstatus.debugging )
-  { int port = (control == FRG_FIRST_CALL ? CALL_PORT : REDO_PORT);
-
-    lTop = (LocalFrame)argFrameP(frame, argc);
-
-    switch( tracePort(frame, LD->choicepoints, port, NULL PASS_LD) )
-    { case ACTION_FAIL:
-	exception_term = 0;
-	fail;
-      case ACTION_IGNORE:
-	exception_term = 0;
-	succeed;
-      case ACTION_RETRY:
-	exception_term = 0;
-	control = FRG_FIRST_CALL;
-	frame->clause = NULL;
-    }
-  }
-#endif /*O_DEBUGGER*/
-
 					/* open foreign frame */
   ffr  = (FliFrame)argFrameP(frame, argc);
   lTop = addPointer(ffr, sizeof(struct fliFrame));
@@ -591,29 +569,6 @@ retry:
       return FALSE;
     }
   }
-
-#ifdef O_DEBUGGER
-					/* exit already moved to I_EXIT */
-  if ( debugstatus.debugging && !result )
-  { Undo(ffr->mark);
-
-    switch( tracePort(frame, LD->choicepoints, FAIL_PORT, NULL PASS_LD) )
-    { case ACTION_FAIL:
-	exception_term = 0;
-        fail;
-      case ACTION_IGNORE:
-	exception_term = 0;
-        succeed;
-      case ACTION_RETRY:
-	Undo(ffr->mark);
-	control = FRG_FIRST_CALL;
-        frame->clause = NULL;
-	fli_context = ffr->parent;
-	exception_term = 0;
-	goto retry;
-    }
-  }
-#endif
 
 					/* deterministic result */
   if ( result == TRUE || result == FALSE )
@@ -2454,8 +2409,7 @@ next_choice:
 #ifdef O_DEBUGGER
   if ( debugstatus.debugging )
   { for(; (void *)FR > (void *)ch; FR = FR->parent)
-    { if ( false(FR->predicate, FOREIGN) && /* done by callForeign() */
-	   false(FR, FR_NODEBUG) )
+    { if ( false(FR, FR_NODEBUG) )
       { Choice sch = findStartChoice(FR, ch0);
 
 	if ( sch )
@@ -2577,6 +2531,36 @@ next_choice:
       BFR  = ch->parent;
       Profile(profRedo(ch->prof_node PASS_LD));
       lTop = (LocalFrame)ch;
+
+#ifdef O_DEBUGGER
+      if ( debugstatus.debugging && !debugstatus.suspendTrace  )
+      { LocalFrame fr;
+
+	if ( !SYSTEM_MODE )		/* find user-level goal to retry */
+	{ for(fr = FR; fr && true(fr, FR_NODEBUG); fr = fr->parent)
+	    ;
+	} else
+	  fr = FR;
+
+	if ( fr &&
+	     (false(fr->predicate, HIDE_CHILDS) ||
+	      false(fr, FR_INBOX)) )
+	{ switch( tracePort(fr, BFR, REDO_PORT, NULL PASS_LD) )
+	  { case ACTION_FAIL:
+	      FRAME_FAILED;
+	    case ACTION_IGNORE:
+	      goto exit_builtin;
+	    case ACTION_RETRY:
+#ifdef O_LOGICAL_UPDATE
+	      if ( false(DEF, DYNAMIC) )
+		FR->generation = GD->generation;
+#endif
+	      goto retry_continue;
+	  }
+	  set(fr, FR_INBOX);
+	}
+      }
+#endif
 
       SAVE_REGISTERS(qid);
       rval = callForeign(FR, FRG_REDO PASS_LD);
