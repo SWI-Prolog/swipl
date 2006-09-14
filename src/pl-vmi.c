@@ -1021,6 +1021,7 @@ be able to access these!
     END_PROF();
     START_PROF(PROF_FOREIGN, "PROF_FOREIGN");
     rval = callForeign(FR, FRG_FIRST_CALL PASS_LD);
+    END_PROF();
     LOAD_REGISTERS(qid);
 
     if ( rval )
@@ -1124,6 +1125,8 @@ VMI(I_DEPART, 1, CA1_PROC)
     FR->predicate = DEF = ndef;
     copyFrameArguments(lTop, FR, ndef->functor->arity PASS_LD);
 
+    END_PROF();
+    START_PROF(DEPART_CONTINUE, "DEPART_CONTINUE");
     goto depart_continue;
   }
 #endif /*TAILRECURSION*/
@@ -2182,6 +2185,7 @@ increase lTop too to prepare for asynchronous interrupts.
 	}
       }
       PL_close_foreign_frame(fid);
+      END_PROF();
       LOAD_REGISTERS(qid);
 
       ARGP -= nvars;
