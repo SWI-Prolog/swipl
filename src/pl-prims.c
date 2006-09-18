@@ -292,6 +292,12 @@ PRED_IMPL("cyclic_term", 1, cyclic_term, 0)
 		 *	 META-CALL SUPPORT	*
 		 *******************************/
 
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+deterministic(-Bool)
+
+Bool = true if no choicepoint has been created in the current clause.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
 static
 PRED_IMPL("deterministic", 1, deterministic, 0)
 { PRED_LD
@@ -2960,6 +2966,9 @@ PRED_IMPL("$depth_limit_true", 5, pl_depth_limit_true, PL_FA_NONDETERMINISTIC)
 	    case CHP_DEBUG:
 	    case CHP_NONE:
 	      continue;
+	    case CHP_JUMP:
+	      if ( ch->frame == environment_frame )
+		continue;		/* Our own choicepoint */
 	    default:
 	      break;
 	  }

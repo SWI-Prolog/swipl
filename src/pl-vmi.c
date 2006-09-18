@@ -2179,6 +2179,110 @@ VMI(I_FEXITDET, 0, 0)
 }
 END_SHAREDVARS
 
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Non-deterministic foreign calls. This  is   compiled  into the following
+supervisor code:
+
+	I_FOPENNDET
+	I_FCALLNDETVA func
+	I_FEXITNDET
+	I_FREDO
+
+On determistic success or failure I_FEXITNDET ends the clause. Otherwise
+it writes the context in CL  and   creates  a jump-choicepoint that will
+take it to I_FREDO. I_FREDO updates the context structure and jumps back
+to the I_FCALLNDETVA (PC -= 4);
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+BEGIN_SHAREDVARS
+int rc;
+struct foreign_context context;
+
+VMI(I_FOPENNDET, 0, 0)
+{ Choice ch;
+  FliFrame ffr;
+
+  context.context = 0L;
+  context.engine  = LD;
+  context.control = FRG_FIRST_CALL;
+  
+foreign_redo:
+  lTop = (LocalFrame)argFrameP(FR, DEF->functor->arity);
+  ch = newChoice(CHP_JUMP, FR PASS_LD);
+  ch->value.PC = PC+3;
+
+  ffr = (FliFrame)(ch+1);
+  lTop = (LocalFrame)(ffr+1);
+  ffr->size = 0;
+  Mark(ffr->mark);
+  ffr->parent = fli_context;
+  ffr->magic = FLI_MAGIC;
+  fli_context = ffr;
+  SAVE_REGISTERS(qid);
+
+  NEXT_INSTRUCTION;
+}
+
+
+VMI(I_FCALLNDETVA, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, DEF->functor->arity, &context);
+  NEXT_INSTRUCTION;
+}
+
+
+VMI(I_FEXITNDET, 0, 0)
+{ FliFrame ffr;
+
+  LOAD_REGISTERS(qid);
+  ffr = fli_context;
+  while((void*)ffr > (void*)FR)
+  { assert(ffr->magic == FLI_MAGIC);
+    ffr = ffr->parent;
+  }
+
+  fli_context = ffr;
+
+  switch(rc)
+  { case TRUE:
+      if ( exception_term )		/* false alarm */
+      { exception_term = 0;
+	setVar(*valTermRef(exception_bin));
+      }
+      assert(BFR->value.PC == PC);
+      BFR = BFR->parent;
+      goto exit_checking_wakeup;
+    case FALSE:
+      if ( exception_term )
+	goto b_throw;
+      assert(BFR->value.PC == PC);
+      BFR = BFR->parent;
+      FRAME_FAILED;
+    default:
+    { /* TBD: call debugger */
+
+      if ( (rc & FRG_REDO_MASK) == REDO_INT )
+      { rc = (word)(((long)rc)>>FRG_REDO_BITS);
+      } else
+      { rc &= ~FRG_REDO_MASK;
+      }
+      CL = (ClauseRef)rc;
+      lTop = (LocalFrame)(BFR+1);
+      goto exit_checking_wakeup;
+    }
+  }
+}
+
+VMI(I_FREDO, 0, 0)
+{ context.context = (word)FR->clause;
+  context.control = FRG_REDO;
+  PC -= 4;
+  goto foreign_redo;
+}
+
+END_SHAREDVARS
 
 
 		 /*******************************

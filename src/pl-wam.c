@@ -516,6 +516,8 @@ callForeign(LocalFrame frame, frg_code control ARG_LD)
   term_t h0 = argFrameP(frame, 0) - (Word)lBase;
   FliFrame ffr;
 
+  assert(true(def, NONDETERMINISTIC));
+
 					/* open foreign frame */
   ffr  = (FliFrame)argFrameP(frame, argc);
   lTop = addPointer(ffr, sizeof(struct fliFrame));
@@ -545,17 +547,13 @@ callForeign(LocalFrame frame, frg_code control ARG_LD)
   
       result = F(h0, argc, &context);
     } else
-    { if ( false(def, NONDETERMINISTIC) )
-      { CALLDETFN(result, argc);
-      } else
-      { struct foreign_context context;
+    { struct foreign_context context;
   
-	context.context = (word)frame->clause;
-	context.engine  = LD;
-	context.control = control;
-
-	CALLNDETFN(result, argc, &context);
-      }
+      context.context = (word)frame->clause;
+      context.engine  = LD;
+      context.control = control;
+      
+      CALLNDETFN(result, argc, &context);
     }
     
     RestoreLocalPtr(fid, frame);
@@ -587,7 +585,6 @@ callForeign(LocalFrame frame, frg_code control ARG_LD)
     return result;
   }
 
-  if ( true(def, NONDETERMINISTIC) )
   { mark m = ffr->mark;
     Choice ch;
 
@@ -615,16 +612,6 @@ callForeign(LocalFrame frame, frg_code control ARG_LD)
     frame->clause = (ClauseRef)result; /* for discardFrame() */
     
     return TRUE;
-  } else				/* illegal return */
-  { FunctorDef fd = def->functor;
-    term_t ex = PL_new_term_ref();
-
-    PL_put_integer(ex, result);
-
-    PL_error(stringAtom(fd->name), fd->arity, NULL, ERR_DOMAIN,
-	     ATOM_foreign_return_value, ex);
-    fli_context = ffr->parent;
-    return FALSE;
   }
 }
 #undef A

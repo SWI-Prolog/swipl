@@ -41,6 +41,18 @@ createForeignSupervisor(Definition def, Func f)
     codes[3] = encode(I_FEXITDET);
 
     def->codes = codes;
+  } else if ( true(def, P_VARARG) )
+  { Code codes = PL_malloc(sizeof(code)*6);
+    
+    *codes++ = (code)5;		/* code-size */
+    codes[0] = encode(I_FOPENNDET);
+    if ( true(def, P_VARARG) )
+      codes[1] = encode(I_FCALLNDETVA);
+    codes[2] = (code)f;
+    codes[3] = encode(I_FEXITNDET);
+    codes[4] = encode(I_FREDO);
+
+    def->codes = codes;
   }
 
   succeed;
