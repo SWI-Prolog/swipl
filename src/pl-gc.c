@@ -749,6 +749,7 @@ clearUninitialisedVarsFrame(LocalFrame fr, Code PC)
 	case I_EXITCATCH:
 	case I_EXITQUERY:
 	case I_FEXITDET:
+	case I_FEXITNDET:
 	  return;
 	case C_JMP:
 	  PC += (int)PC[1]+2;
