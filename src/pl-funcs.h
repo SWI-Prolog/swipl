@@ -93,6 +93,10 @@ COMMON(fid_t) 		PL_open_signal_foreign_frame(void);
 COMMON(void)		updateAlerted(PL_local_data_t *ld);
 COMMON(int)		raiseSignal(PL_local_data_t *ld, int sig);
 
+/* pl-supervisor.c */
+
+COMMON(int)		createForeignSupervisor(Definition def, Func f);
+
 /* pl-atom.c */
 COMMON(word) 		lookupAtom(const char *s, unsigned int len);
 COMMON(word) 		lookupBlob(const char *s, unsigned int len,

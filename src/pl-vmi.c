@@ -1006,8 +1006,10 @@ be able to access these!
 
   if ( DEF->codes )			/* entry point for new supervisors */
   { ARGP = argFrameP(FR, 0);
-    CL   = DEF->definition.clauses;
-    lTop = (LocalFrame)(ARGP + CL->clause->variables);
+    if ( false(DEF, FOREIGN) )
+    { CL   = DEF->definition.clauses;
+      lTop = (LocalFrame)(ARGP + CL->clause->variables);
+    }
 
     PC = DEF->codes;
     NEXT_INSTRUCTION;
@@ -1251,6 +1253,7 @@ VMI(I_EXITFACT, 0, 0)
       }
     }
 #endif /*O_DEBUGGER*/
+  exit_checking_wakeup:
 #ifdef O_ATTVAR
     if ( LD->alerted & ALERT_WAKEUP )
     { if ( *valTermRef(LD->attvar.head) ) /* can be faster */
@@ -1999,222 +2002,159 @@ VMI(A_FIRSTVAR_IS, 1, CA1_VAR)
 	I_FEXITDET
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-#if 0
- VMI(I_FOPEN, 0, 0)
-{ FliFrame ffr = argFrameP(FR, DEF->functor->arity);
+VMI(I_FOPEN, 0, 0)
+{ FliFrame ffr = (FliFrame)argFrameP(FR, DEF->functor->arity);
 
   lTop = (LocalFrame)(ffr+1);
-  fr->size = 0;
-  Mark(fr->mark);
-  fr->parent = fli_context;
-  fr->magic = FLI_MAGIC;
-  fli_context = fr;
+  ffr->size = 0;
+  Mark(ffr->mark);
+  ffr->parent = fli_context;
+  ffr->magic = FLI_MAGIC;
+  fli_context = ffr;
+  SAVE_REGISTERS(qid);
 
   NEXT_INSTRUCTION;
 }
 
 
- VMI(I_FEXIT, 0, 0)
-{ ffr = fli_context;
+BEGIN_SHAREDVARS
+int rc;
 
+VMI(I_FCALLDET0, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+
+  rc = (*f)();
+  VMI_GOTO(I_FEXITDET);
+}
+
+
+VMI(I_FCALLDET1, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0);
+  VMI_GOTO(I_FEXITDET);
+}
+
+
+VMI(I_FCALLDET2, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, h0+1);
+  VMI_GOTO(I_FEXITDET);
+}
+
+
+VMI(I_FCALLDET3, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, h0+1, h0+2);
+  VMI_GOTO(I_FEXITDET);
+}
+
+
+VMI(I_FCALLDET4, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, h0+1, h0+2, h0+3);
+  VMI_GOTO(I_FEXITDET);
+}
+
+
+VMI(I_FCALLDET5, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4);
+  VMI_GOTO(I_FEXITDET);
+}
+
+
+VMI(I_FCALLDET6, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5);
+  VMI_GOTO(I_FEXITDET);
+}
+
+
+VMI(I_FCALLDET7, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5, h0+6);
+  VMI_GOTO(I_FEXITDET);
+}
+
+
+VMI(I_FCALLDET8, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5, h0+6, h0+7);
+  VMI_GOTO(I_FEXITDET);
+}
+
+
+VMI(I_FCALLDET9, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5, h0+6, h0+7, h0+8);
+  VMI_GOTO(I_FEXITDET);
+}
+
+
+VMI(I_FCALLDET10, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5, h0+6, h0+7, h0+8, h0+9);
+  VMI_GOTO(I_FEXITDET);
+}
+
+
+VMI(I_FEXITDET, 0, 0)
+{ FliFrame ffr;
+
+  LOAD_REGISTERS(qid);
+  ffr = fli_context;
   while((void*)ffr > (void*)FR)
-  { assert(fr->magic == FLI_MAGIC);
+  { assert(ffr->magic == FLI_MAGIC);
     ffr = ffr->parent;
   }
 
   fli_context = ffr;
-  NEXT_INSTRUCTION;
-}
 
-
- VMI(I_DETFOREIGN0, 1, CA1_FOREIGN)
-{ Func f = (Func)*PC++;
-  int rc;
-
-  fid_t fid = PL_open_foreign_frame();
-  SAVE_REGISTERS(qid);
-  rc = (*f)();
-  LOAD_REGISTERS(qid);
-  PL_close_foreign_frame(fid);
-
-  if ( exception_term )
-    goto b_throw;
-
-  if ( rc )
-    VMI_GOTO(I_EXIT);
-
-  FRAME_FAILED;
-}
-#endif
-
-
-		 /*******************************
-		 *	  INLINED FOREIGNS	*
-		 *******************************/
-
-#ifdef O_INLINE_FOREIGNS
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-I_CALL_FV[012] Call a deterministic foreign procedures with a 0, 1, or 2
-arguments that appear as variables  in   the  clause.  This covers true,
-fail, var(X) and other type-checking  predicates,   =/2  in  a number of
-cases (i.e. X = Y, not X = 5).
-
-The VMI for these calls are ICALL_FVN, proc, var-index ...
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-BEGIN_SHAREDVARS
-  int nvars;
-  Procedure fproc;
-  Word v;
-
-VMI(I_CALL_FV0, 1, CA1_PROC)
-{ fproc = (Procedure) *PC++;
-  nvars = 0;
-
-  goto common_call_fv;
-}
-
-VMI(I_CALL_FV1, 2, CA1_PROC)
-{ fproc = (Procedure) *PC++;
-  nvars = 1;
-  v = varFrameP(FR, *PC++);
-  *ARGP++ = (needsRef(*v) ? makeRefL(v) : *v);
-  goto common_call_fv;
-}
-
-VMI(I_CALL_FV2, 3, CA1_PROC)
-{ fproc = (Procedure) *PC++;
-  nvars = 2;
-  v = varFrameP(FR, *PC++);
-  *ARGP++ = (needsRef(*v) ? makeRefL(v) : *v);
-  v = varFrameP(FR, *PC++);
-  *ARGP++ = (needsRef(*v) ? makeRefL(v) : *v);
-
-  common_call_fv:
-  { Definition def;
-    Func f;
-    int rval;
-
-    NFR = lTop;
-    def = getProcDefinedDefinition(NFR, PC, fproc PASS_LD);
-    f = def->definition.function;
-
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-If we are debugging, just build a normal  frame and do the normal thing,
-so the inline call is expanded to a normal call and may be traced.
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-    if ( !f ||
-#ifdef O_DEBUGGER
-	 debugstatus.debugging ||
-#endif
-	 false(def, FOREIGN) )
-    { NFR->flags = FR->flags;
-      if ( true(DEF, HIDE_CHILDS) ) /* parent has hide_childs */
-	set(NFR, FR_NODEBUG);
-      DEF = def;
-      NFR->context = FR->context;
-
-      goto normal_call;
-    } else
-    { LocalFrame oldtop = lTop;
-      term_t h0;
-      fid_t fid;
-  
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-We must create a frame and mark the  stacks for two reasons: undo if the
-foreign call fails *AND*  make  sure   Trail()  functions  properly.  We
-increase lTop too to prepare for asynchronous interrupts.
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-      LD->statistics.inferences++;
-      h0 = argFrameP(NFR, 0) - (Word)lBase;
-      lTop = (LocalFrame) argFrameP(NFR, nvars);
-      if ( true(def, METAPRED) )
-	NFR->context = FR->context;
-      else
-	NFR->context = def->module;
-      NFR->predicate      = def;
-      NFR->programPointer = PC;
-      NFR->parent         = FR;
-      NFR->flags	  = FR->flags;
-      NFR->clause	  = NULL; /* for handling exceptions */
-#ifdef O_LOGICAL_UPDATE
-      NFR->generation     = GD->generation;
-#endif
-      incLevel(NFR);
-#ifdef O_PROFILE	
-      if ( LD->profile.active )
-	NFR->prof_node = profCall(def PASS_LD);
-      else
-	NFR->prof_node = NULL;
-#endif
-      environment_frame = NFR;
-
-      exception_term = 0;
-      SAVE_REGISTERS(qid);
-      fid = PL_open_foreign_frame();
-      if ( is_signalled(PASS_LD1) )
-      { PL_handle_signals();
-	LOAD_REGISTERS(qid);
-	if ( exception_term )
-	{ PL_close_foreign_frame(fid);
-	  goto b_throw;
-	}
+  switch(rc)
+  { case TRUE:
+      if ( exception_term )		/* false alarm */
+      { exception_term = 0;
+	setVar(*valTermRef(exception_bin));
       }
-      END_PROF();
-      START_PROF(PROF_FOREIGN, "PROF_FOREIGN");
-      if ( true(def, P_VARARG) )
-      { struct foreign_context ctx;
-	ctx.context = 0;
-	ctx.control = FRG_FIRST_CALL;
-	ctx.engine  = LD;
-
-	rval = (*f)(h0, nvars, &ctx);
-      } else
-      { switch(nvars)
-	{ case 0:
-	    rval = (*f)();
-	    break;
-	  case 1:
-	    rval = (*f)(h0);
-	    break;
-	  case 2:
-	  default:
-	    rval = (*f)(h0, h0+1);
-	    break;
-	}
-      }
-      PL_close_foreign_frame(fid);
-      END_PROF();
-      LOAD_REGISTERS(qid);
-
-      ARGP -= nvars;
-      environment_frame = FR;
-      lTop = oldtop;
-
+      goto exit_checking_wakeup;
+    case FALSE:
       if ( exception_term )
-      { if ( rval )
-	{ exception_term = 0;
-	  setVar(*valTermRef(exception_bin));
-	} else
-	  goto b_throw;
-      }
+	goto b_throw;
+      FRAME_FAILED;
+    default:
+    { fid_t fid = PL_open_foreign_frame();
+      term_t ex = PL_new_term_ref();
 
-      if ( rval )
-      { assert(rval == TRUE);
-	Profile(profExit(FR->prof_node PASS_LD));
-
-	CHECK_WAKEUP;
-	NEXT_INSTRUCTION;
-      }
-
-      LD->statistics.inferences++;	/* is a redo! */
-      BODY_FAILED;
+      PL_put_integer(ex, rc);
+      PL_error(NULL, 0, NULL, ERR_DOMAIN,
+	       ATOM_foreign_return_value, ex);
+      PL_close_foreign_frame(fid);
+      goto b_throw;
     }
   }
 }
 END_SHAREDVARS
-#endif /*O_INLINE_FOREIGNS*/
+
 
 
 		 /*******************************

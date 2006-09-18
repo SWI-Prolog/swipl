@@ -225,7 +225,10 @@ updateAlerted(PL_local_data_t *ld)
   if ( ld->depth_info.limit != DEPTH_NO_LIMIT ) mask |= ALERT_DEPTHLIMIT;
 #endif
 #ifdef O_ATTVAR
-  if ( !isVar(ld->attvar.head) )		mask |= ALERT_WAKEUP;
+					/* is valTermRef(ld->attvar.head) */
+  if ( ld->stacks.local.base &&
+       !isVar(((Word)ld->stacks.local.base)[ld->attvar.head]) )
+						mask |= ALERT_WAKEUP;
 #endif
 #ifdef O_DEBUGGER
   if ( ld->_debugstatus.debugging )		mask |= ALERT_DEBUG;

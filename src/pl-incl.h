@@ -134,7 +134,6 @@ handy for it someone wants to add a data type to the system.
 #define O_PROLOG_FUNCTIONS	1
 #define O_BLOCK			1
 #define O_CATCHTHROW		1
-#define O_INLINE_FOREIGNS	1
 #define O_DEBUGGER		1
 #define O_INTERRUPT		1
 #define O_DESTRUCTIVE_ASSIGNMENT 1
@@ -897,7 +896,6 @@ with one operation, it turns out to be faster as well.
 #define UNKNOWN_ERROR		(0x0040) /* module */
 #define UNKNOWN_WARNING		(0x0080) /* module */
 
-#define INLINE_F		(0x0001) /* functor (inline foreign) */
 #define CONTROL_F		(0x0002) /* functor (compiled controlstruct) */
 #define ARITH_F			(0x0004) /* functor (arithmetic operator) */
 
@@ -1098,7 +1096,8 @@ struct functorDef
   word		name;		/* Name of functor */
   unsigned	arity;		/* arity of functor */
   unsigned      flags;		/* Flag field holding: */
-  /* INLINE_F	   Inlined foreign (system) predicate */
+		  /* CONTROL_F	   Compiled control-structure */
+		  /* ARITH_F	   Arithmetic function */
 };
 
 
@@ -1166,6 +1165,7 @@ struct clause_ref
 #define CA1_MODULE	8	/* a module */
 #define CA1_VAR		9	/* a variable(-offset) */
 #define CA1_MPZ	       10	/* GNU mpz number */
+#define CA1_FOREIGN    11	/* Foreign function pointer */
 
 typedef struct
 { char		*name;		/* name of the code */

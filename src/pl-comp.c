@@ -1447,37 +1447,6 @@ re-definition.
 	}
       }
 
-#ifdef O_INLINE_FOREIGNS
-#define MAX_FV 2
-      if ( true(fdef, INLINE_F) && ar <= MAX_FV && !ci->islocal )
-      { int n;
-	int vars[MAX_FV];
-
-	for(n = 0; n < ar; n++)
-	{ Word a = argTermP(*arg, n);
-
-	  deRef(a);
-	  if ( (vars[n] = isIndexedVarTerm(*a PASS_LD)) >= 0 )
-	    continue;
-
-	  goto non_fv;
-	}
-
-	for(n = 0; n < ar; n++)
-	{ if ( isFirstVar(ci->used_var, vars[n]) )
-	  { Output_1(ci, C_VAR, VAROFFSET(vars[n]));
-	  }
-	}
-
-        Output_1(ci, I_CALL_FV0 + ar, (code)proc);
-	for(n=0; n<ar; n++)
-	  Output_a(ci, VAROFFSET(vars[n]));
-
-	succeed;
-      non_fv:;
-      }
-#endif /*O_INLINE_FOREIGNS*/
-
       for(arg = argTermP(*arg, 0); ar > 0; ar--, arg++)
 	compileArgument(arg, A_BODY, ci PASS_LD);
 
@@ -1527,13 +1496,7 @@ re-definition.
     { functor_t fdef = lookupFunctorDef(*arg, 0);
       code cproc = (code) lookupProcedure(fdef, tm);
 
-#ifdef O_INLINE_FOREIGNS
-      if ( true(valueFunctor(fdef), INLINE_F) )
-      { Output_1(ci, I_CALL_FV0, cproc);
-      } else
-#endif /*O_INLINE_FOREIGNS*/
-      { Output_1(ci, call, cproc);
-      }
+      Output_1(ci, call, cproc);
     }
 
     succeed;
@@ -2715,24 +2678,6 @@ decompileBody(decompileInfo *di, code end, Code until ARG_LD)
       case I_USERCALL0:
 			    pushed++;
 			    continue;
-#if O_INLINE_FOREIGNS
-      case I_CALL_FV0:			/* proc */
-      case I_CALL_FV1:			/* proc, var */
-      case I_CALL_FV2:			/* proc, var, var */
-      { int vars = op - I_CALL_FV0;
-	int i;
-
-	for(i=0; i<vars; i++)
-	{ int index = PC[i+1];		/* = B_VAR <N> (never nested!) */
-	  
-	  *ARGP++ = makeVarRef(index);
-	}
-	build_term(((Procedure)XR(*PC))->definition->functor->functor, di PASS_LD);
-	pushed++;
-	PC += vars+1;
-	continue;
-      }
-#endif /*O_INLINE_FOREIGNS*/
 #if O_COMPILE_OR
 #define DECOMPILETOJUMP { int to_jump = (int) *PC++; \
 			  decompileBody(di, (code)-1, PC+to_jump PASS_LD); \
@@ -3459,16 +3404,6 @@ wamListInstruction(IOSTREAM *out, Clause clause, Code bp)
       int jmp = *bp++;
       assert(ci->arguments == 2);
       Sfprintf(out, " var(%d), jmp(%d)", var, jmp);
-      break;
-    }
-    case I_CALL_FV1:
-    case I_CALL_FV2:
-    { int vars = op - I_CALL_FV0;
-      Procedure proc = (Procedure) *bp++;
-
-      Sfprintf(out, " %s", procedureName(proc));
-      for( ; vars > 0; vars-- )
-	Sfprintf(out, ", var(%d)", VARNUM(*bp++));
       break;
     }
     default:
@@ -4250,9 +4185,6 @@ pl_clause_term_position(term_t ref, term_t pc, term_t locterm)
       case I_APPLY:
       case I_USERCALL0:
       case I_USERCALLN:
-      case I_CALL_FV0:
-      case I_CALL_FV1:
-      case I_CALL_FV2:
       case I_CATCH:
 	PC += ci->arguments;
         if ( loc == PC )
@@ -4327,9 +4259,6 @@ pl_break_pc(term_t ref, term_t pc, term_t nextpc, control_t h)
       case I_APPLY:
       case I_USERCALL0:
       case I_USERCALLN:
-      case I_CALL_FV0:
-      case I_CALL_FV1:
-      case I_CALL_FV2:
 	if ( PL_unify_integer(pc, PC-clause->codes) &&
 	     PL_unify_integer(nextpc, next-clause->codes) )
 	  ForeignRedoInt(next-clause->codes);
