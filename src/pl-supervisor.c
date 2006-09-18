@@ -28,18 +28,19 @@ int
 createForeignSupervisor(Definition def, Func f)
 { assert(true(def, FOREIGN));
   
-  if ( false(def, P_VARARG) )
-  { if ( false(def, NONDETERMINISTIC) )
-    { Code codes = PL_malloc(sizeof(code)*5);
-      
-      *codes++ = (code)4;		/* code-size */
-      codes[0] = encode(I_FOPEN);
+  if ( false(def, NONDETERMINISTIC) )
+  { Code codes = PL_malloc(sizeof(code)*5);
+    
+    *codes++ = (code)4;		/* code-size */
+    codes[0] = encode(I_FOPEN);
+    if ( true(def, P_VARARG) )
+      codes[1] = encode(I_FCALLDETVA);
+    else
       codes[1] = encode(I_FCALLDET0+def->functor->arity);
-      codes[2] = (code)f;
-      codes[3] = encode(I_FEXITDET);
+    codes[2] = (code)f;
+    codes[3] = encode(I_FEXITDET);
 
-      def->codes = codes;
-    }
+    def->codes = codes;
   }
 
   succeed;

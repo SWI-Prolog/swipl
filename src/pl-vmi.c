@@ -2020,6 +2020,30 @@ VMI(I_FOPEN, 0, 0)
 BEGIN_SHAREDVARS
 int rc;
 
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+I_FCALLDETVA:  Call  deterministic  foreign    function  using  P_VARARG
+conventions.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+VMI(I_FCALLDETVA, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  struct foreign_context context;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  context.context = 0L;
+  context.engine  = LD;
+  context.control = FRG_FIRST_CALL;
+
+  rc = (*f)(h0, DEF->functor->arity, &context);
+  VMI_GOTO(I_FEXITDET);
+}
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+I_FCALLDET0 .. I_FCALLDET10: Call deterministic   foreign function using
+a1, a2, ... calling conventions.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
 VMI(I_FCALLDET0, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
 
