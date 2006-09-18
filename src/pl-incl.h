@@ -1283,7 +1283,6 @@ struct localFrame
 typedef enum
 { CHP_JUMP = 0,				/* A jump due to ; */
   CHP_CLAUSE,				/* Next clause of predicate */
-  CHP_FOREIGN,				/* Foreign code choicepoint */
   CHP_TOP,				/* First (toplevel) choice */
   CHP_CATCH,				/* $catch initiated choice */
   CHP_DEBUG,				/* Enable redo */

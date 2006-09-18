@@ -310,7 +310,6 @@ PRED_IMPL("deterministic", 1, deterministic, 0)
 	if ( BFR->frame == FR )
 	  return PL_unify_atom(A1, ATOM_true);
       case CHP_JUMP:
-      case CHP_FOREIGN:
 	if ( (void *)BFR > (void *)FR )
 	  return PL_unify_atom(A1, ATOM_false);
         else

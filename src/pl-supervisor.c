@@ -24,10 +24,18 @@
 
 #include "pl-incl.h"
 
+#define MAX_FLI_ARGS 10			/* extend switches on change */
+
 int
 createForeignSupervisor(Definition def, Func f)
 { assert(true(def, FOREIGN));
   
+  if ( false(def, P_VARARG) )
+  { if ( def->functor->arity > MAX_FLI_ARGS )
+      sysError("Too many arguments to foreign function %s (>%d)", \
+	       predicateName(def), MAX_FLI_ARGS); \
+  }
+
   if ( false(def, NONDETERMINISTIC) )
   { Code codes = PL_malloc(sizeof(code)*5);
     
@@ -41,13 +49,15 @@ createForeignSupervisor(Definition def, Func f)
     codes[3] = encode(I_FEXITDET);
 
     def->codes = codes;
-  } else if ( true(def, P_VARARG) )
+  } else
   { Code codes = PL_malloc(sizeof(code)*6);
     
     *codes++ = (code)5;		/* code-size */
     codes[0] = encode(I_FOPENNDET);
     if ( true(def, P_VARARG) )
       codes[1] = encode(I_FCALLNDETVA);
+    else
+      codes[1] = encode(I_FCALLNDET0+def->functor->arity);
     codes[2] = (code)f;
     codes[3] = encode(I_FEXITNDET);
     codes[4] = encode(I_FREDO);

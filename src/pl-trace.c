@@ -1116,7 +1116,6 @@ hasAlternativesFrame(LocalFrame frame)
       { switch( ch->type )
 	{ case CHP_CLAUSE:
 	  case CHP_JUMP:
-	  case CHP_FOREIGN:
 	    return TRUE;
 	  case CHP_TOP:			/* no default to get warning */
 	  case CHP_CATCH:
@@ -1172,7 +1171,6 @@ alternativeFrame(LocalFrame frame)
 
 	  switch( ch->type )
 	  { case CHP_CLAUSE:
-	    case CHP_FOREIGN:
 	    case CHP_JUMP:
 	      DEBUG(3, Sdprintf("\tReturning: %s\n", chp_chars(ch)));
 	      return ch->frame;

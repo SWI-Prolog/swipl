@@ -949,7 +949,7 @@ retry_continue:
       set(FR, FR_INBOX);
       switch(tracePort(FR, BFR, CALL_PORT, NULL PASS_LD))
       { case ACTION_FAIL:	goto frame_failed;
-	case ACTION_IGNORE: goto exit_builtin;
+	case ACTION_IGNORE:     VMI_GOTO(I_EXIT);
       }
     }
 #endif /*O_DEBUGGER*/
@@ -1004,9 +1004,10 @@ be able to access these!
   }
 #endif /*O_SHIFT_STACKS*/
 
+  ARGP = argFrameP(FR, 0);
+    
   if ( DEF->codes )			/* entry point for new supervisors */
-  { ARGP = argFrameP(FR, 0);
-    if ( false(DEF, FOREIGN) )
+  { if ( false(DEF, FOREIGN) )
     { CL   = DEF->definition.clauses;
       lTop = (LocalFrame)(ARGP + CL->clause->variables);
     }
@@ -1015,49 +1016,11 @@ be able to access these!
     NEXT_INSTRUCTION;
   }
 
-  if ( true(DEF, FOREIGN) )
-  { int rval;
-
-    SAVE_REGISTERS(qid);
-    FR->clause = NULL;
-    END_PROF();
-    START_PROF(PROF_FOREIGN, "PROF_FOREIGN");
-    rval = callForeign(FR, FRG_FIRST_CALL PASS_LD);
-    END_PROF();
-    LOAD_REGISTERS(qid);
-
-    if ( rval )
-    { exit_builtin:
-#ifdef O_ATTVAR
-      if ( LD->alerted & ALERT_WAKEUP )
-      { if ( *valTermRef(LD->attvar.head) ) /* can be faster */
-	{ static code exit;
-	  
-	  exit = encode(I_EXIT);
-	  PC = &exit;
-	  goto wakeup;
-	}
-	LD->alerted &= ~ALERT_WAKEUP;
-      }
-      VMI_GOTO(I_EXIT);
-#endif
-    }
-
-#if O_CATCHTHROW
-    if ( exception_term )
-    { goto b_throw;
-    }
-#endif
-
-    goto frame_failed;
-  } 
-
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Call a normal Prolog predicate.  Just   load  the machine registers with
 values found in the clause,  give  a   reference  to  the clause and set
 `lTop' to point to the first location after the current frame.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-  ARGP = argFrameP(FR, 0);
   enterDefinition(DEF);
   DEBUG(9, Sdprintf("Searching clause ... "));
 
@@ -2229,6 +2192,103 @@ VMI(I_FCALLNDETVA, 1, CA1_FOREIGN)
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
   rc = (*f)(h0, DEF->functor->arity, &context);
+  NEXT_INSTRUCTION;
+}
+
+
+VMI(I_FCALLNDET0, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+
+  rc = (*f)(&context);
+  NEXT_INSTRUCTION;
+}
+
+VMI(I_FCALLNDET1, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, &context);
+  NEXT_INSTRUCTION;
+}
+
+
+VMI(I_FCALLNDET2, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, h0+1, &context);
+  NEXT_INSTRUCTION;
+}
+
+
+VMI(I_FCALLNDET3, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, h0+1, h0+2, &context);
+  NEXT_INSTRUCTION;
+}
+
+
+VMI(I_FCALLNDET4, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, h0+1, h0+2, h0+3, &context);
+  NEXT_INSTRUCTION;
+}
+
+
+VMI(I_FCALLNDET5, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, &context);
+  NEXT_INSTRUCTION;
+}
+
+
+VMI(I_FCALLNDET6, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5, &context);
+  NEXT_INSTRUCTION;
+}
+
+
+VMI(I_FCALLNDET7, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5, h0+6, &context);
+  NEXT_INSTRUCTION;
+}
+
+
+VMI(I_FCALLNDET8, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5, h0+6, h0+7, &context);
+  NEXT_INSTRUCTION;
+}
+
+
+VMI(I_FCALLNDET9, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5, h0+6, h0+7, h0+8, &context);
+  NEXT_INSTRUCTION;
+}
+
+
+VMI(I_FCALLNDET10, 1, CA1_FOREIGN)
+{ Func f = (Func)*PC++;
+  term_t h0 = argFrameP(FR, 0) - (Word)lBase;
+
+  rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5, h0+6, h0+7, h0+8, h0+9, &context);
   NEXT_INSTRUCTION;
 }
 
