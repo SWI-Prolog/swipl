@@ -96,6 +96,7 @@ COMMON(int)		raiseSignal(PL_local_data_t *ld, int sig);
 /* pl-supervisor.c */
 
 COMMON(int)		createForeignSupervisor(Definition def, Func f);
+COMMON(int)		createSingleClauseSupervisor(Definition def);
 
 /* pl-atom.c */
 COMMON(word) 		lookupAtom(const char *s, unsigned int len);
@@ -195,7 +196,8 @@ COMMON(ClauseRef) 	firstClause(Word argv, LocalFrame fr, Definition def,
 			    ClauseRef *next ARG_LD);
 COMMON(ClauseRef) 	findClause(ClauseRef cl, Word argv, LocalFrame fr,
 			   Definition def, ClauseRef *next ARG_LD);
-COMMON(bool) 		reindexClause(Clause clause, Definition def);
+COMMON(bool) 		reindexClause(Clause clause, Definition def,
+				      unsigned long pattern);
 COMMON(bool) 		unify_index_pattern(Procedure proc, term_t value);
 COMMON(bool) 		hashDefinition(Definition def, int buckets);
 COMMON(word) 		pl_hash(term_t pred);
