@@ -1769,11 +1769,13 @@ typedef enum
   STACK_OVERFLOW_FATAL
 } stack_overflow_action;
 
+#define ensureRoomStack(s, n) ensure_room_stack((Stack)&LD->stacks.s, (n))
+
 #if O_DYNAMIC_STACKS
 #ifdef NO_SEGV_HANDLING
 #define requireStack(s, n) \
 	{ if ( roomStack(s) < (long)(n) ) \
- 	    ensureRoomStack((Stack)&LD->stacks.s, n); \
+ 	    ensureRoomStack(s, n); \
 	}
 #else /*NO_SEGV_HANDLING*/
 #define requireStack(s, n)

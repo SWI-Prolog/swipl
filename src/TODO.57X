@@ -5,7 +5,7 @@
 Open ends:
 
 	- VMIs sharing variables.  See BEGIN_SHAREDVARS ... END_SHAREDVARS
-		- Does this harm optimization?
+		- Does this harm C-compiler optimization?
 
 ---++ Supervisor instructions
 
@@ -19,7 +19,7 @@ Open ends:
 ---+++ Supervisors
 
 	* Undefined
-	* Foreign
+	* Foreign				[OK]
 		- Deterministic
 		- Non-deterministic
 	* Dynamic
@@ -27,7 +27,7 @@ Open ends:
 		- Normal
 	* Static
 		- Generic (current model)
-		- 1 clause
+		- 1 clause			[OK]
 		- Simple type-switch
 		- Hashed
 			- Unique
@@ -89,7 +89,6 @@ Simple way forward:
 	    - Jump to it if it exists
 	    - Keep (most of) the rest
 		- Simply ignore ->codes for debugging
-	    - Index: if only one clause create the jump
 	    - Link one and only clause
 	    	TBD: Unlink on eraseClause
 ================================================================
@@ -146,17 +145,17 @@ Problems:
 ================================================================
 Cleanup:
 
-	- Associate all special conditions under one test:
-		- Profiling [ok]
-		- Debugging
-		- Signalled [ok]
-		- OutOfStack [ok]
-		- GC requested [ok]
-		- Coroutining wakeup
+	- Associate all special conditions under one test (LD->alerted):
+		- Profiling		[OK]
+		- Debugging		[OK]
+		- Signalled		[OK]
+		- OutOfStack		[OK]
+		- GC requested		[OK]
+		- Coroutining wakeup	[OK]
 
 ================================================================
 Arithmetic:
-	- A_FIRSTVAR_IS [OK]
+	- A_FIRSTVAR_IS 		[OK]
 
 
 ================================================================
