@@ -36,6 +36,13 @@ allocCodes(int n)
 }
 
 
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Foreign supervisors.  Creates one of:
+
+DET code:  I_FOPEN,     I_FCALLDETVA|I_FCALLDET<N>,   I_FEXITDET
+NDET code: I_FOPENNDET, I_FCALLNDETVA|I_FCALLNDET<N>, I_FEXITNDET, I_FREDO
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
 int
 createForeignSupervisor(Definition def, Func f)
 { assert(true(def, FOREIGN));
@@ -79,7 +86,9 @@ createForeignSupervisor(Definition def, Func f)
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 createSingleClauseSupervisor() creates a supervisor to call the one and
-only clause of the predicate.
+only clause of the predicate.  Creates
+
+	S_TRUSTME <ClauseRef>
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 int
@@ -102,3 +111,5 @@ createSingleClauseSupervisor(Definition def)
 
   fail;
 }
+
+
