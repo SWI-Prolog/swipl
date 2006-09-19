@@ -103,7 +103,8 @@ prof_report_field(prof_record *pr)
 void
 prof_report()
 { int i;
-  ticks totalfast = 0, totalav = 0;
+  ticks totalticks = 0, totalfast = 0, totalav = 0;
+  long long totalcalls = 0;
   prof_record *pr = &prof_data[0];
 
   for(i=0; i<100; i++)
@@ -124,8 +125,10 @@ prof_report()
   qsort(pr, MAXPROF-1, sizeof(*pr), prof_compare);
   for(i=1; i<MAXPROF; i++, pr++)
   { if ( pr->name && pr->calls > 0 )
-    { totalfast += pr->fastest - overhead;
-      totalav   += pr->ticks/pr->calls - overhead;
+    { totalfast  += pr->fastest - overhead;
+      totalav    += pr->ticks/pr->calls - overhead;
+      totalticks += pr->ticks - pr->calls*overhead;
+      totalcalls += pr->calls;
     }
 
     prof_report_field(pr);
@@ -133,10 +136,10 @@ prof_report()
 
   printf("------------------------------------------------------\n");
 
-  { double f  = (double)totalfast/CPU_MHz();
-    double av = (double)totalav/CPU_MHz();
+  { double tot = (double)totalticks/CPU_MHz();
 
-    printf("%-7s %10.3f %10.3f Totals\n", "", f, av);
+    printf("%9lld %10s %10s %20.3f %s\n",
+	   totalcalls, "", "", tot, "Totals");
   }
 }
 
