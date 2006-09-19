@@ -2207,8 +2207,9 @@ reindexDefinition(Definition def)
   def->indexPattern &= ~NEED_REINDEX;
 
                                        /* directly link one and only clause */
-  if ( def->number_of_clauses == 1 && false(def, DYNAMIC|MULTIFILE) )
-  { createSingleClauseSupervisor(def);
+  if ( false(def, DYNAMIC|MULTIFILE) )
+  { if ( createSingleClauseSupervisor(def) ||
+	 createListSupervisor(def) )
     goto out;
   }
 
@@ -2219,7 +2220,7 @@ reindexDefinition(Definition def)
       if ( true(cref->clause, ERASED) )
 	continue;
     
-      if ( arg1Key(cref->clause, &key) )
+      if ( arg1Key(cref->clause, FALSE, &key) )
 	canindex++;
       else
 	cannotindex++;

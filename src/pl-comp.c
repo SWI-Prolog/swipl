@@ -2028,14 +2028,16 @@ PRED_IMPL("compile_predicates",  1, compile_predicates, PL_FA_TRANSPARENT)
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 arg1Key() determines the first argument-key   by  inspecting the virtual
-machine code.
+machine code. If constonly is  non-zero,  it   creates  a  key for large
+integers and floats. Otherwise it only succeeds on atoms, small integers
+and functors.
 
 NOTE: this function must  be  kept   consistent  with  indexOfWord()  in
 pl-index.c!
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 int
-arg1Key(Clause clause, word *key)
+arg1Key(Clause clause, int constonly, word *key)
 { Code PC = clause->codes;
 
   for(;;)
@@ -2063,6 +2065,7 @@ arg1Key(Clause clause, word *key)
 	*key = (word)PC[0] ^ (word)PC[1];
         succeed;
       case H_INTEGER:
+      if ( !constonly )
       { word k;
 #if SIZEOF_LONG == 4
 	k = (word)*PC;			/* indexOfWord() picks 64-bits */
@@ -2078,6 +2081,7 @@ arg1Key(Clause clause, word *key)
 	succeed;
       }
       case H_FLOAT:			/* tbd */
+      if ( !constonly )
       { word k;
 	switch(WORDS_PER_DOUBLE)
 	{ case 2:

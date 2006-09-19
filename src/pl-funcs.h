@@ -97,6 +97,7 @@ COMMON(int)		raiseSignal(PL_local_data_t *ld, int sig);
 
 COMMON(int)		createForeignSupervisor(Definition def, Func f);
 COMMON(int)		createSingleClauseSupervisor(Definition def);
+COMMON(int)		createListSupervisor(Definition def);
 
 /* pl-atom.c */
 COMMON(word) 		lookupAtom(const char *s, unsigned int len);
@@ -151,7 +152,7 @@ COMMON(Clause) 		assert_term(term_t term, int where,
 COMMON(void) 		unregisterAtomsClause(Clause clause);
 COMMON(word) 		pl_redefine_system_predicate(term_t term);
 COMMON(bool) 		decompileHead(Clause clause, term_t head);
-COMMON(int) 		arg1Key(Clause clause, word *key);
+COMMON(int) 		arg1Key(Clause clause, int constonly, word *key);
 COMMON(bool) 		decompile(Clause clause, term_t term, term_t bindings);
 COMMON(word) 		pl_clause4(term_t p, term_t t, term_t ref, term_t b,
 				   control_t h);
