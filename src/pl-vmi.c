@@ -842,14 +842,14 @@ execution can continue at `next_instruction'
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 VMI(I_CALL, 1, CA1_PROC)
-{ NFR = lTop;
-  NFR->flags = FR->flags;
+{ NFR          = lTop;
+  NFR->flags   = FR->flags;
+  NFR->context = FR->context;
   if ( true(DEF, HIDE_CHILDS) ) /* parent has hide_childs */
     set(NFR, FR_NODEBUG);
   { Procedure proc = (Procedure) *PC++;
     DEF = getProcDefinedDefinition(NFR, PC, proc PASS_LD);
   }
-  NFR->context = FR->context;
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 This is the common part of the call variations.  By now the following is
@@ -876,19 +876,24 @@ not worthwile.
 Note: we are working above `lTop' here!!   We restore this as quickly as
 possible to be able to call-back to Prolog.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-  NFR->parent         = FR;
+  NFR->parent	      = FR;
   NFR->predicate      = DEF;		/* TBD */
   NFR->programPointer = PC;		/* save PC in child */
   NFR->clause         = NULL;		/* for save atom-gc */
   environment_frame = FR = NFR;		/* open the frame */
 
 depart_continue:
-  incLevel(FR);
 #ifdef O_LOGICAL_UPDATE
   FR->generation     = GD->generation;
 #endif
+  incLevel(FR);
 retry_continue:
-  lTop = (LocalFrame) argFrameP(FR, DEF->functor->arity);
+  clear(FR, FR_SKIPPED|FR_WATCHED|FR_CATCHED);
+  if ( false(DEF, METAPRED) )
+    FR->context = DEF->module;
+  if ( false(DEF, HIDE_CHILDS) )	/* was SYSTEM */
+    clear(FR, FR_NODEBUG);
+  LD->statistics.inferences++;
 
 #ifdef O_DEBUGLOCAL
 { Word ap = argFrameP(FR, DEF->functor->arity);
@@ -899,15 +904,12 @@ retry_continue:
 }
 #endif
 
-  clear(FR, FR_SKIPPED|FR_WATCHED|FR_CATCHED);
-  if ( false(DEF, METAPRED) )
-    FR->context = DEF->module;
-  if ( false(DEF, HIDE_CHILDS) )	/* was SYSTEM */
-    clear(FR, FR_NODEBUG);
-  LD->statistics.inferences++;
 
   if ( LD->alerted )
-  { if ( LD->outofstack )
+  {					/* play safe */
+    lTop = (LocalFrame) argFrameP(FR, DEF->functor->arity);
+
+    if ( LD->outofstack )
     { enterDefinition(DEF);		/* exception will lower! */
       outOfStack(LD->outofstack, STACK_OVERFLOW_RAISE);
       goto b_throw;
@@ -968,6 +970,11 @@ retry_continue:
 #endif /*O_DEBUGGER*/
   }
 
+  if ( DEF->codes )			/* entry point for new supervisors */
+  { PC = DEF->codes;
+    NEXT_INSTRUCTION;
+  }
+
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Undefined predicate detection and handling.   trapUndefined() takes care
 of linking from the public modules or calling the exception handler.
@@ -1019,11 +1026,6 @@ be able to access these!
 
   ARGP = argFrameP(FR, 0);
     
-  if ( DEF->codes )			/* entry point for new supervisors */
-  { PC = DEF->codes;
-    NEXT_INSTRUCTION;
-  }
-
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Call a normal Prolog predicate.  Just   load  the machine registers with
 values found in the clause,  give  a   reference  to  the clause and set
@@ -1598,6 +1600,7 @@ VMI(S_TRUSTME, 1, CA1_CLAUSEREF)
 { ClauseRef cref = (ClauseRef)*PC++;
 
   CL   = cref;
+  ARGP = argFrameP(FR, 0);
   lTop = (LocalFrame)(ARGP + cref->clause->variables);
   PC   = cref->clause->codes;
 
@@ -1621,6 +1624,7 @@ VMI(S_ALLCLAUSES, 0, 0)
 { cref = DEF->definition.clauses;
 
 next_clause:
+  ARGP = argFrameP(FR, 0);
   for(; cref; cref = cref->next)
   { if ( visibleClause(cref->clause, FR->generation) )
     { CL   = cref;
@@ -1644,7 +1648,6 @@ VMI(S_NEXTCLAUSE, 0, 0)
 { cref = CL->next;
 
   PC--;
-  ARGP = argFrameP(FR, 0);
   goto next_clause;
 }
 END_SHAREDVARS
@@ -1659,6 +1662,7 @@ VMI(S_LIST, 2, CA1_CLAUSEREF)
 { ClauseRef cref;
   Word k;
 
+  ARGP = argFrameP(FR, 0);
   deRef2(ARGP, k);
   if ( isList(*k) )
     cref = (ClauseRef)PC[1];
