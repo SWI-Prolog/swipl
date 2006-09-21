@@ -797,6 +797,13 @@ longToPointer(ulong p)
 }
 
 
+ulong
+PL_pointer_to_long(void *ptr)
+{ return pointerToLong(ptr);
+}
+
+
+
 		 /*******************************
 		 *	      GET-*		*
 		 *******************************/

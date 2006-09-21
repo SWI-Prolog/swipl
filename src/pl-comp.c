@@ -3421,6 +3421,14 @@ wamListInstruction(IOSTREAM *out, Code relto, Code bp)
 	  Sfprintf(out, " %s", procedureName(proc));
 	  break;
 	}
+	case CA1_CLAUSEREF:
+	{ for(; n < codeTable[op].arguments; n++ )
+	  { ClauseRef cref = (ClauseRef)*bp++;
+	    Sfprintf(out, "%s%ld", n == 0 ? " " : ", ", 
+		     PL_pointer_to_long(cref->clause));
+	  }
+          break;
+	}
 	case CA1_MODULE:
 	{ Module m = (Module)*bp++;
 	  n++;
@@ -3534,6 +3542,30 @@ PRED_IMPL("$wam_list", 1, wam_list, 0)
   succeed;
 }
 
+
+static
+PRED_IMPL("$vm_list_supervisor", 1, vm_list_supervisor, PL_FA_TRANSPARENT)
+{ GET_LD
+  Procedure proc;
+  Definition def;
+
+  if ( !get_procedure(A1, &proc, 0, GP_FIND) )
+    fail;
+  def = getProcDefinition(proc);
+
+  if ( def->codes )
+  { Code bp = def->codes;
+    int len = (int)bp[-1];
+    Code ep = bp + len;
+
+    while( bp < ep )
+      bp = wamListInstruction(Scurout, def->codes, bp);
+
+    succeed;
+  }
+
+  fail;
+}
 
 		 /*******************************
 		 *	 CLAUSE <-> PROLOG	*
@@ -4455,4 +4487,5 @@ BeginPredDefs(comp)
   PRED_DEF("$wam_list", 1, wam_list, 0)
   PRED_DEF("$vm_list_clause", 2, vm_list_clause, 0)
   PRED_DEF("$vm_assert", 3, vm_assert, PL_FA_TRANSPARENT)
+  PRED_DEF("$vm_list_supervisor", 1, vm_list_supervisor, PL_FA_TRANSPARENT)
 EndPredDefs

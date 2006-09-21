@@ -359,6 +359,7 @@ COMMON(void) 		initFeatures(void);
 /* pl-fli.c */
 COMMON(word) 		linkVal__LD(Word p ARG_LD);
 COMMON(word) 		makeNum__LD(int64_t i ARG_LD);
+COMMON(unsigned long)	PL_pointer_to_long(void *ptr);
 COMMON(void) 		_PL_put_number__LD(term_t t, Number n ARG_LD);
 COMMON(predicate_t) 	_PL_predicate(const char *name, int arity,
 				      const char *module, predicate_t *bin);
