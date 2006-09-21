@@ -7,6 +7,9 @@
 					http://gollem.science.uva.nl/bugzilla/
 					--------------------------------------
 
+  * MODIFIED: ~@ in format now causes format to fail if the called predicate
+    fails.
+
   * REMOVED: PL_async_hook().  Not needed anymore.
 
 ==========================
