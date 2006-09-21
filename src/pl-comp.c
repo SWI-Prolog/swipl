@@ -1070,9 +1070,9 @@ analyseVariables()  and  returns the offset of the variable, or -1 if it
 is not produced by this function.
 
 compileArgument() returns ISVOID if a void instruction resulted from the
-compilation.  This is used to detect  the  ...ISVOID,  [I_ENTER,  I_POPF]
-sequences,  in  which  case  we  can leave out the VOIDS just before the
-I_ENTER or I_POPF instructions.
+compilation. This is used to  detect   the  ...ISVOID,  [I_ENTER, H_POP]
+sequences, in which case we can  leave   out  the  VOIDS just before the
+I_ENTER or H_POP instructions.
 
 When doing `islocal' compilation,  compound  terms   are  copied  to the
 current localframe and a B_VAR instruction is generated for it.
@@ -1115,7 +1115,7 @@ right_recursion:
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 A void.  Generate either B_VOID or H_VOID.  Note that the  return  value
 ISVOID  is reserved for head variables only (B_VOID sets the location to
-be a variable, and thus cannot be removed if it is before an I_POPF.
+be a variable, and thus cannot be removed if it is before an B_POP.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
   switch(tag(*arg))
@@ -1123,6 +1123,10 @@ be a variable, and thus cannot be removed if it is before an I_POPF.
     var:
       if (where & A_BODY)
       { Output_0(ci, B_VOID);
+	return NONVOID;
+      }
+      if (where & A_ARG)
+      { Output_0(ci, H_ARGVOID);
 	return NONVOID;
       }
       Output_0(ci, H_VOID);
@@ -1323,18 +1327,20 @@ isvar:
     where |= A_RIGHT;
     deRef(arg);
 
-    if ( tag(*arg) == TAG_VAR && !(where & A_BODY) )
+    if ( tag(*arg) == TAG_VAR && !(where & (A_BODY|A_ARG)) )
     { seekBuffer(&ci->codes, lastnonvoid, code);
       if ( !isright )
-	Output_0(ci, I_POPF);
+	Output_0(ci, H_POP);
       return NONVOID;
     }
 
     if ( isright )
       goto right_recursion;
     else
-    { compileArgument(arg, where, ci PASS_LD);
-      Output_0(ci, I_POPF);
+    { code c;
+      compileArgument(arg, where, ci PASS_LD);
+      c = (where & A_HEAD) ? H_POP : B_POP;
+      Output_0(ci, c);
     }
 
     return NONVOID;
@@ -2317,6 +2323,7 @@ decompile_head(Clause clause, term_t head, decompileInfo *di ARG_LD)
           NEXTARG;
 	  continue;
       case H_VOID:
+      case H_ARGVOID:
 	{ if ( !pushed )		/* FIRSTVAR in the head */
 	    TRY(unifyVar(valTermRef(argp), di->variables,
 			 VAROFFSET(argn) PASS_LD) );
@@ -2352,7 +2359,8 @@ decompile_head(Clause clause, term_t head, decompileInfo *di ARG_LD)
 	  fdef = FUNCTOR_dot2;
           goto common_rfunctor;
 	}
-      case I_POPF:
+      case H_POP:
+      case B_POP:
 	  PL_reset_term_refs(argp);
           argp--;
 	  pushed--;
@@ -2603,7 +2611,8 @@ decompileBody(decompileInfo *di, code end, Code until ARG_LD)
 	fdef = FUNCTOR_dot2;
         goto common_brfunctor;
       }
-      case I_POPF:
+      case H_POP:
+      case B_POP:
 			    ARGP = *--aTop;
 			    nested--;
 			    continue;
@@ -3361,7 +3370,7 @@ pl_xr_member(term_t ref, term_t term, control_t h)
 #define VARNUM(i) ((i) - (ARGOFFSET / (int) sizeof(word)))
 
 Code
-wamListInstruction(IOSTREAM *out, Clause clause, Code bp)
+wamListInstruction(IOSTREAM *out, Code relto, Code bp)
 { GET_LD
   code op = decode(*bp);
   const code_info *ci;
@@ -3375,11 +3384,7 @@ wamListInstruction(IOSTREAM *out, Clause clause, Code bp)
     isbreak = FALSE;
 
   ci = &codeTable[op];
-
-  if ( clause )
-    Sfprintf(out, "%4d %s", bp - clause->codes, ci->name);
-  else
-    Sfprintf(out, "VMI %s", ci->name);
+  Sfprintf(out, "%4d %s", bp - relto, ci->name);
 
   bp++;					/* skip the instruction */
 
@@ -3513,7 +3518,7 @@ wamListClause(Clause clause)
   ep = bp + clause->code_size;
 
   while( bp < ep )
-    bp = wamListInstruction(Scurout, clause, bp);
+    bp = wamListInstruction(Scurout, clause->codes, bp);
 }
 
 

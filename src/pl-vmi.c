@@ -189,9 +189,12 @@ unified with a constant argument.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 VMI(H_CONST, 1, CA1_DATA)
-{ word c = (word)*PC++;
+{ word c;
   Word k;
 
+  IF_WRITE_MODE_GOTO(B_CONST);
+
+  c = (word)*PC++;
   deRef2(ARGP++, k);
   if ( *k == c )
     NEXT_INSTRUCTION;
@@ -208,9 +211,12 @@ H_NIL is used for [] in the head.  See H_CONST for details.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 VMI(H_NIL, 0, 0)
-{ word c = ATOM_nil;
+{ word c;
   Word k;
 
+  IF_WRITE_MODE_GOTO(B_NIL);
+
+  c = ATOM_nil;
   deRef2(ARGP++, k);
   if ( *k == c )
     NEXT_INSTRUCTION;
@@ -230,6 +236,8 @@ variable, compare the numbers otherwise.
 
 VMI(H_INTEGER, 1, CA1_INTEGER)
 { Word k;
+
+  IF_WRITE_MODE_GOTO(B_INTEGER);
 
   deRef2(ARGP++, k);
   if ( canBind(*k) )
@@ -259,6 +267,8 @@ TBD: Compile conditionally
 
 VMI(H_INT64, WORDS_PER_INT64, CA1_INT64)
 { Word k;
+
+  IF_WRITE_MODE_GOTO(B_INT64);
 
   deRef2(ARGP++, k);
   if ( canBind(*k) )
@@ -294,6 +304,8 @@ represented as a native C-double.
 
 VMI(H_FLOAT, WORDS_PER_DOUBLE, CA1_FLOAT)
 { Word k;
+
+  IF_WRITE_MODE_GOTO(B_FLOAT);
 
   deRef2(ARGP++, k);
   if ( canBind(*k) )
@@ -343,6 +355,8 @@ VMI(H_MPZ, 0, CA1_MPZ)
 VMI(H_STRING, 0, CA1_STRING)
 { Word k;
 
+  IF_WRITE_MODE_GOTO(B_STRING);
+
   deRef2(ARGP++, k);
   if ( canBind(*k) )
   { word c = globalIndirectFromCode(&PC);
@@ -371,16 +385,53 @@ VMI(H_VOID, 0, 0)
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+H_ARGVOID: Singleton inside an term in the head. If we are in write mode
+we must make a variable.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+VMI(H_ARGVOID, 0, 0)
+{ if ( umode == uwrite )
+  { setVar(*ARGP);
+  }
+
+  ARGP++;
+  NEXT_INSTRUCTION;
+}
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 H_VAR: A variable in the head which is   not an anonymous one and is not
 used for the first time. Invoke general unification between the argument
 pointer and the variable, whose offset is given relative to the frame.
+
+When in write-mode, ARGP points  to   uninitialised  data  on the global
+stack that must be treated as a variable.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 VMI(H_VAR, 1, CA1_VAR)
-{ Word p1 = varFrameP(FR, *PC++);
-  Word p2 = ARGP++;
+{ Word k = varFrameP(FR, (int)*PC++);
 
-  if ( unify(p1, p2 PASS_LD) )
+  if ( umode == uwrite )
+  { deRef(k);
+    if ( isVar(*k) )
+    { if ( k > ARGP )			/* k on local stack */
+      { setVar(*ARGP);
+	*k = makeRefG(ARGP);
+	Trail(k);
+      } else
+      { *ARGP = makeRefG(k);		/* ARGP on global, so k also */
+      }
+    } else if ( isAttVar(*k) )
+    { *ARGP = makeRefG(k);
+    } else
+    { *ARGP = *k;
+    }
+
+    ARGP++;
+    NEXT_INSTRUCTION;
+  }
+
+  if ( unify(k, ARGP++ PASS_LD) )
     NEXT_INSTRUCTION;
   CLAUSE_FAILED;
 }
@@ -395,7 +446,12 @@ on the local stack.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 VMI(H_FIRSTVAR, 1, CA1_VAR)
-{ varFrame(FR, *PC++) = (needsRef(*ARGP) ? makeRef(ARGP) : *ARGP);
+{ if ( umode == uwrite )
+  { setVar(*ARGP);
+    varFrame(FR, *PC++) = makeRefG(ARGP);
+  } else
+  { varFrame(FR, *PC++) = (needsRef(*ARGP) ? makeRef(ARGP) : *ARGP);
+  }
   ARGP++;
   NEXT_INSTRUCTION;
 }
@@ -416,17 +472,20 @@ the argument stack.
 
 VMI(H_FUNCTOR, 1, CA1_FUNC)
 { requireStack(argument, sizeof(Word));
-  *aTop++ = ARGP + 1;
+  *aTop++ = (Word)((long)(ARGP + 1)|umode);
   VMI_GOTO(H_RFUNCTOR);
 }
 
 VMI(H_RFUNCTOR, 1, CA1_FUNC)
-{ functor_t f = (functor_t) *PC++;
+{ functor_t f;
 
+  IF_WRITE_MODE_GOTO(B_RFUNCTOR);
+
+  f = (functor_t) *PC++;
   deRef(ARGP);
   if ( canBind(*ARGP) )
   { int arity = arityFunctor(f);
-    Word ap, ap0;
+    Word ap;
     word c;
 
 #ifdef O_SHIFT_STACKS
@@ -438,14 +497,11 @@ VMI(H_RFUNCTOR, 1, CA1_FUNC)
 
     ap = gTop;
     c = consPtr(ap, TAG_COMPOUND|STG_GLOBAL);
-    *ap++ = f;
-    ap0 = ap;
-    while(arity-- > 0)
-    { setVar(*ap++);
-    }
-    gTop = ap;
     bindConst(ARGP, c);
-    ARGP = ap0;
+    *ap++ = f;
+    ARGP = ap;
+    gTop = ap+arity;
+    umode = uwrite;
     NEXT_INSTRUCTION;
   }
   if ( hasFunctor(*ARGP, f) )
@@ -462,14 +518,16 @@ H_LIST:  As H_FUNCTOR, but using ./2 as predefined functor.
 
 VMI(H_LIST, 0, 0)
 { requireStack(argument, sizeof(Word));
-  *aTop++ = ARGP + 1;
+  *aTop++ = (Word)((long)(ARGP + 1)|umode);
 
   VMI_GOTO(H_RLIST);
 } 
 
 
 VMI(H_RLIST, 0, 0)
-{ for(;;)
+{ IF_WRITE_MODE_GOTO(B_RLIST);
+
+  for(;;)
   { word w = *ARGP;
 
     switch(tag(w))
@@ -497,9 +555,8 @@ VMI(H_RLIST, 0, 0)
 	bindConst(ARGP, c);
 	*ap++ = FUNCTOR_dot2;
 	ARGP = ap;
-	setVar(*ap++);
-	setVar(*ap++);
-	gTop = ap;
+	umode = uwrite;
+	gTop = ap+2;
 	NEXT_INSTRUCTION;
       }
       case TAG_REFERENCE:
@@ -509,6 +566,18 @@ VMI(H_RLIST, 0, 0)
 	CLAUSE_FAILED;
     }
   }
+}
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+H_POP: Pop the saved argument pointer pushed by H_FUNCTOR and H_LIST.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+VMI(H_POP, 0, 0)
+{ ARGP = *--aTop;
+  umode = ((int)ARGP & uwrite);
+  ARGP = (Word)((long)ARGP&~uwrite);
+  NEXT_INSTRUCTION;
 }
 
 
@@ -734,9 +803,9 @@ VMI(B_RFUNCTOR, 1, CA1_FUNC)
 
   requireStack(global, sizeof(word) * (1+arity));
   *ARGP = consPtr(gTop, TAG_COMPOUND|STG_GLOBAL);
-  *gTop++ = f;
   ARGP = gTop;
-  gTop += arity;
+  *ARGP++ = f;
+  gTop = ARGP+arity;
 
   NEXT_INSTRUCTION;
 }
@@ -757,19 +826,19 @@ VMI(B_LIST, 0, 0)
 VMI(B_RLIST, 0, 0)
 { requireStack(global, sizeof(word) * 3);
   *ARGP = consPtr(gTop, TAG_COMPOUND|STG_GLOBAL);
-  *gTop++ = FUNCTOR_dot2;
   ARGP = gTop;
-  gTop += 2;
+  *ARGP++ = FUNCTOR_dot2;
+  gTop = ARGP+2;
 
   NEXT_INSTRUCTION;
 }
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-I_POPF: Pop the saved argument pointer (see H_FUNCTOR and B_FUNCTOR).
+B_POP: Pop the saved argument pointer pushed by H_FUNCTOR and H_LIST.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-VMI(I_POPF, 0, 0)
+VMI(B_POP, 0, 0)
 { ARGP = *--aTop;
   NEXT_INSTRUCTION;
 }
@@ -1062,6 +1131,7 @@ values found in the clause,  give  a   reference  to  the clause and set
     checkData(argFrameP(FR, n));
   );
 
+  umode = uread;
   NEXT_INSTRUCTION;
 }
 
@@ -1599,12 +1669,8 @@ TBD: get rid of clause-references
 VMI(S_TRUSTME, 1, CA1_CLAUSEREF)
 { ClauseRef cref = (ClauseRef)*PC++;
 
-  CL   = cref;
   ARGP = argFrameP(FR, 0);
-  lTop = (LocalFrame)(ARGP + cref->clause->variables);
-  PC   = cref->clause->codes;
-
-  NEXT_INSTRUCTION;
+  TRUST_CLAUSE(cref);
 }
 
 
@@ -1627,16 +1693,7 @@ next_clause:
   ARGP = argFrameP(FR, 0);
   for(; cref; cref = cref->next)
   { if ( visibleClause(cref->clause, FR->generation) )
-    { CL   = cref;
-      lTop = (LocalFrame)(ARGP + cref->clause->variables);
-      if ( cref->next )
-      { Choice ch = newChoice(CHP_JUMP, FR PASS_LD);
-
-	ch->value.PC = PC;
-	assert(*PC == encode(S_NEXTCLAUSE));
-      }
-      PC   = cref->clause->codes;
-      NEXT_INSTRUCTION;
+    { TRY_CLAUSE(cref, cref->next, PC);
     }
   }
 
@@ -1678,11 +1735,8 @@ VMI(S_LIST, 2, CA1_CLAUSEREF)
     FRAME_FAILED;
 
   PC += 2;
-  CL   = cref;
-  lTop = (LocalFrame)(ARGP + cref->clause->variables);
-  PC   = cref->clause->codes;
 
-  NEXT_INSTRUCTION;
+  TRUST_CLAUSE(cref);
 }
 
 
