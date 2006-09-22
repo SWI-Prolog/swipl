@@ -802,7 +802,42 @@ VMI(B_UNIFY_EXIT, 0, 0)
   CHECK_WAKEUP;				/* only for non-first-var */
   NEXT_INSTRUCTION;
 }
-#endif
+
+
+VMI(B_UNIFY_FF, 2, CA1_VAR)
+{ Word v1 = varFrameP(FR, (int)*PC++);
+  Word v2 = varFrameP(FR, (int)*PC++);
+
+  setVar(*v1);
+  *v2 = makeRefL(v1);
+
+  NEXT_INSTRUCTION;
+}
+
+
+VMI(B_UNIFY_FV, 2, CA1_VAR)
+{ Word v1 = varFrameP(FR, (int)*PC++);
+  Word v2 = varFrameP(FR, (int)*PC++);
+
+  *v1 = linkVal(v2);
+
+  NEXT_INSTRUCTION;
+}
+
+
+VMI(B_UNIFY_VV, 2, CA1_VAR)
+{ Word v1 = varFrameP(FR, (int)*PC++);
+  Word v2 = varFrameP(FR, (int)*PC++);
+
+  if ( unify(v1, v2 PASS_LD) )
+  { CHECK_WAKEUP;
+    NEXT_INSTRUCTION;
+  }
+
+  FRAME_FAILED;
+}
+
+#endif /*O_COMPILE_IS*/
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -

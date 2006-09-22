@@ -157,7 +157,7 @@ all:	banner dirs \
 
 system:		$(PL)
 startup:	$(STARTUPPATH)
-headers:	parms.h $(CINCLUDE) $(STREAMH) $(STUBC) @EXTRAHDR@
+headers:	parms.h $(srcdir)/pl-vmi.ih $(CINCLUDE) $(STREAMH) $(STUBC) @EXTRAHDR@
 staticlib:	$(RUNTIME)
 sharedlib:	$(RUNTIMEDIR)/$(SHARED)
 index:		../library/INDEX.pl

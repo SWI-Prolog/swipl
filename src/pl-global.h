@@ -47,10 +47,11 @@ that is related to a Prolog thread.
 typedef struct
 {
 #if VMCODE_IS_ADDRESS
-  char   *_dewam_table;			/* decoding table */
+  unsigned char *_dewam_table;		/* decoding table */
   long	  _dewam_table_offset;		/* offset of 1st */
-  code    _wam_table[I_HIGHEST];	/* code --> address */
   void  **_interpreter_jmp_table;	/* interpreters table */
+					/* must be last! */
+  code    _wam_table[I_HIGHEST];	/* code --> address */
 #else
   int	  struct_may_not_be_empty;	/* empty structure is illegal */
 #endif
