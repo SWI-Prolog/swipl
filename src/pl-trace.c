@@ -1373,7 +1373,7 @@ debugmode(debug_type doit, debug_type *old)
 	    fr = fr->parent;
 	  else
 	  { QueryFrame qf = (QueryFrame)addPointer(fr, -offset(queryFrame,
-							       frame));
+							       top_frame));
 	    assert(qf->magic == QID_MAGIC);
 	    qf->debugSave = DBG_ON;
 	    fr = qf->saved_environment;

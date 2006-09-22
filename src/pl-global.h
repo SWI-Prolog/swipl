@@ -3,9 +3,9 @@
     Part of SWI-Prolog
 
     Author:        Jan Wielemaker
-    E-mail:        jan@swi.psy.uva.nl
+    E-mail:        wielemak@science.uva.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (C): 1985-2002, University of Amsterdam
+    Copyright (C): 1985-2006, University of Amsterdam
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
@@ -217,11 +217,12 @@ typedef struct
   } os;
 
   struct
-  { Procedure	garbage_collect0;
+  { Procedure	dgarbage_collect1;
     Procedure 	block3;
     Procedure	catch3;
     Procedure	true0;
     Procedure	fail0;
+    Procedure	equals2;		/* =/2 */
     Procedure	event_hook1;
     Procedure	exception_hook4;
     Procedure	print_message2;

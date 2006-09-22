@@ -759,6 +759,7 @@ clearUninitialisedVarsFrame(LocalFrame fr, Code PC)
 	case B_FIRSTVAR:
 	case B_ARGFIRSTVAR:
 	case A_FIRSTVAR_IS:
+	case B_UNIFY_FIRSTVAR:
 	case C_VAR:
 #if O_SECURE	  
 	  if ( varFrameP(fr, PC[1]) <
@@ -2122,7 +2123,7 @@ garbageCollect(LocalFrame fr, Choice ch)
 
 #ifdef O_PROFILE
   if ( LD->profile.active )
-    profCall(PROCEDURE_garbage_collect0->definition PASS_LD);
+    profCall(GD->procedures.dgarbage_collect1->definition PASS_LD);
 #endif
 
 #if O_SECURE
