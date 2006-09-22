@@ -16,7 +16,7 @@ PAT="^\(VMI(\)"
 # pl-codetable.c
 ################################################################
 
-cat > $ctable << EOS
+cat > $ctable.new << EOS
 /*  File: $ctable
 
     This file provides a description of the virtual machine instructions
@@ -35,18 +35,17 @@ const code_info codeTable[] = {
 /* ID #args #argtype */
 EOS
 grep "$PAT" $in |
-	sed "s/^VMI(\([A-Z_0-9]*\), *\([A-Z_0-9]*\), *\([A-Z_0-9]*\))/  CODE(\1, \2, \3),/" >> $ctable
-cat >> $ctable << EOS
+	sed "s/^VMI(\([A-Z_0-9]*\), *\([A-Z_0-9]*\), *\([A-Z_0-9]*\))/  CODE(\1, \2, \3),/" >> $ctable.new
+cat >> $ctable.new << EOS
   { NULL, 0, 0, 0 }
 };
 EOS
-
 
 ################################################################
 # pl-jumptable.ic
 ################################################################
 
-cat > $jtable << EOS
+cat > $jtable.new << EOS
 /*  File: $jtable
 
     This file provides the GCC-2 jump-labels to exploit GCC's
@@ -60,19 +59,18 @@ cat > $jtable << EOS
 EOS
 
 grep "$PAT" $in |
-	sed "s/^VMI(\([A-Z_0-9]*\), *\([A-Z_0-9]*\), *\([A-Z_0-9]*\))/    \&\&\1_LBL,/" >> $jtable
+	sed "s/^VMI(\([A-Z_0-9]*\), *\([A-Z_0-9]*\), *\([A-Z_0-9]*\))/    \&\&\1_LBL,/" >> $jtable.new
 
-cat >> $jtable << EOS
+cat >> $jtable.new << EOS
     NULL
   };
 EOS
-
 
 ################################################################
 # pl-code.h
 ################################################################
 
-cat > $ctype << EOS
+cat > $ctype.new << EOS
 /*  File: $ctype
 
     This file provides the definition of type code.
@@ -85,12 +83,31 @@ typedef enum
 EOS
 
 grep "$PAT" $in |
-	sed "s/^VMI(\([A-Z_0-9]*\), *\([A-Z_0-9]*\), *\([A-Z_0-9]*\))/  \1,/" >> $ctype
+	sed "s/^VMI(\([A-Z_0-9]*\), *\([A-Z_0-9]*\), *\([A-Z_0-9]*\))/  \1,/" >> $ctype.new
 
-cat >> $ctype << EOS
+cat >> $ctype.new << EOS
   VMI_END_LIST
 } vmi;
 
 #define I_HIGHEST ((int)VMI_END_LIST)
 
 EOS
+
+#		 /*******************************
+#		 *	       UPDATE		*
+#		 *******************************/
+
+updateifnew ()
+{ file="$1"
+
+  if cmp -s $file.new $file; then
+     rm $file.new
+  else
+     mv $file.new $file
+     echo "Updated $file"
+  fi
+}
+
+updateifnew $ctable
+updateifnew $jtable
+updateifnew $ctype
