@@ -2694,6 +2694,7 @@ b_throw:
 			PL_Q_NODEBUG|PL_Q_CATCH_EXCEPTION,
 			PROCEDURE_print_message2, t0);
       PL_close_foreign_frame(fid);
+      *catcher = except;		/* TBD: better way to save this term */
       *valTermRef(exception_printed) = except;
 
       pl_trace();
