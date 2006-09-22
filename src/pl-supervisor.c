@@ -29,7 +29,7 @@
 
 static Code
 allocCodes(int n)
-{ Code codes = PL_malloc(sizeof(code)*(n+1));
+{ Code codes = allocHeap(sizeof(code)*(n+1));
   
   *codes++ = (code)n;
 
