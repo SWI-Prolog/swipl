@@ -988,6 +988,9 @@ depart_continue:
 #endif
   incLevel(FR);
 retry_continue:
+#ifdef O_PROFILE
+  FR->prof_node = NULL;
+#endif
   clear(FR, FR_SKIPPED|FR_WATCHED|FR_CATCHED);
   if ( false(DEF, METAPRED) )
     FR->context = DEF->module;
@@ -1035,8 +1038,6 @@ retry_continue:
 #ifdef O_PROFILE	
     if ( LD->profile.active )
       FR->prof_node = profCall(DEF PASS_LD);
-    else
-      FR->prof_node = NULL;
 #endif
 #if O_DYNAMIC_STACKS
     if ( gc_status.requested )
@@ -2570,7 +2571,7 @@ VMI(I_CALLCLEANUP, 0, 0)
 			  /* = B_VAR0 */
   *argFrameP(lTop, 0) = linkVal(argFrameP(FR, 0));
 
-  goto i_usercall0;
+  VMI_GOTO(I_USERCALL0);
 }
 
 
@@ -2617,8 +2618,7 @@ VMI(I_CATCH, 0, 0)
 
 				  /* = B_VAR0 */
   *argFrameP(lTop, 0) = linkVal(argFrameP(FR, 0));
-
-  goto i_usercall0;
+  VMI_GOTO(I_USERCALL0);
 }
 
 
@@ -2787,7 +2787,7 @@ b_throw:
 
     PC = findCatchExit();
 
-    goto i_usercall0;
+    VMI_GOTO(I_USERCALL0);
   } else
   { Word p;
 
@@ -2943,7 +2943,6 @@ VMI(I_USERCALL0, 0, 0)
 { word goal;
   Word a;
 
-i_usercall0:				/* from call_cleanup/3 and catch/3 */
   module = NULL;
   NFR = lTop;
   a = argFrameP(NFR, 0);		/* get the goal */

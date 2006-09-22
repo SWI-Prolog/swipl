@@ -1735,7 +1735,10 @@ PL_open_query(Module ctx, int flags, Procedure proc, term_t args)
   top->flags	     = 0;		/* TBD: level? */
   top->predicate     = PROCEDURE_dc_call_prolog->definition;
   top->clause	     = NULL;
-					/* fill first frame */
+#ifdef O_PROFILE
+  top->prof_node     = NULL;
+#endif					/* fill first frame */
+
   fr		     = &qf->frame;
   fr->parent	     = top;
   fr->flags	     = FR_INBOX;
