@@ -1729,7 +1729,6 @@ compileArithArgument(Word arg, compileInfo *ci ARG_LD)
 #ifdef O_COMPILE_IS
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 TBD:	* Allow for Term = Var
-	* Deal with B_VAR0..B_VAR2
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static bool
@@ -1743,9 +1742,10 @@ compileBodyUnify(Word arg, code call, compileInfo *ci ARG_LD)
     succeed;
   if ( (index = isIndexedVarTerm(*a1 PASS_LD)) >= 0 )
   { int first = isFirstVar(ci->used_var, index);
+    int where = (first ? A_BODY : A_HEAD|A_ARG);
 
-    Output_1(ci, first ? B_UNIFY_FIRSTVAR : B_UNIFY_VAR, VAROFFSET(index));
-    compileArgument(argTermP(*arg, 1), A_HEAD, ci PASS_LD);
+    Output_1(ci, B_UNIFY_VAR, VAROFFSET(index));
+    compileArgument(argTermP(*arg, 1), where, ci PASS_LD);
     Output_0(ci, B_UNIFY_EXIT);
 
     succeed;
@@ -2570,16 +2570,20 @@ decompileBody(decompileInfo *di, code end, Code until ARG_LD)
 #endif	  
         case A_ENTER:
         case I_NOP:	    continue;
+	case H_CONST:
 	case B_CONST:
 			    *ARGP++ = XR(*PC++);
 			    continue;
+	case H_NIL:
 	case B_NIL:
 			    *ARGP++ = ATOM_nil;
 			    continue;
+	case H_INTEGER:
 	case B_INTEGER:
 	case A_INTEGER:
 			    *ARGP++ = makeNum((long)*PC++);
 			    continue;
+	case H_INT64:
 	case B_INT64:
 	case A_INT64:
 			  { Word p = allocGlobal(2+WORDS_PER_INT64);
@@ -2589,6 +2593,7 @@ decompileBody(decompileInfo *di, code end, Code until ARG_LD)
 			    *p   = mkIndHdr(WORDS_PER_INT64, TAG_INTEGER);
 			    continue;
 			  }
+	case H_FLOAT:
 	case B_FLOAT:
 	case A_DOUBLE:
 		  	  { Word p = allocGlobal(2+WORDS_PER_DOUBLE);
@@ -2599,6 +2604,8 @@ decompileBody(decompileInfo *di, code end, Code until ARG_LD)
 			    *p   = mkIndHdr(WORDS_PER_DOUBLE, TAG_FLOAT);
 			    continue;
 			  }
+	case H_STRING:
+	case H_MPZ:
 	case B_STRING:
 	case A_MPZ:
 	case B_MPZ:
@@ -2608,7 +2615,10 @@ decompileBody(decompileInfo *di, code end, Code until ARG_LD)
 
 	case B_ARGVAR:
 	case B_ARGFIRSTVAR:
+	case H_FIRSTVAR:
 	case B_FIRSTVAR:
+	case B_UNIFY_VAR:
+	case H_VAR:
 	case A_VAR:
 	case B_VAR:	    index = *PC++;		goto var_common;
 	case A_VAR0:
@@ -2623,9 +2633,12 @@ decompileBody(decompileInfo *di, code end, Code until ARG_LD)
 			      *ARGP++ = makeVarRef(index);
 			    continue;
       }
+      case H_VOID:
+      case H_ARGVOID:
       case B_VOID:
 			    setVar(*ARGP++);
 			    continue;
+      case H_FUNCTOR:
       case B_FUNCTOR:
       { functor_t fdef;
 
@@ -2637,10 +2650,12 @@ decompileBody(decompileInfo *di, code end, Code until ARG_LD)
 	ARGP = argTermP(*ARGP, 0);
 	nested++;
 	continue;
+      case H_LIST:
       case B_LIST:
 	fdef = FUNCTOR_dot2;
         goto common_bfunctor;
       }
+      case H_RFUNCTOR:
       case B_RFUNCTOR:
       { functor_t fdef;
 
@@ -2649,6 +2664,7 @@ decompileBody(decompileInfo *di, code end, Code until ARG_LD)
 	*ARGP = globalFunctor(fdef);
 	ARGP = argTermP(*ARGP, 0);
 	continue;
+      case H_RLIST:
       case B_RLIST:
 	fdef = FUNCTOR_dot2;
         goto common_brfunctor;
@@ -2658,6 +2674,11 @@ decompileBody(decompileInfo *di, code end, Code until ARG_LD)
 			    ARGP = *--aTop;
 			    nested--;
 			    continue;
+#ifdef O_COMPILE_IS
+      case B_UNIFY_EXIT:    build_term(FUNCTOR_equals2, di PASS_LD);
+			    pushed++;
+			    continue;
+#endif
 #if O_COMPILE_ARITH
       case A_FUNC0:
       case A_FUNC1:

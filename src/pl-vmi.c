@@ -496,11 +496,11 @@ VMI(H_RFUNCTOR, 1, CA1_FUNC)
 #endif
 
     ap = gTop;
+    gTop += 1+arity;
     c = consPtr(ap, TAG_COMPOUND|STG_GLOBAL);
     bindConst(ARGP, c);
     *ap++ = f;
     ARGP = ap;
-    gTop = ap+arity;
     umode = uwrite;
     NEXT_INSTRUCTION;
   }
@@ -551,12 +551,12 @@ VMI(H_RLIST, 0, 0)
 	if ( ap + 3 > gMax )
 	  ensureRoomStack(global, 3*sizeof(word));
 #endif
+  	gTop += 3;
 	c = consPtr(ap, TAG_COMPOUND|STG_GLOBAL);
 	bindConst(ARGP, c);
 	*ap++ = FUNCTOR_dot2;
 	ARGP = ap;
 	umode = uwrite;
-	gTop = ap+2;
 	NEXT_INSTRUCTION;
       }
       case TAG_REFERENCE:
@@ -762,18 +762,10 @@ VMI(B_UNIFY_VAR, 1, CA1_VAR)
 }
 
 
-VMI(B_UNIFY_FIRSTVAR, 1, CA1_VAR)
-{ int n = (int)*PC++;
-  
-  ARGP = varFrameP(FR, n);
-  umode = uwrite;
-  NEXT_INSTRUCTION;
-}
-
-
 VMI(B_UNIFY_EXIT, 0, 0)
 { ARGP = argFrameP(lTop, 0);
 
+  CHECK_WAKEUP;				/* only for non-first-var */
   NEXT_INSTRUCTION;
 }
 #endif
@@ -1343,7 +1335,6 @@ VMI(I_EXITFACT, 0, 0)
       
 	exit = encode(I_EXIT);
 	PC = &exit;
-	ARGP = argFrameP(lTop, 0);	    /* needed? */
 	goto wakeup;
       }
       LD->alerted &= ~ALERT_WAKEUP;
