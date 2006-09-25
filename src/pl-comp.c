@@ -3788,85 +3788,73 @@ unify_vmi(term_t t, Clause clause, Code bp)
       return bp;
     }
     default:
+    { term_t arg;
+      int i;
+
       if ( ci->arguments == 0 )
       { PL_unify_atom(t, op_name(ci));
 	return bp;
       }
-      switch(codeTable[op].argtype)
-      { case CA1_VAR:
-	{ int vn =  VARNUM(*bp++);
 
-	  PL_unify_term(t, PL_FUNCTOR, op_functor(ci, 1),
-			     PL_INTEGER, vn);
-	  return bp;
-	}
-	case CA1_INTEGER:
-	{ long i = (long)*bp++;
-	  PL_unify_term(t, PL_FUNCTOR, op_functor(ci, 1),
-			     PL_LONG, i);
-	  return bp;
-	}
-	case CA1_FLOAT:
-	{ double d;
-	  Word dp = (Word)&d;
+      PL_unify_functor(t, op_functor(ci, ci->arguments));
+      arg = PL_new_term_ref();
 
-	  cpDoubleData(dp, bp);
-	  bp += WORDS_PER_DOUBLE;
+      for( i=0; i<ci->arguments; i++ )
+      { PL_get_arg(i+1, t, arg);
 
-	  PL_unify_term(t, PL_FUNCTOR, op_functor(ci, 1),
-			     PL_FLOAT, d);
-	  return bp;
-	}
-	case CA1_INT64:
-	{ int64_t n;
-	  Word dp = (Word)&n;
+	switch(codeTable[op].argtype)
+	{ case CA1_VAR:
+	    PL_unify_integer(arg, VARNUM(*bp++));
+	    break;
+	  case CA1_INTEGER:
+	    PL_unify_integer(arg, (long)*bp++);
+	    break;
+	  case CA1_FLOAT:
+	  { double d;
+	    Word dp = (Word)&d;
+  
+	    cpDoubleData(dp, bp);
+	    bp += WORDS_PER_DOUBLE;
+	    PL_unify_float(arg, d);
+  
+	    break;
+	  }
+	  case CA1_INT64:
+	  { int64_t n;
+	    Word dp = (Word)&n;
+  
+	    cpInt64Data(dp, bp);
+	    bp += WORDS_PER_INT64;
+	    PL_unify_int64(arg, n);
 
-	  cpInt64Data(dp, bp);
-	  bp += WORDS_PER_INT64;
-
-	  PL_unify_term(t, PL_FUNCTOR, op_functor(ci, 1),
-			     PL_INT64, n);
-	  return bp;
+	    break;
+	  }
+	  case CA1_DATA:
+	    _PL_unify_atomic(arg, *bp++);
+	    break;
+	  case CA1_FUNC:
+	  { functor_t f = (functor_t) *bp++;
+	    unify_functor(arg, f, GP_NAMEARITY);
+	    break;
+	  }
+	  case CA1_MODULE:
+	  { Module m = (Module)*bp++;
+	    PL_unify_atom(arg, m->name);
+	    break;
+	  }
+	  case CA1_PROC:
+	  { Procedure proc = (Procedure)*bp++;
+	    
+	    unify_definition(arg, proc->definition, 0,
+			     GP_HIDESYSTEM|GP_NAMEARITY);
+	    break;
+	  }
+	  default:
+	    Sdprintf("Cannot list %s at %d\n", ci->name, bp-clause->codes-1);
+	    return NULL;
 	}
-	case CA1_DATA:
-	{ term_t tmp = PL_new_term_ref();
-	  _PL_unify_atomic(tmp, *bp++);
-	  PL_unify_term(t, PL_FUNCTOR, op_functor(ci, 1),
-			     PL_TERM, tmp);
-	  PL_reset_term_refs(tmp);
-	  return bp;
-	}
-	case CA1_FUNC:
-	{ functor_t f = (functor_t) *bp++;
-	  term_t tmp = PL_new_term_ref();
-	  unify_functor(tmp, f, GP_NAMEARITY);
-	  PL_unify_term(t, PL_FUNCTOR, op_functor(ci, 1),
-			     PL_TERM, tmp);
-	  PL_reset_term_refs(tmp);
-	  return bp;
-	}
-	case CA1_MODULE:
-	{ Module m = (Module)*bp++;
-	  PL_unify_term(t, PL_FUNCTOR, op_functor(ci, 1),
-			     PL_ATOM, m->name);
-	  return bp;
-	}
-	case CA1_PROC:
-	{ Procedure proc = (Procedure)*bp++;
-	  term_t tmp = PL_new_term_ref();
-	  
-	  unify_definition(tmp, proc->definition, 0,
-			   GP_HIDESYSTEM|GP_NAMEARITY);
-	  PL_unify_term(t, PL_FUNCTOR, op_functor(ci, 1),
-			     PL_TERM, tmp);
-	  PL_reset_term_refs(tmp);
-	  return bp;
-
-	}
-	default:
-	  Sdprintf("Cannot list %s at %d\n", ci->name, bp-clause->codes-1);
-	  return NULL;
       }
+    }
   }
 
   return bp;
