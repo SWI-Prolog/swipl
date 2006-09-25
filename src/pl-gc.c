@@ -769,6 +769,10 @@ clearUninitialisedVarsFrame(LocalFrame fr, Code PC)
 #endif
 	  setVar(varFrame(fr, PC[1]));
 	  break;
+	case H_LIST_FF:
+	  setVar(varFrame(fr, PC[1]));
+	  setVar(varFrame(fr, PC[2]));
+	  break;
       }
     }
   }

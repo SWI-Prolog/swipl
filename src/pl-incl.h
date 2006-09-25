@@ -1167,9 +1167,10 @@ struct clause_ref
 #define CA1_STRING	7	/* inlined string */
 #define CA1_MODULE	8	/* a module */
 #define CA1_VAR		9	/* a variable(-offset) */
-#define CA1_MPZ	       10	/* GNU mpz number */
-#define CA1_FOREIGN    11	/* Foreign function pointer */
-#define CA1_CLAUSEREF  12	/* Clause reference */
+#define CA1_CHP	       10	/* ChoicePoint (also variable(-offset)) */
+#define CA1_MPZ	       11	/* GNU mpz number */
+#define CA1_FOREIGN    12	/* Foreign function pointer */
+#define CA1_CLAUSEREF  13	/* Clause reference */
 
 typedef struct
 { char		*name;		/* name of the code */

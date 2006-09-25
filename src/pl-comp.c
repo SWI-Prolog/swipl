@@ -2130,6 +2130,7 @@ arg1Key(Clause clause, int constonly, word *key)
       case H_NIL:
 	*key = ATOM_nil;
         succeed;
+      case H_LIST_FF:
       case H_LIST:
       case H_RLIST:
 	*key = FUNCTOR_dot2;
@@ -2434,6 +2435,18 @@ decompile_head(Clause clause, term_t head, decompileInfo *di ARG_LD)
 	  if ( !pushed )
 	    argn++;
 	  continue;
+      case H_LIST_FF:
+      { Word p;
+
+	TRY(PL_unify_functor(argp, FUNCTOR_dot2));
+	p = valTermRef(argp);
+	deRef(p);
+	p = argTermP(*p, 0);
+        TRY(unifyVar(p+0, di->variables, *PC++ PASS_LD) );
+        TRY(unifyVar(p+1, di->variables, *PC++ PASS_LD) );
+	NEXTARG;
+	continue;
+      }
       case I_EXITCATCH:
       case I_EXITFACT:
       case I_EXIT:			/* fact */
@@ -3533,6 +3546,13 @@ wamListInstruction(IOSTREAM *out, Code relto, Code bp)
 	  }
 	  break;
 	}
+	case CA1_CHP:
+	{ for(; n < codeTable[op].arguments; n++ )
+	  { int var = VARNUM(*bp++);
+	    Sfprintf(out, "%schoice(%d)", n == 0 ? " " : ", ", var);
+	  }
+	  break;
+	}
 	case CA1_MODULE:
 	{ Module m = (Module)*bp++;
 	  n++;
@@ -3804,6 +3824,7 @@ unify_vmi(term_t t, Clause clause, Code bp)
 
 	switch(codeTable[op].argtype)
 	{ case CA1_VAR:
+	  case CA1_CHP:
 	    PL_unify_integer(arg, VARNUM(*bp++));
 	    break;
 	  case CA1_INTEGER:
@@ -3905,9 +3926,9 @@ $vm_assert(+PI, :VM, -Ref)
 TBD:
 	- C_OR, C_IFTHENELSE, C_IFTHEN branching
 	- Automatic variable balancing
-	- Computation of Prolog vars and size of stack-frame
 	- Complete argument support
 	- Complete datatype support
+	- Index lookup of instructions
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static int
@@ -3918,50 +3939,71 @@ vm_compile_instruction(term_t t, CompileInfo ci)
 
   if ( PL_get_name_arity(t, &name, &arity) )
   { const char *nm = PL_atom_chars(name);
-    int i;
+    int vmi;
 
-    for(i=0; i<I_HIGHEST; i++)		/* TBD: Index */
-    { if ( strcasecmp(codeTable[i].name, nm) == 0 )
-      { if ( arity == 0 )
-	{ assert(codeTable[i].arguments == 0);
-	  Output_0(ci, codeTable[i].code);
+    for(vmi=0; vmi<I_HIGHEST; vmi++)		/* TBD: Index */
+    { if ( strcasecmp(codeTable[vmi].name, nm) == 0 )
+      { if ( arity != codeTable[vmi].arguments )
+	  return PL_error(NULL, 0, "arg-count mismatch", ERR_TYPE,
+			  PL_new_atom("vmi"), t);
+
+	if ( arity == 0 )
+	{ Output_0(ci, codeTable[vmi].code);
+	  if ( vmi == I_EXITFACT )
+	    set(ci->clause, UNIT_CLAUSE);
 	  return TRUE;
-	} else if ( arity == 1 )
-	{ term_t a = PL_new_term_ref();
-	  _PL_get_arg(1, t, a);
+	} else
+	{ int i;
+	  code argv[4];			/* max args per VM */
+	  term_t arg = PL_new_term_ref();
 
-	  switch(codeTable[i].argtype)
-	  { case CA1_VAR:
-	    { int vn;
+	  for(i=0; i<arity; i++)
+	  { int atype = codeTable[vmi].argtype;
 
-	      if ( !PL_get_integer_ex(a, &vn) )
+	    PL_get_arg(i+1, t, arg);
+	    switch(atype)
+	    { case CA1_VAR:
+	      case CA1_CHP:
+	      { int vn;
+
+		if ( !PL_get_integer_ex(arg, &vn) )
+		  fail;
+		argv[i] = (code)VAROFFSET(vn);
+		if ( atype == CA1_VAR && ci->clause->prolog_vars < argv[i] )
+		  ci->clause->prolog_vars = argv[i];
+		if ( ci->clause->variables < argv[i] )
+		  ci->clause->variables = argv[i];
+		break;
+	      }
+	      case CA1_DATA:
+	      { word val = _PL_get_atomic(arg);
+		
+		if ( isAtom(val) ||
+		     (isInteger(val) && storage(val) == STG_INLINE) )
+		{ argv[i] = val;
+		  break;
+		}
+
+		return PL_error(NULL, 0, NULL, ERR_TYPE,
+				ATOM_atomic, arg);
+	      }
+	      case CA1_PROC:
+	      { Procedure proc;
+
+		if ( get_procedure(arg, &proc, 0, GP_CREATE|GP_NAMEARITY) )
+		{ argv[i] =  (code)proc;
+		  break;
+		}
 		fail;
-	      Output_1(ci, codeTable[i].code, VAROFFSET(vn));
-	      succeed;
-	    }
-	    case CA1_DATA:
-	    { word val = _PL_get_atomic(a);
-
-	      if ( isAtom(val) ||
-		   (isInteger(val) && storage(val) == STG_INLINE) )
-	      { Output_1(ci, codeTable[i].code, val);
-		succeed;
 	      }
-
-	      return PL_error(NULL, 0, NULL, ERR_TYPE,
-			      ATOM_atomic, a);
-	    }
-	    case CA1_PROC:
-	    { Procedure proc;
-
-	      if ( get_procedure(a, &proc, 0, GP_CREATE|GP_NAMEARITY) )
-	      { Output_1(ci, codeTable[i].code, (code)proc);
-		succeed;
-	      }
-	      fail;
 	    }
 	  }
+	  Output_0(ci, codeTable[vmi].code);
+	  Output_n(ci, argv, arity);
+
+	  succeed;
 	}
+
 	return PL_error(NULL, 0, NULL, ERR_TYPE,
 			PL_new_atom("vmi"), t);
       }
@@ -4013,12 +4055,14 @@ PRED_IMPL("$vm_assert", 3, vm_assert, PL_FA_TRANSPARENT)
   ci.arity        = proc->definition->functor->arity;
   ci.argvars      = 0;
 
-  clause.flags      = 0;
-  clause.procedure  = proc;
-  clause.code_size  = 0;
-  clause.source_no  = clause.line_no = 0;
-  ci.clause	    = &clause;
-  ci.module	    = module;
+  clause.flags       = 0;
+  clause.procedure   = proc;
+  clause.code_size   = 0;
+  clause.source_no   = clause.line_no = 0;
+  clause.variables   = ci.arity;
+  clause.prolog_vars = ci.arity;
+  ci.clause	     = &clause;
+  ci.module	     = module;
   initBuffer(&ci.codes);
 
   if ( !vm_compile(A2, &ci) )
