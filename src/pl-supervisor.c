@@ -37,6 +37,16 @@ allocCodes(int n)
 }
 
 
+void
+freeCodes(Code codes)
+{ if ( codes )
+  { int size = codes[-1];
+
+    freeHeap(&codes[-1], size*sizeof(code));
+  }
+}
+
+
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Foreign supervisors.  Creates one of:
 
