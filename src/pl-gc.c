@@ -1784,7 +1784,7 @@ collect_phase(LocalFrame fr, Choice ch, Word *saved_bar_at)
 		*********************************/
 
 static void
-gcRequest(int req)
+gcRequest(Stack s, int req)
 { GET_LD
   if ( gc_status.requested != req )
   { gc_status.requested = req;
@@ -1816,7 +1816,7 @@ considerGarbageCollect(Stack s)
     }
 
     if ( req )
-      gcRequest(req);
+      gcRequest(s, req);
   }
 }
 #endif /* O_DYNAMIC_STACKS */
@@ -2117,7 +2117,7 @@ garbageCollect(LocalFrame fr, Choice ch)
   enterGC();
   blockSignals(&mask);
   blockGC(PASS_LD1);			/* avoid recursion due to */
-  gcRequest(FALSE);			/* printMessage() */
+  gcRequest(NULL, FALSE);		/* printMessage() */
 
   gc_status.active = TRUE;
   if ( verbose )
