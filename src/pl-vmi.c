@@ -1156,7 +1156,10 @@ retry_continue:
 #endif
 #if O_DYNAMIC_STACKS
     if ( gc_status.requested )
-     garbageCollect(FR, BFR);
+    { END_PROF();
+      START_PROF(P_GC, "P_GC");
+      garbageCollect(FR, BFR);
+    }
 #endif
 
 #ifdef O_LIMIT_DEPTH

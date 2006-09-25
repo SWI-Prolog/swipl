@@ -1987,6 +1987,7 @@ pl-comp.c
 
 #define PROF_FOREIGN	(I_HIGHEST)
 #define DEPART_CONTINUE (I_HIGHEST+1)
+#define P_GC 		(I_HIGHEST+2)
 
 #else
 #define START_PROF(id, name)
