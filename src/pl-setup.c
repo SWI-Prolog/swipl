@@ -1589,9 +1589,6 @@ word
 pl_trim_stacks()
 { trimStacks(PASS_LD1);
 
-  gcPolicy((Stack) &LD->stacks.global, GC_FAST_POLICY);
-  gcPolicy((Stack) &LD->stacks.trail,  GC_FAST_POLICY);
-
   succeed;
 }
 
@@ -1617,36 +1614,6 @@ at the moment of announcement?).
 word
 pl_trim_stacks()
 { succeed;
-}
-
-
-word
-pl_stack_parameter(term_t name, term_t key, term_t old, term_t new)
-{ atom_t a, k;
-  Stack stack = NULL;
-  long *value = NULL;
-
-  if ( PL_get_atom(name, &a) )
-  { if ( a == ATOM_local )
-      stack = (Stack) &LD->stacks.local;
-    else if ( a == ATOM_global )
-      stack = (Stack) &LD->stacks.global;
-    else if ( a == ATOM_trail )
-      stack = (Stack) &LD->stacks.trail;
-    else if ( a == ATOM_argument )
-      stack = (Stack) &LD->stacks.argument;
-  }
-  if ( !stack )
-    return PL_error(NULL, 0, NULL, ERR_EXISTENCE, ATOM_stack, name);
-
-  if ( PL_get_atom(key, &k) )
-  { if ( k == ATOM_min_free )
-      value = &stack->minfree;
-  }
-  if ( !value )
-    return PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_stack_parameter, key);
-
-  return setLong(value, old, new);
 }
 
 
@@ -1807,3 +1774,54 @@ freeLocalData(PL_local_data_t *ld)
     destroyHTable(ld->gvar.nb_vars);
 #endif
 }
+
+		 /*******************************
+		 *	     PREDICATES		*
+		 *******************************/
+
+static
+PRED_IMPL("set_stack_property", 3, set_stack_property, 0)
+{ atom_t a, k;
+  Stack stack = NULL;
+
+  term_t name  = A1;
+  term_t prop  = A2;
+  term_t value = A3;
+
+  if ( PL_get_atom(name, &a) )
+  { if ( a == ATOM_local )
+      stack = (Stack) &LD->stacks.local;
+    else if ( a == ATOM_global )
+      stack = (Stack) &LD->stacks.global;
+    else if ( a == ATOM_trail )
+      stack = (Stack) &LD->stacks.trail;
+    else if ( a == ATOM_argument )
+      stack = (Stack) &LD->stacks.argument;
+  }
+  if ( !stack )
+    return PL_error(NULL, 0, NULL, ERR_EXISTENCE, ATOM_stack, name);
+
+  if ( PL_get_atom_ex(prop, &k) )
+  { if ( k == ATOM_low )
+      return PL_get_long_ex(value, &stack->small);
+    if ( k == ATOM_factor )
+      return PL_get_integer_ex(value, &stack->factor);
+#ifdef O_SHIFT_STACKS
+    if ( k == ATOM_min_free )
+      return PL_get_long_ex(value, &stack->minfree);
+#endif    
+
+    return PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_stack_parameter, prop);
+  }
+
+  fail;
+}
+
+
+		 /*******************************
+		 *      PUBLISH PREDICATES	*
+		 *******************************/
+
+BeginPredDefs(setup)
+  PRED_DEF("set_stack_property", 3, set_stack_property, 0)
+EndPredDefs

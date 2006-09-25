@@ -562,3 +562,5 @@
 #define ATOM_zero_divisor MK_ATOM(561)
 #define ATOM_comments     MK_ATOM(562)
 #define ATOM_dc_call_prolog MK_ATOM(563)
+#define ATOM_low          MK_ATOM(564)
+#define ATOM_factor       MK_ATOM(565)

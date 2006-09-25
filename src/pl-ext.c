@@ -552,6 +552,7 @@ DECL_PLIST(file);
 DECL_PLIST(btree);
 DECL_PLIST(ctype);
 DECL_PLIST(tai);
+DECL_PLIST(setup);
 
 void
 initBuildIns(void)
@@ -576,6 +577,7 @@ initBuildIns(void)
   REG_PLIST(btree);
   REG_PLIST(ctype);
   REG_PLIST(tai);
+  REG_PLIST(setup);
 #ifdef O_ATTVAR
   REG_PLIST(attvar);
 #endif

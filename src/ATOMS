@@ -576,6 +576,8 @@ A yfy			"yfy"
 A zero_divisor		"zero_divisor"
 A comments		"comments"
 A dc_call_prolog	"$c_call_prolog"
+A low			"low"
+A factor		"factor"
 
 F abs			1
 F access		1
