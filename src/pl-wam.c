@@ -1985,7 +1985,6 @@ pl-comp.c
 #ifdef O_PROF_PENTIUM
 #include "pentium.h"
 
-#define PROF_FOREIGN	(I_HIGHEST)
 #define DEPART_CONTINUE (I_HIGHEST+1)
 #define P_GC 		(I_HIGHEST+2)
 

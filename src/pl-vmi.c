@@ -2277,6 +2277,15 @@ VMI(A_FIRSTVAR_IS, 1, CA1_VAR)
 	I_FEXITDET
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
+#ifdef O_PROF_PENTIUM
+#define PROF_FOREIGN \
+	{ END_PROF(); \
+	  START_PROF(DEF->prof_index, DEF->prof_name); \
+	}
+#else
+#define PROF_FOREIGN (void)0
+#endif
+
 VMI(I_FOPEN, 0, 0)
 { FliFrame ffr = (FliFrame)argFrameP(FR, DEF->functor->arity);
 
@@ -2309,6 +2318,7 @@ VMI(I_FCALLDETVA, 1, CA1_FOREIGN)
   context.engine  = LD;
   context.control = FRG_FIRST_CALL;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, DEF->functor->arity, &context);
   VMI_GOTO(I_FEXITDET);
 }
@@ -2322,6 +2332,7 @@ a1, a2, ... calling conventions.
 VMI(I_FCALLDET0, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
 
+  PROF_FOREIGN;
   rc = (*f)();
   VMI_GOTO(I_FEXITDET);
 }
@@ -2331,6 +2342,7 @@ VMI(I_FCALLDET1, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0);
   VMI_GOTO(I_FEXITDET);
 }
@@ -2340,6 +2352,7 @@ VMI(I_FCALLDET2, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, h0+1);
   VMI_GOTO(I_FEXITDET);
 }
@@ -2349,6 +2362,7 @@ VMI(I_FCALLDET3, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, h0+1, h0+2);
   VMI_GOTO(I_FEXITDET);
 }
@@ -2358,6 +2372,7 @@ VMI(I_FCALLDET4, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, h0+1, h0+2, h0+3);
   VMI_GOTO(I_FEXITDET);
 }
@@ -2367,6 +2382,7 @@ VMI(I_FCALLDET5, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4);
   VMI_GOTO(I_FEXITDET);
 }
@@ -2376,6 +2392,7 @@ VMI(I_FCALLDET6, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5);
   VMI_GOTO(I_FEXITDET);
 }
@@ -2394,6 +2411,7 @@ VMI(I_FCALLDET8, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5, h0+6, h0+7);
   VMI_GOTO(I_FEXITDET);
 }
@@ -2403,6 +2421,7 @@ VMI(I_FCALLDET9, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5, h0+6, h0+7, h0+8);
   VMI_GOTO(I_FEXITDET);
 }
@@ -2412,6 +2431,7 @@ VMI(I_FCALLDET10, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5, h0+6, h0+7, h0+8, h0+9);
   VMI_GOTO(I_FEXITDET);
 }
@@ -2503,6 +2523,7 @@ VMI(I_FCALLNDETVA, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, DEF->functor->arity, &context);
   NEXT_INSTRUCTION;
 }
@@ -2511,6 +2532,7 @@ VMI(I_FCALLNDETVA, 1, CA1_FOREIGN)
 VMI(I_FCALLNDET0, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
 
+  PROF_FOREIGN;
   rc = (*f)(&context);
   NEXT_INSTRUCTION;
 }
@@ -2519,6 +2541,7 @@ VMI(I_FCALLNDET1, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, &context);
   NEXT_INSTRUCTION;
 }
@@ -2537,6 +2560,7 @@ VMI(I_FCALLNDET3, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, h0+1, h0+2, &context);
   NEXT_INSTRUCTION;
 }
@@ -2546,6 +2570,7 @@ VMI(I_FCALLNDET4, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, h0+1, h0+2, h0+3, &context);
   NEXT_INSTRUCTION;
 }
@@ -2555,6 +2580,7 @@ VMI(I_FCALLNDET5, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, &context);
   NEXT_INSTRUCTION;
 }
@@ -2564,6 +2590,7 @@ VMI(I_FCALLNDET6, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5, &context);
   NEXT_INSTRUCTION;
 }
@@ -2573,6 +2600,7 @@ VMI(I_FCALLNDET7, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5, h0+6, &context);
   NEXT_INSTRUCTION;
 }
@@ -2582,6 +2610,7 @@ VMI(I_FCALLNDET8, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5, h0+6, h0+7, &context);
   NEXT_INSTRUCTION;
 }
@@ -2591,6 +2620,7 @@ VMI(I_FCALLNDET9, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5, h0+6, h0+7, h0+8, &context);
   NEXT_INSTRUCTION;
 }
@@ -2600,6 +2630,7 @@ VMI(I_FCALLNDET10, 1, CA1_FOREIGN)
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5, h0+6, h0+7, h0+8, h0+9, &context);
   NEXT_INSTRUCTION;
 }
