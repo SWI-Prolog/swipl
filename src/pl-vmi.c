@@ -888,6 +888,20 @@ VMI(B_EQ_VV, 2, CA1_VAR)
 { Word v1 = varFrameP(FR, (int)*PC++);
   Word v2 = varFrameP(FR, (int)*PC++);
 
+#ifdef O_DEBUGGER
+  if ( debugstatus.debugging )
+  { ARGP = argFrameP(lTop, 0);
+    *ARGP++ = linkVal(v1);
+    *ARGP++ = linkVal(v2);
+    NFR = lTop;
+    DEF = getProcDefinedDefinition(lTop, PC,
+				   GD->procedures.strict_equal2 PASS_LD);
+    NFR->context = MODULE_system;
+    NFR->flags = FR->flags;
+    goto normal_call;
+  }
+#endif
+
   if ( compareStandard(v1, v2, TRUE PASS_LD) == 0 )
     NEXT_INSTRUCTION;
 
@@ -2302,7 +2316,17 @@ VMI(A_FIRSTVAR_IS, 1, CA1_VAR)
 #endif
 
 VMI(I_FOPEN, 0, 0)
-{ FliFrame ffr = (FliFrame)argFrameP(FR, DEF->functor->arity);
+{ FliFrame ffr;
+
+#ifdef O_DEBUGGER
+  if ( debugstatus.debugging )
+  { lTop = (LocalFrame)argFrameP(FR, DEF->functor->arity);
+    BFR = newChoice(CHP_DEBUG, FR PASS_LD);
+    ffr = (FliFrame)lTop;
+  } else
+#endif
+  { ffr = (FliFrame)argFrameP(FR, DEF->functor->arity);
+  }
 
   lTop = (LocalFrame)(ffr+1);
   ffr->size = 0;
