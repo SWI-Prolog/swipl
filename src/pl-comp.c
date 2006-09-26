@@ -2727,6 +2727,12 @@ decompileBody(decompileInfo *di, code end, Code until ARG_LD)
 			    *ARGP++ = makeVarRef((int)*PC++);
 			    *ARGP++ = makeVarRef((int)*PC++);
 			    goto b_unify_exit;
+      case B_EQ_VV:
+			    *ARGP++ = makeVarRef((int)*PC++);
+			    *ARGP++ = makeVarRef((int)*PC++);
+			    build_term(FUNCTOR_strict_equal2, di PASS_LD);
+			    pushed++;
+			    continue;
       case H_VOID:
       case H_ARGVOID:
       case B_VOID:
