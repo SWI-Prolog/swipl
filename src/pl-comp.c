@@ -101,6 +101,8 @@ initWamTable(void)
   unsigned int n;
   code maxcoded, mincoded;
 
+  assert(I_HIGHEST < 255);	/* need short for dewam_table on overflow */
+
   if ( interpreter_jmp_table == NULL )
     PL_next_solution(QID_EXPORT_WAM_TABLE);
 
@@ -121,7 +123,7 @@ initWamTable(void)
 				  sizeof(char));
   
   for(n = 0; n < I_HIGHEST; n++)
-    dewam_table[wam_table[n]-dewam_table_offset] = (char) n;
+    dewam_table[wam_table[n]-dewam_table_offset] = (unsigned char) n;
 
   checkCodeTable();
 }
@@ -1769,14 +1771,19 @@ compileBodyUnify(Word arg, code call, compileInfo *ci ARG_LD)
   }
 
   if ( i1 >= 0 )
-  { int first, where;
+  { int first;
 
   unify_term:
     first = isFirstVar(ci->used_var, i1);
-    where = (first ? A_BODY : A_HEAD|A_ARG);
-    Output_1(ci, first ? B_UNIFY_FIRSTVAR : B_UNIFY_VAR, VAROFFSET(i1));
-    compileArgument(a2, where, ci PASS_LD);
-    Output_0(ci, B_UNIFY_EXIT);
+
+    if ( isConst(*a2) )
+    { Output_2(ci, first ? B_UNIFY_FC : B_UNIFY_VC, VAROFFSET(i1), *a2);
+    } else
+    { int where = (first ? A_BODY : A_HEAD|A_ARG);
+      Output_1(ci, first ? B_UNIFY_FIRSTVAR : B_UNIFY_VAR, VAROFFSET(i1));
+      compileArgument(a2, where, ci PASS_LD);
+      Output_0(ci, B_UNIFY_EXIT);
+    }
 
     succeed;
   }
@@ -1897,7 +1904,7 @@ the opcode's arguments.
 TBD: compile this out in the code-info table where possible.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static Code
+Code
 stepPC(Code PC)
 { code op = fetchop(PC++);
   int i;
@@ -2787,6 +2794,11 @@ decompileBody(decompileInfo *di, code end, Code until ARG_LD)
       case B_UNIFY_VV:
 			    *ARGP++ = makeVarRef((int)*PC++);
 			    *ARGP++ = makeVarRef((int)*PC++);
+			    goto b_unify_exit;
+      case B_UNIFY_FC:
+      case B_UNIFY_VC:
+			    *ARGP++ = makeVarRef((int)*PC++);
+			    *ARGP++ = (word)*PC++;
 			    goto b_unify_exit;
       case B_EQ_VC:
 			    *ARGP++ = makeVarRef((int)*PC++);

@@ -162,6 +162,7 @@ COMMON(word) 		pl_clause3(term_t p, term_t term, term_t ref,
 COMMON(word) 		pl_clause2(term_t p, term_t term, control_t h);
 COMMON(word) 		pl_nth_clause(term_t p, term_t n, term_t ref,
 				      control_t h);
+COMMON(Code)		stepPC(Code PC);
 COMMON(word) 		pl_xr_member(term_t ref, term_t term, control_t h);
 COMMON(void) 		wamListClause(Clause clause);
 COMMON(Code) 		wamListInstruction(IOSTREAM *out, Code relto, Code bp);

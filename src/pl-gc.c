@@ -725,7 +725,7 @@ clearUninitialisedVarsFrame(LocalFrame fr, Code PC)
 { if ( PC != NULL )
   { code c;
 
-    for( ; ; PC += (codeTable[c].arguments + 1))
+    for( ; ; PC = stepPC(PC))
     { c = decode(*PC);
 
     again:
@@ -736,14 +736,7 @@ clearUninitialisedVarsFrame(LocalFrame fr, Code PC)
 	  c = decode(replacedBreak(PC));
 	  goto again;
 #endif
-	case H_STRING:			/* only skip the size of the */
-	case B_STRING:			/* string + header */
-	case H_MPZ:
-	case B_MPZ:
-	{ word m = PC[1];
-	  PC += wsizeofInd(m)+1;
-	  break;
-	}
+					/* terminate code list */
 	case I_EXIT:
 	case I_EXITFACT:
 	case I_EXITCATCH:
@@ -754,10 +747,12 @@ clearUninitialisedVarsFrame(LocalFrame fr, Code PC)
 	case S_TRUSTME:
 	case S_LIST:
 	  return;
+					/* jump */
 	case C_JMP:
 	  PC += (int)PC[1]+2;
 	  c = decode(*PC);
 	  goto again;
+					/* Firstvar assignments */
 	case B_FIRSTVAR:
 	case B_ARGFIRSTVAR:
 	case A_FIRSTVAR_IS:
@@ -778,6 +773,7 @@ clearUninitialisedVarsFrame(LocalFrame fr, Code PC)
 	  setVar(varFrame(fr, PC[2]));
 	  break;
 	case B_UNIFY_FV:
+	case B_UNIFY_FC:
 	  setVar(varFrame(fr, PC[1]));
 	  break;
       }

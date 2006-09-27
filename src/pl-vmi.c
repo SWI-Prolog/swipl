@@ -880,6 +880,40 @@ VMI(B_UNIFY_VV, 2, (CA1_VAR, CA1_VAR))
   FRAME_FAILED;
 }
 
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+B_UNIFY_FC: Unify first variable with a constant.  Always succeeds, no
+need for wakeup.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+VMI(B_UNIFY_FC, 2, (CA1_VAR, CA1_DATA))
+{ Word v1 = varFrameP(FR, (int)*PC++);
+
+  *v1 = (word)*PC++;
+  NEXT_INSTRUCTION;
+}
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+B_UNIFY_VC: Unify a variable (not first) with a constant in the body.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+VMI(B_UNIFY_VC, 2, (CA1_VAR, CA1_DATA))
+{ Word k = varFrameP(FR, (int)*PC++);
+  word c = (word)*PC++;
+  
+  deRef(k);
+  if ( *k == c )
+    NEXT_INSTRUCTION;
+  if ( canBind(*k) )
+  { bindConst(k, c);
+    CHECK_WAKEUP;
+    NEXT_INSTRUCTION;
+  }
+  CLAUSE_FAILED;
+}
+
+
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 B_EQ_VV: translation of	Var1 == Var2
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
