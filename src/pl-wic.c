@@ -22,7 +22,7 @@
     Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 */
 
-/*#define O_DEBUG 1*/
+#define O_DEBUG 1
 #include "pl-incl.h"
 #ifdef HAVE_SYS_PARAM_H
 #include <sys/param.h>
@@ -1012,96 +1012,95 @@ loadPredicate(IOSTREAM *fd, int skip ARG_LD)
 
 	while( bp < ep )
 	{ code op = getInt(fd);
-	  int n = 0;
-	  int narg = codeTable[op].arguments;
+	  int i;
 	  
 	  DEBUG(3, Sdprintf("\t%s (%d args) from %ld\n",
-			    codeTable[op].name, narg, Stell(fd)));
+			    codeTable[op].name,
+			    codeTable[op].arguments,
+			    Stell(fd)));
+
 	  *bp++ = encode(op);
-	  switch(codeTable[op].argtype[0]) /* TBD */
-	  { case CA1_PROC:
-	    { *bp++ = loadXR(fd);
-	      n++;
-	      break;
-	    }
-	    case CA1_FUNC:
-	    case CA1_DATA:
-	    { word w = loadXR(fd);
-	      if ( isAtom(w) )
-		PL_register_atom(w);
-	      *bp++ = w;
-	      n++;
-	      break;
-	    }
-	    case CA1_MODULE:
-	      *bp++ = loadXR(fd);
-	      n++;
-	      break;
-	    case CA1_INTEGER:
-	      *bp++ = getLong(fd);
-	      n++;
-	      break;
-	    case CA1_INT64:
-	    { int64_t val = getInt64(fd);
-	      Word p = (Word)&val;
-	      
-	      cpInt64Data(bp, p);
-	      n += WORDS_PER_INT64;
-	      break;
-	    }
-	    case CA1_FLOAT:
-	    { union
-	      { word w[WORDS_PER_DOUBLE];
-		double f;
-	      } v;
-	      Word p = v.w;
-	      v.f = getReal(fd);
-	      cpDoubleData(bp, p);
-	      n += WORDS_PER_DOUBLE;
-	      break;
-	    }
-	    case CA1_STRING:		/* <n> chars */
-	    { int l = getInt(fd);
-	      int lw = (l+sizeof(word))/sizeof(word);
-	      int pad = (lw*sizeof(word) - l);
-	      char *s = (char *)&bp[1];
-
-	      DEBUG(3, Sdprintf("String of %ld bytes\n", l));
-	      *bp = mkStrHdr(lw, pad);
-	      bp += lw;
-	      *bp++ = 0L;
-	      while(--l >= 0)
-		*s++ = Getc(fd);
-	      n++;
-	      break;
-	    }
-	    case CA1_MPZ:
+	  for(i=0; i<codeTable[op].arguments; i++)
+	  { switch(codeTable[op].argtype[i])
+	    { case CA1_PROC:
+	      { *bp++ = loadXR(fd);
+		break;
+	      }
+	      case CA1_FUNC:
+	      case CA1_DATA:
+	      { word w = loadXR(fd);
+		if ( isAtom(w) )
+		  PL_register_atom(w);
+		*bp++ = w;
+		break;
+	      }
+	      case CA1_MODULE:
+		*bp++ = loadXR(fd);
+		break;
+	      case CA1_INTEGER:
+		*bp++ = getLong(fd);
+		break;
+	      case CA1_INT64:
+	      { int64_t val = getInt64(fd);
+		Word p = (Word)&val;
+		
+		cpInt64Data(bp, p);
+		bp += WORDS_PER_INT64;
+		break;
+	      }
+	      case CA1_FLOAT:
+	      { union
+		{ word w[WORDS_PER_DOUBLE];
+		  double f;
+		} v;
+		Word p = v.w;
+		v.f = getReal(fd);
+		cpDoubleData(bp, p);
+		bp += WORDS_PER_DOUBLE;
+		break;
+	      }
+	      case CA1_STRING:		/* <n> chars */
+	      { int l = getInt(fd);
+		int lw = (l+sizeof(word))/sizeof(word);
+		int pad = (lw*sizeof(word) - l);
+		char *s = (char *)&bp[1];
+  
+		DEBUG(3, Sdprintf("String of %ld bytes\n", l));
+		*bp = mkStrHdr(lw, pad);
+		bp += lw;
+		*bp++ = 0L;
+		while(--l >= 0)
+		  *s++ = Getc(fd);
+		break;
+	      }
+	      case CA1_MPZ:
 #ifdef O_GMP
-	    DEBUG(3, Sdprintf("Loading MPZ from %ld\n", Stell(fd)));
-	    { int mpsize = getInt(fd);
-	      int l      = abs(mpsize)*sizeof(mp_limb_t);
-	      int wsz	 = (l+sizeof(word)-1)/sizeof(word);
-	      word m     = mkIndHdr(wsz+1, TAG_INTEGER);
-	      char *s;
-
-	      *bp++     = m;
-	      *bp++     = mpsize;
-	      s         = (char*)bp;
-	      bp[wsz-1] = 0L;
-	      bp       += wsz;
-
-	      while(--l >= 0)
-		*s++ = Getc(fd);
-	      DEBUG(3, Sdprintf("Loaded MPZ to %ld\n", Stell(fd)));
-	      n++;
+	      DEBUG(3, Sdprintf("Loading MPZ from %ld\n", Stell(fd)));
+	      { int mpsize = getInt(fd);
+		int l      = abs(mpsize)*sizeof(mp_limb_t);
+		int wsz	 = (l+sizeof(word)-1)/sizeof(word);
+		word m     = mkIndHdr(wsz+1, TAG_INTEGER);
+		char *s;
+  
+		*bp++     = m;
+		*bp++     = mpsize;
+		s         = (char*)bp;
+		bp[wsz-1] = 0L;
+		bp       += wsz;
+  
+		while(--l >= 0)
+		  *s++ = Getc(fd);
+		DEBUG(3, Sdprintf("Loaded MPZ to %ld\n", Stell(fd)));
+		break;
+	      }
+#else
+		fatalError("No support for MPZ numbers");
+#endif
+	    default:
+	      *bp++ = getInt(fd);
 	      break;
 	    }
-#else
-  	      fatalError("No support for MPZ numbers");
-#endif
 	  }
-	  for( ; n < narg; n++ )
-	    *bp++ = getInt(fd);
 	}
 
 	if ( skip )
@@ -1717,96 +1716,92 @@ saveWicClause(Clause clause, IOSTREAM *fd)
 
   while( bp < ep )
   { code op = decode(*bp++);
-    int n = 0;
+    int i;
 
     putNum(op, fd);
     DEBUG(3, Sdprintf("\t%s (%d args) at %ld\n", 
 		      codeTable[op].name, codeTable[op].arguments,
 		      Stell(fd)));
-    switch(codeTable[op].argtype[0])	/* TBD */
-    { case CA1_PROC:
-      { Procedure p = (Procedure) *bp++;
-	n++;
-	saveXRProc(p, fd PASS_LD);
-	break;
-      }
-      case CA1_MODULE:
-      { Module m = (Module) *bp++;
-	n++;
-	saveXRModule(m, fd PASS_LD);
-	break;
-      }
-      case CA1_FUNC:
-      { functor_t f = (functor_t) *bp++;
-	n++;
-	saveXRFunctor(f, fd PASS_LD);
-	break;
-      }
-      case CA1_DATA:
-      { word xr = (word) *bp++;
-	n++;
-	saveXR(xr, fd);
-	break;
-      }
-      case CA1_INTEGER:
-      { putNum(*bp++, fd);
-	n++;
-	break;
-      }
-      case CA1_INT64:
-      { int64_t val;
-	Word p = (Word)&val;
-
-	cpInt64Data(p, bp);
-	n += WORDS_PER_INT64;
-	putNum(val, fd);
-	break;
-      }
-      case CA1_FLOAT:
-      { union
-	{ word w[WORDS_PER_DOUBLE];
-	  double f;
-	} v;
-	Word p = v.w;
-	cpDoubleData(p, bp);
-	n += WORDS_PER_DOUBLE;
-	putReal(v.f, fd);
-	break;
-      }
-      case CA1_STRING:
-      { word m = *bp;
-	char *s = (char *)++bp;
-	int wn = wsizeofInd(m);
-	int l = wn*sizeof(word) - padHdr(m);
-	bp += wn;
-
-	putNum(l, fd);
-	while(--l >= 0)
-	  Sputc(*s++&0xff, fd);
-	n++;
-	break;
-      }
+    for(i=0; i<codeTable[op].arguments; i++)
+    { switch(codeTable[op].argtype[i])
+      { case CA1_PROC:
+	{ Procedure p = (Procedure) *bp++;
+	  saveXRProc(p, fd PASS_LD);
+	  break;
+	}
+	case CA1_MODULE:
+	{ Module m = (Module) *bp++;
+	  saveXRModule(m, fd PASS_LD);
+	  break;
+	}
+	case CA1_FUNC:
+	{ functor_t f = (functor_t) *bp++;
+	  saveXRFunctor(f, fd PASS_LD);
+	  break;
+	}
+	case CA1_DATA:
+	{ word xr = (word) *bp++;
+	  saveXR(xr, fd);
+	  break;
+	}
+	case CA1_INTEGER:
+	{ putNum(*bp++, fd);
+	  break;
+	}
+	case CA1_INT64:
+	{ int64_t val;
+	  Word p = (Word)&val;
+  
+	  cpInt64Data(p, bp);
+	  bp += WORDS_PER_INT64;
+	  putNum(val, fd);
+	  break;
+	}
+	case CA1_FLOAT:
+	{ union
+	  { word w[WORDS_PER_DOUBLE];
+	    double f;
+	  } v;
+	  Word p = v.w;
+	  cpDoubleData(p, bp);
+	  bp += WORDS_PER_DOUBLE;
+	  putReal(v.f, fd);
+	  break;
+	}
+	case CA1_STRING:
+	{ word m = *bp;
+	  char *s = (char *)++bp;
+	  int wn = wsizeofInd(m);
+	  int l = wn*sizeof(word) - padHdr(m);
+	  bp += wn;
+  
+	  putNum(l, fd);
+	  while(--l >= 0)
+	    Sputc(*s++&0xff, fd);
+	  break;
+	}
 #ifdef O_GMP
-      case CA1_MPZ:
-      { word m = *bp++;
-	int wn = wsizeofInd(m);
-	int mpsize = (int)*bp;
-	int l = abs(mpsize)*sizeof(mp_limb_t);
-	char *s = (char*)&bp[1];
-	bp += wn;
-
-	DEBUG(3, Sdprintf("Saving MPZ from %ld\n", Stell(fd)));
-	putNum(mpsize, fd);
-	while(--l >= 0)
-	  Sputc(*s++&0xff, fd);
-	DEBUG(3, Sdprintf("Saved MPZ to %ld\n", Stell(fd)));
-	n++;
-	break;
-      }
+	case CA1_MPZ:
+	{ word m = *bp++;
+	  int wn = wsizeofInd(m);
+	  int mpsize = (int)*bp;
+	  int l = abs(mpsize)*sizeof(mp_limb_t);
+	  char *s = (char*)&bp[1];
+	  bp += wn;
+  
+	  DEBUG(3, Sdprintf("Saving MPZ from %ld\n", Stell(fd)));
+	  putNum(mpsize, fd);
+	  while(--l >= 0)
+	    Sputc(*s++&0xff, fd);
+	  DEBUG(3, Sdprintf("Saved MPZ to %ld\n", Stell(fd)));
+	  break;
+	}
 #endif
+	default:
+	  putNum(*bp++, fd);
+	  break;
+      }
     }
-    for( ; n < codeTable[op].arguments; n++ )
-      putNum(*bp++, fd);
   }
 }
 

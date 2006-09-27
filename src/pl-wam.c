@@ -60,7 +60,7 @@ count(code c, Code PC)
 { const code_info *info = &codeTable[c];
 
   counting[c].times++;
-  switch(info->argtype)
+  switch(info->argtype[0])
   { case CA1_VAR:
     case CA1_CHP:
     { int v = (int)*PC;

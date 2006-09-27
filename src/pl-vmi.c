@@ -265,7 +265,7 @@ as this is the same as H_INTEGER on 64-bit hardware.
 TBD: Compile conditionally
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-VMI(H_INT64, WORDS_PER_INT64, (CA1_INT64))
+VMI(H_INT64, 1, (CA1_INT64))
 { Word k;
 
   IF_WRITE_MODE_GOTO(B_INT64);
@@ -302,7 +302,7 @@ H_FLOAT: Float in the head. The  float   follows  the instruction and is
 represented as a native C-double.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-VMI(H_FLOAT, WORDS_PER_DOUBLE, (CA1_FLOAT))
+VMI(H_FLOAT, 1, (CA1_FLOAT))
 { Word k;
 
   IF_WRITE_MODE_GOTO(B_FLOAT);
@@ -670,7 +670,7 @@ VMI(B_INTEGER, 1, (CA1_INTEGER))
 B_INT64: 64-bit (int64_t) in the body.  See H_INT64
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-VMI(B_INT64, WORDS_PER_INT64, (CA1_INT64))
+VMI(B_INT64, 1, (CA1_INT64))
 { Word p = allocGlobal(2+WORDS_PER_INT64);
   int i;
   
@@ -689,7 +689,7 @@ B_FLOAT: Float in the  body.  PC  is   followed  by  a  double in native
 representation.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-VMI(B_FLOAT, WORDS_PER_DOUBLE, (CA1_FLOAT))
+VMI(B_FLOAT, 1, (CA1_FLOAT))
 { Word p = allocGlobal(2+WORDS_PER_DOUBLE);
 
   *ARGP++ = consPtr(p, TAG_FLOAT|STG_GLOBAL);
@@ -2008,7 +2008,7 @@ VMI(A_INTEGER, 1, (CA1_INTEGER))
 A_INT64: Push int64_t following PC
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-VMI(A_INT64, WORDS_PER_INT64, (CA1_INT64))
+VMI(A_INT64, 1, (CA1_INT64))
 { Number n = (Number)ARGP;
   Word p = &n->value.w[0];
 
@@ -2050,7 +2050,7 @@ VMI(A_MPZ, 1, (CA1_MPZ))
 A_DOUBLE: Push double following PC
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-VMI(A_DOUBLE, WORDS_PER_DOUBLE, (CA1_FLOAT))
+VMI(A_DOUBLE, 1, (CA1_FLOAT))
 { Number n = (Number)ARGP;
   Word p = &n->value.w[0];
 
@@ -2165,7 +2165,7 @@ VMI(A_FUNC2, 1, (CA1_AFUNC))
   goto common_an;
 }
 
-VMI(A_FUNC, 2, (CA1_AFUNC))
+VMI(A_FUNC, 2, (CA1_AFUNC, CA1_INT))
 { Number n;
 
   fn = *PC++;

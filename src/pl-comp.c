@@ -1832,8 +1832,6 @@ compileBodyEQ(Word arg, code call, compileInfo *ci ARG_LD)
     succeed;
   }
 
-  fail;					/* TBD */
-
   if ( i1 >= 0 && isConst(*a2) )
   { int f1 = isFirstVar(ci->used_var, i1);
 
@@ -1855,6 +1853,63 @@ compileBodyEQ(Word arg, code call, compileInfo *ci ARG_LD)
 
 
 		 /*******************************
+		 *	 VMI AND ARG LOGIC	*
+		 *******************************/
+
+static inline code
+fetchop(Code PC)
+{ code op = decode(*PC);
+
+  if ( op == D_BREAK )
+    op = decode(replacedBreak(PC));
+
+  return op;
+}
+
+
+static Code
+stepCodeArg(Code PC, int type)
+{ switch(type)
+  { case CA1_STRING:
+    case CA1_MPZ:
+    { word m = *PC++;
+      PC += wsizeofInd(m);
+      break;
+    }
+    case CA1_FLOAT:
+      PC += WORDS_PER_DOUBLE;
+    break;
+    case CA1_INT64:
+      PC += WORDS_PER_INT64;
+    break;
+    default:
+      PC++;
+  }
+
+  return PC;
+}
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+stepPC(Code PC) returns the location of   the next instruction, skipping
+the opcode's arguments.
+
+TBD: compile this out in the code-info table where possible.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+static Code
+stepPC(Code PC)
+{ code op = fetchop(PC++);
+  int i;
+
+  for(i=0; i<codeTable[op].arguments; i++)
+    PC = stepCodeArg(PC, codeTable[op].argtype[i]);
+
+  return PC;
+}
+
+
+		 /*******************************
 		 *	     ATOM-GC		*
 		 *******************************/
 
@@ -1868,29 +1923,11 @@ unregisterAtomsClause(Clause clause)
   PC = clause->codes;
   ep = PC + clause->code_size;
 
-  for( ; PC < ep; PC += (codeTable[c].arguments + 1) )
-  { c = decode(*PC);
+  for( ; PC < ep; PC = stepPC(PC) )
+  { c = fetchop(PC);
 
-#if O_DEBUGGER
-  again:
-#endif
     switch(c)
-    {
-#if O_DEBUGGER
-      case D_BREAK:
-	c = decode(replacedBreak(PC));
-        goto again;
-#endif
-      case H_STRING:		/* only skip the size of the */
-      case B_STRING:		/* string + header */
-      case H_MPZ:
-      case B_MPZ:
-      case A_MPZ:
-      { word m = PC[1];
-	PC += wsizeofInd(m)+1;
-	break;
-      }
-      case H_CONST:
+    { case H_CONST:
       case B_CONST:
       { word w = PC[1];
 
@@ -2751,9 +2788,14 @@ decompileBody(decompileInfo *di, code end, Code until ARG_LD)
 			    *ARGP++ = makeVarRef((int)*PC++);
 			    *ARGP++ = makeVarRef((int)*PC++);
 			    goto b_unify_exit;
+      case B_EQ_VC:
+			    *ARGP++ = makeVarRef((int)*PC++);
+			    *ARGP++ = (word)*PC++;
+      			    goto b_eq_vv_cont;
       case B_EQ_VV:
 			    *ARGP++ = makeVarRef((int)*PC++);
 			    *ARGP++ = makeVarRef((int)*PC++);
+      			   b_eq_vv_cont:
 			    build_term(FUNCTOR_strict_equal2, di PASS_LD);
 			    pushed++;
 			    continue;
@@ -2943,8 +2985,9 @@ decompileBody(decompileInfo *di, code end, Code until ARG_LD)
       case I_EXIT:
 			    break;
       default:
-	  sysError("Illegal instruction in clause body: %d", PC[-1]);
-	  /*NOTREACHED*/
+	sysError("Decompiler: unknown instruction in clause body: %s", 
+		 codeTable[op].name);
+	/*NOTREACHED*/
     }
   }
 
@@ -3351,37 +3394,8 @@ get_clause_ptr_ex(term_t ref, Clause *cl)
   succeed;
 }
 
+
 #if O_DEBUGGER				/* to the end of the file */
-
-static code
-fetchop(Code PC)
-{ code op = decode(*PC);
-
-  if ( op == D_BREAK )
-    op = decode(replacedBreak(PC));
-
-  return op;
-}
-
-
-static Code
-stepPC(Code PC)
-{ code op = fetchop(PC++);
-
-  switch(codeTable[op].argtype[0])	/* TBD */
-  { case CA1_STRING:
-    case CA1_MPZ:
-    { word m = *PC++;
-      PC += wsizeofInd(m);
-      return PC;
-    }
-  }
-
-  PC += codeTable[op].arguments;
-
-  return PC;
-}
-
 
 static int
 wouldBindToDefinition(Definition from, Definition to)
@@ -3440,41 +3454,47 @@ pl_xr_member(term_t ref, term_t term, control_t h)
     while( PC < end )
     { bool rval = FALSE;
       code op = fetchop(PC++);
-      
-      switch(codeTable[op].argtype[0])	/* TBD */
-      { case CA1_PROC:
-	{ Procedure proc = (Procedure) *PC;
-	  rval = unify_definition(term, getProcDefinition(proc), 0, 0);
-	  break;
-	}
-	case CA1_FUNC:
-	{ functor_t fd = (functor_t) *PC;
-	  rval = PL_unify_functor(term, fd);
-	  break;
-	}
-	case CA1_DATA:
-	{ word xr = *PC;
-	  rval = _PL_unify_atomic(term, xr);
-	  break;
-	}
-	case CA1_MODULE:
-	{ Module xr = (Module)*PC;
-	  rval = _PL_unify_atomic(term, xr->name);
-	  break;
-	}
-	case CA1_INTEGER:
-	case CA1_INT64:
-	case CA1_FLOAT:
-	  break;
-	case CA1_MPZ:
-	case CA1_STRING:
-	{ word m = *PC++;
-	  PC += wsizeofInd(m);
-	  break;
+      int i;
+
+      for(i=0; i<codeTable[op].arguments; i++)
+      { switch(codeTable[op].argtype[i])	/* TBD */
+	{ case CA1_PROC:
+	  { Procedure proc = (Procedure) *PC++;
+	    rval = unify_definition(term, getProcDefinition(proc), 0, 0);
+	    break;
+	  }
+	  case CA1_FUNC:
+	  { functor_t fd = (functor_t) *PC++;
+	    rval = PL_unify_functor(term, fd);
+	    break;
+	  }
+	  case CA1_DATA:
+	  { word xr = *PC++;
+	    rval = _PL_unify_atomic(term, xr);
+	    break;
+	  }
+	  case CA1_MODULE:
+	  { Module xr = (Module)*PC++;
+	    rval = _PL_unify_atomic(term, xr->name);
+	    break;
+	  }
+	  case CA1_INT64:
+	    PC += WORDS_PER_INT64;
+	    break;
+	  case CA1_FLOAT:
+	    PC += WORDS_PER_DOUBLE;
+	    break;
+	  case CA1_MPZ:
+	  case CA1_STRING:
+	  { word m = *PC++;
+	    PC += wsizeofInd(m);
+	    break;
+	  }
+	  default:
+	    PC++;
+	    break;
 	}
       }
-
-      PC += codeTable[op].arguments;
 
       if ( rval )
       { long i = PC - clause->codes;	/* compensate ++ above! */
@@ -3490,39 +3510,43 @@ pl_xr_member(term_t ref, term_t term, control_t h)
 
     if ( PL_is_atomic(term) )
     { while( PC < end )
-      { code op = fetchop(PC);
-
-	if ( codeTable[op].argtype[0] == CA1_DATA && /* TBD */
-	     _PL_unify_atomic(term, PC[1]) )
+      { code op = fetchop(PC++);
+	int i;
+	
+	for(i=0; i<codeTable[op].arguments; i++)
+	{ if ( codeTable[op].argtype[i] == CA1_DATA &&
+	       _PL_unify_atomic(term, *PC) )
 	    succeed;
-
-	PC = stepPC(PC);
+	  PC = stepCodeArg(PC, codeTable[op].argtype[i]);
+	}
       }
     }
 
     PC = clause->codes;
     if ( PL_get_functor(term, &fd) && fd != FUNCTOR_colon2 )
     { while( PC < end )
-      { code op = fetchop(PC);
+      { code op = fetchop(PC++);
+	int i;
+	
+	for(i=0; i<codeTable[op].arguments; i++)
+	{ if ( codeTable[op].argtype[i] == CA1_FUNC )
+	  { functor_t fa = (functor_t)*PC;
 
-	if ( codeTable[op].argtype[0] == CA1_FUNC ) /* TBD */
-	{ functor_t fa = (functor_t)PC[1];
-
-	  if ( fa == fd )
-	  { DEBUG(1,
-		  { term_t ref = PL_new_term_ref();
-		    long i;
-		    
-		    PL_unify_pointer(ref, clause);
-		    PL_get_long(ref, &i);
-		    Sdprintf("Got it, clause %d at %d\n",
-			     i, PC-clause->codes);
-		  });
-	    succeed;
+	    if ( fa == fd )
+	    { DEBUG(1,
+		    { term_t ref = PL_new_term_ref();
+		      long i;
+		      
+		      PL_unify_pointer(ref, clause);
+		      PL_get_long(ref, &i);
+		      Sdprintf("Got it, clause %d at %d\n",
+			       i, PC-clause->codes);
+		    });
+	      succeed;
+	    }
 	  }
+	  PC = stepCodeArg(PC, codeTable[op].argtype[i]);
 	}
-
-	PC = stepPC(PC);
       }
     }
 
@@ -3531,20 +3555,22 @@ pl_xr_member(term_t ref, term_t term, control_t h)
     { Definition pd = getProcDefinition(proc);
 
       while( PC < end )
-      { code op = fetchop(PC);
+      { code op = fetchop(PC++);
+	int i;
+	
+	for(i=0; i<codeTable[op].arguments; i++)
+	{ if ( codeTable[op].argtype[i] == CA1_PROC )
+	  { Procedure pa = (Procedure)*PC;
+	    Definition def = getProcDefinition(pa);
 
-	if ( codeTable[op].argtype[0] == CA1_PROC ) /* TBD */
-	{ Procedure pa = (Procedure)PC[1];
-	  Definition def = getProcDefinition(pa);
-
-	  if ( pd == def )
-	    succeed;
-	  if ( pd->functor == def->functor &&
-	       wouldBindToDefinition(def, pd) )
-	    succeed;
+	    if ( pd == def )
+	      succeed;
+	    if ( pd->functor == def->functor &&
+		 wouldBindToDefinition(def, pd) )
+	      succeed;
+	  }
+	  PC = stepCodeArg(PC, codeTable[op].argtype[i]);
 	}
-
-	PC = stepPC(PC);
       }
     }
   }
@@ -3561,158 +3587,115 @@ pl_xr_member(term_t ref, term_t term, control_t h)
 Code
 wamListInstruction(IOSTREAM *out, Code relto, Code bp)
 { GET_LD
-  code op = decode(*bp);
+  code op = fetchop(bp);
   const code_info *ci;
-  int n = 0;
-  int isbreak;
-
-  if ( op == D_BREAK )
-  { op = decode(replacedBreak(bp));
-    isbreak = TRUE;
-  } else
-    isbreak = FALSE;
+  int i;
 
   ci = &codeTable[op];
   Sfprintf(out, "%4d %s", bp - relto, ci->name);
-
+  Sflush(out);
   bp++;					/* skip the instruction */
 
-  switch(op)
-  { case B_FIRSTVAR:
-    case H_FIRSTVAR:
-    case B_ARGFIRSTVAR:
-    case B_VAR:
-    case B_ARGVAR:
-    case H_VAR:
-    case C_VAR:
-    case C_IFTHEN:
-    case C_SOFTCUT:
-    case C_CUT:			/* var */
-    case C_LCUT:
-    case A_FIRSTVAR_IS:
-      assert(ci->arguments == 1);
-      Sfprintf(out, " var(%d)", VARNUM(*bp++));
-      break;
-    case C_SOFTIF:
-    case C_IFTHENELSE:		/* var, jump */
-    case C_NOT:
-    { int var = VARNUM(*bp++);
-      int jmp = *bp++;
-      assert(ci->arguments == 2);
-      Sfprintf(out, " var(%d), jmp(%d)", var, jmp);
-      break;
-    }
-    default:
-      switch(codeTable[op].argtype[0])	/* TBD */
-      { case CA1_PROC:
-	{ Procedure proc = (Procedure) *bp++;
-	  n++;
-	  Sfprintf(out, " %s", procedureName(proc));
-	  break;
-	}
-	case CA1_CLAUSEREF:
-	{ for(; n < codeTable[op].arguments; n++ )
-	  { ClauseRef cref = (ClauseRef)*bp++;
-	    Sfprintf(out, "%s%ld", n == 0 ? " " : ", ", 
-		     PL_pointer_to_long(cref->clause));
-	  }
-          break;
-	}
-	case CA1_VAR:
-	{ for(; n < codeTable[op].arguments; n++ )
-	  { int var = VARNUM(*bp++);
-	    Sfprintf(out, "%svar(%d)", n == 0 ? " " : ", ", var);
-	  }
-	  break;
-	}
-	case CA1_CHP:
-	{ for(; n < codeTable[op].arguments; n++ )
-	  { int var = VARNUM(*bp++);
-	    Sfprintf(out, "%schoice(%d)", n == 0 ? " " : ", ", var);
-	  }
-	  break;
-	}
-	case CA1_MODULE:
-	{ Module m = (Module)*bp++;
-	  n++;
-	  Sfprintf(out, " %s", stringAtom(m->name));
-	  break;
-	}
-	case CA1_FUNC:
-	{ functor_t f = (functor_t) *bp++;
-	  FunctorDef fd = valueFunctor(f);
-	  n++;
-	  Sfprintf(out, " %s/%d", stringAtom(fd->name), fd->arity);
-	  break;
-	}
-	case CA1_DATA:
-	{ word xr = *bp++;
-	  n++;
-	  switch(tag(xr))
-	  { case TAG_ATOM:
-	      Sfprintf(out, " %s", stringAtom(xr));
-	      break;
-	    case TAG_INTEGER:
-	      Sfprintf(out, " %ld", valInteger(xr));
-	      break;
-	    case TAG_STRING:
-	      Sfprintf(out, " \"%s\"", getCharsString(xr, NULL));
-	      break;
-	    default:
-	      assert(0);
-	  }
-	  break;
-	}
-	case CA1_INTEGER:
-	{ long l = (long) *bp++;
-	  n++;
-	  Sfprintf(out, " %ld", l);
-	  break;
-	}
-	case CA1_INT64:
-	{ int64_t val;
-	  Word p = (Word)&val;
+  for(i=0; i<ci->arguments; i++)
+  { Sfprintf(out, "%s", i == 0 ? " " : ", ");
 
-	  cpInt64Data(p, bp);
-	  n += WORDS_PER_INT64;
-	  Sfprintf(out, " " INT64_FORMAT, val);
-	  break;
-	}
-	case CA1_FLOAT:
-	{ union
-	  { word w[WORDS_PER_DOUBLE];
-	    double f;
-	  } v;
-	  Word p = v.w;
-	  n += 2;
-	  cpDoubleData(p, bp);
-	  Sfprintf(out, " %g", v.f);
-	  break;
-	}
-	case CA1_STRING:
-	{ word m = *bp++;
-	  int  n = wsizeofInd(m);
-	  Sfprintf(out, " \"%s\"", (char *)bp);
-	  bp += n;
-	  break;
-	}
-#ifdef O_GMP
-	case CA1_MPZ:
-	{ word m = *bp++;
-	  int  n = wsizeofInd(m);
-
-	  Sfprintf(out, " <GMP mpz integer>");
-	  bp += n;
-	  break;
-	}
-#endif
+    switch(ci->argtype[i])
+    { case CA1_VAR:
+	Sfprintf(out, "var(%d)", VARNUM(*bp++));
+        break;
+      case CA1_CHP:
+	Sfprintf(out, "choice(%d)", VARNUM(*bp++));
+        break;
+      case CA1_JUMP:
+	Sfprintf(out, "jmp(%d)", *bp++);
+        break;
+      case CA1_PROC:
+      { Procedure proc = (Procedure) *bp++;
+	Sfprintf(out, "%s", procedureName(proc));
+	break;
       }
-      for(; n < codeTable[op].arguments; n++ )
-	Sfprintf(out, "%s%d", n == 0 ? " " : ", ", *bp++);
-  }
+      case CA1_CLAUSEREF:
+      { ClauseRef cref = (ClauseRef)*bp++;
+	Sfprintf(out, "%ld", PL_pointer_to_long(cref->clause));
+	break;
+      }
+      case CA1_MODULE:
+      { Module m = (Module)*bp++;
+	Sfprintf(out, "%s", stringAtom(m->name));
+	break;
+      }
+      case CA1_FUNC:
+      { functor_t f = (functor_t) *bp++;
+	FunctorDef fd = valueFunctor(f);
+	Sfprintf(out, "%s/%d", stringAtom(fd->name), fd->arity);
+	break;
+      }
+      case CA1_AFUNC:
+      { functor_t f = functorArithFunction((int)*bp++);
+	FunctorDef fd = valueFunctor(f);
+	Sfprintf(out, "%s/%d", stringAtom(fd->name), fd->arity);
+	break;
+      }
+      case CA1_DATA:
+      { word xr = *bp++;
 
-  if ( isbreak )
-    Sfprintf(out, " *break*");
+	switch(tag(xr))
+	{ case TAG_ATOM:
+	    Sfprintf(out, "'%s'", stringAtom(xr));
+	    break;
+	  case TAG_INTEGER:
+	    Sfprintf(out, "%ld", valInteger(xr));
+	    break;
+	  default:
+	    assert(0);
+	}
+	break;
+      }
+      case CA1_INTEGER:
+      { long l = (long) *bp++;
+	Sfprintf(out, "%ld", l);
+	break;
+      }
+      case CA1_INT64:
+      { int64_t val;
+	Word p = (Word)&val;
+  
+	cpInt64Data(p, bp);
+	Sfprintf(out, INT64_FORMAT, val);
+	break;
+      }
+      case CA1_FLOAT:
+      { union
+	{ word w[WORDS_PER_DOUBLE];
+	  double f;
+	} v;
+	Word p = v.w;
+	cpDoubleData(p, bp);
+	Sfprintf(out, "%g", v.f);
+	break;
+      }
+      case CA1_STRING:
+      { word m = *bp++;
+	int  n = wsizeofInd(m);
+	Sfprintf(out, "\"%s\"", (char *)bp);
+	bp += n;
+	break;
+      }
+#ifdef O_GMP
+      case CA1_MPZ:
+      { word m = *bp++;
+	int  n = wsizeofInd(m);
+  
+	Sfprintf(out, " <GMP mpz integer>");
+	bp += n;
+	break;
+      }
+#endif
+      default:
+	Sfprintf(out, "unknown(%ld)", *bp++);
+        break;
+    }
+  }
 
   Sfprintf(out, "\n");
 

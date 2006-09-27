@@ -1173,6 +1173,7 @@ struct clause_ref
 #define CA1_CLAUSEREF  13	/* Clause reference */
 #define CA1_JUMP       14	/* Instructions to skip */
 #define CA1_AFUNC      15	/* Number of arithmetic function */
+#define CA1_INT	       16	/* Misc integer */
 
 typedef struct
 { char		*name;		/* name of the code */
