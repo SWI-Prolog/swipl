@@ -1731,7 +1731,7 @@ compileArithArgument(Word arg, compileInfo *ci ARG_LD)
 
 #ifdef O_COMPILE_IS
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-TBD:	* Allow for Term = Var
+Note:	Term = Var is translates as if Var = Term!
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static bool
@@ -1769,14 +1769,21 @@ compileBodyUnify(Word arg, code call, compileInfo *ci ARG_LD)
   }
 
   if ( i1 >= 0 )
-  { int first = isFirstVar(ci->used_var, i1);
-    int where = (first ? A_BODY : A_HEAD|A_ARG);
+  { int first, where;
 
+  unify_term:
+    first = isFirstVar(ci->used_var, i1);
+    where = (first ? A_BODY : A_HEAD|A_ARG);
     Output_1(ci, first ? B_UNIFY_FIRSTVAR : B_UNIFY_VAR, VAROFFSET(i1));
     compileArgument(a2, where, ci PASS_LD);
     Output_0(ci, B_UNIFY_EXIT);
 
     succeed;
+  }
+  if ( i2 >= 0 )
+  { i1 = i2;
+    a2 = a1;
+    goto unify_term;
   }
 
   fail;
@@ -1822,6 +1829,23 @@ compileBodyEQ(Word arg, code call, compileInfo *ci ARG_LD)
 
     Output_2(ci, B_EQ_VV, VAROFFSET(i1), VAROFFSET(i2));
 
+    succeed;
+  }
+
+  fail;					/* TBD */
+
+  if ( i1 >= 0 && isConst(*a2) )
+  { int f1 = isFirstVar(ci->used_var, i1);
+
+    if ( f1 ) Output_1(ci, C_VAR, VAROFFSET(i1));
+    Output_2(ci, B_EQ_VC, VAROFFSET(i1), *a2);
+    succeed;
+  }
+  if ( i2 >= 0 && isConst(*a1) )
+  { int f2 = isFirstVar(ci->used_var, i2);
+
+    if ( f2 ) Output_1(ci, C_VAR, VAROFFSET(i2));
+    Output_2(ci, B_EQ_VC, VAROFFSET(i2), *a1);
     succeed;
   }
 
@@ -3344,12 +3368,12 @@ static Code
 stepPC(Code PC)
 { code op = fetchop(PC++);
 
-  switch(codeTable[op].argtype)
+  switch(codeTable[op].argtype[0])	/* TBD */
   { case CA1_STRING:
     case CA1_MPZ:
     { word m = *PC++;
       PC += wsizeofInd(m);
-      break;
+      return PC;
     }
   }
 
@@ -3417,7 +3441,7 @@ pl_xr_member(term_t ref, term_t term, control_t h)
     { bool rval = FALSE;
       code op = fetchop(PC++);
       
-      switch(codeTable[op].argtype)
+      switch(codeTable[op].argtype[0])	/* TBD */
       { case CA1_PROC:
 	{ Procedure proc = (Procedure) *PC;
 	  rval = unify_definition(term, getProcDefinition(proc), 0, 0);
@@ -3468,7 +3492,7 @@ pl_xr_member(term_t ref, term_t term, control_t h)
     { while( PC < end )
       { code op = fetchop(PC);
 
-	if ( codeTable[op].argtype == CA1_DATA &&
+	if ( codeTable[op].argtype[0] == CA1_DATA && /* TBD */
 	     _PL_unify_atomic(term, PC[1]) )
 	    succeed;
 
@@ -3481,7 +3505,7 @@ pl_xr_member(term_t ref, term_t term, control_t h)
     { while( PC < end )
       { code op = fetchop(PC);
 
-	if ( codeTable[op].argtype == CA1_FUNC )
+	if ( codeTable[op].argtype[0] == CA1_FUNC ) /* TBD */
 	{ functor_t fa = (functor_t)PC[1];
 
 	  if ( fa == fd )
@@ -3509,7 +3533,7 @@ pl_xr_member(term_t ref, term_t term, control_t h)
       while( PC < end )
       { code op = fetchop(PC);
 
-	if ( codeTable[op].argtype == CA1_PROC )
+	if ( codeTable[op].argtype[0] == CA1_PROC ) /* TBD */
 	{ Procedure pa = (Procedure)PC[1];
 	  Definition def = getProcDefinition(pa);
 
@@ -3579,7 +3603,7 @@ wamListInstruction(IOSTREAM *out, Code relto, Code bp)
       break;
     }
     default:
-      switch(codeTable[op].argtype)
+      switch(codeTable[op].argtype[0])	/* TBD */
       { case CA1_PROC:
 	{ Procedure proc = (Procedure) *bp++;
 	  n++;
@@ -3877,7 +3901,7 @@ unify_vmi(term_t t, Clause clause, Code bp)
       for( i=0; i<ci->arguments; i++ )
       { PL_get_arg(i+1, t, arg);
 
-	switch(codeTable[op].argtype)
+	switch(codeTable[op].argtype[i])
 	{ case CA1_VAR:
 	  case CA1_CHP:
 	    PL_unify_integer(arg, VARNUM(*bp++));
@@ -4013,7 +4037,7 @@ vm_compile_instruction(term_t t, CompileInfo ci)
 	  term_t arg = PL_new_term_ref();
 
 	  for(i=0; i<arity; i++)
-	  { int atype = codeTable[vmi].argtype;
+	  { int atype = codeTable[vmi].argtype[i];
 
 	    PL_get_arg(i+1, t, arg);
 	    switch(atype)

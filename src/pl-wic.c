@@ -1018,7 +1018,7 @@ loadPredicate(IOSTREAM *fd, int skip ARG_LD)
 	  DEBUG(3, Sdprintf("\t%s (%d args) from %ld\n",
 			    codeTable[op].name, narg, Stell(fd)));
 	  *bp++ = encode(op);
-	  switch(codeTable[op].argtype)
+	  switch(codeTable[op].argtype[0]) /* TBD */
 	  { case CA1_PROC:
 	    { *bp++ = loadXR(fd);
 	      n++;
@@ -1723,7 +1723,7 @@ saveWicClause(Clause clause, IOSTREAM *fd)
     DEBUG(3, Sdprintf("\t%s (%d args) at %ld\n", 
 		      codeTable[op].name, codeTable[op].arguments,
 		      Stell(fd)));
-    switch(codeTable[op].argtype)
+    switch(codeTable[op].argtype[0])	/* TBD */
     { case CA1_PROC:
       { Procedure p = (Procedure) *bp++;
 	n++;

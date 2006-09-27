@@ -29,15 +29,13 @@ cat > $ctable.new << EOS
 
 #include "pl-incl.h"
 
-#define CODE(vmi, ac, at) { #vmi, vmi, ac, at }
-
 const code_info codeTable[] = {
 /* ID #args #argtype */
 EOS
-grep "$PAT" $in |
-	sed "s/^VMI(\([A-Z_0-9]*\), *\([A-Z_0-9]*\), *\([A-Z_0-9]*\))/  CODE(\1, \2, \3),/" >> $ctable.new
+grep "$PAT" $in | sed \
+	-e 's/^VMI(\([A-Z_0-9]*\), *\([A-Z_0-9]*\), *(\(.*\)) *)/  { "\1", \1, \2, {\3} },/' >> $ctable.new
 cat >> $ctable.new << EOS
-  { NULL, 0, 0, 0 }
+  { NULL, 0, 0, {} }
 };
 EOS
 
@@ -59,7 +57,7 @@ cat > $jtable.new << EOS
 EOS
 
 grep "$PAT" $in |
-	sed "s/^VMI(\([A-Z_0-9]*\), *\([A-Z_0-9]*\), *\([A-Z_0-9]*\))/    \&\&\1_LBL,/" >> $jtable.new
+	sed "s/^VMI(\([A-Z_0-9]*\), *\([A-Z_0-9]*\).*/    \&\&\1_LBL,/" >> $jtable.new
 
 cat >> $jtable.new << EOS
     NULL
@@ -83,7 +81,7 @@ typedef enum
 EOS
 
 grep "$PAT" $in |
-	sed "s/^VMI(\([A-Z_0-9]*\), *\([A-Z_0-9]*\), *\([A-Z_0-9]*\))/  \1,/" >> $ctype.new
+	sed "s/^VMI(\([A-Z_0-9]*\), *\([A-Z_0-9]*\).*/  \1,/" >> $ctype.new
 
 cat >> $ctype.new << EOS
   VMI_END_LIST
