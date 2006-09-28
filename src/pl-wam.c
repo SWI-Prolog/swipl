@@ -1985,8 +1985,10 @@ pl-comp.c
 #ifdef O_PROF_PENTIUM
 #include "pentium.h"
 
-#define DEPART_CONTINUE (I_HIGHEST+1)
-#define P_GC 		(I_HIGHEST+2)
+#define DEPART_CONTINUE		(I_HIGHEST+1)
+#define P_GC			(I_HIGHEST+2)
+#define P_SHALLOW_BACKTRACK	(I_HIGHEST+3)
+#define P_DEEP_BACKTRACK	(I_HIGHEST+4)
 
 #else
 #define START_PROF(id, name)
@@ -2202,6 +2204,8 @@ as to investigate optimisation in the future.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 clause_failed:				/* shallow backtracking */
+END_PROF();
+START_PROF(P_SHALLOW_BACKTRACK, "P_SHALLOW_BACKTRACK");
 { Choice ch = BFR;
 
   if ( FR == ch->frame && ch->type == CHP_CLAUSE )
@@ -2248,6 +2252,8 @@ clause_failed:				/* shallow backtracking */
 
 body_failed:
 frame_failed:
+END_PROF();
+START_PROF(P_DEEP_BACKTRACK, "P_DEEP_BACKTRACK");
 {
 #ifdef O_DEBUGGER
   Choice ch0 = BFR;
