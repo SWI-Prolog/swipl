@@ -1769,6 +1769,8 @@ compileBodyUnify(Word arg, code call, compileInfo *ci ARG_LD)
 
     if ( isConst(*a2) )
     { Output_2(ci, first ? B_UNIFY_FC : B_UNIFY_VC, VAROFFSET(i1), *a2);
+      if ( isAtom(*a2) )
+	PL_register_atom(*a2);
     } else
     { int where = (first ? A_BODY : A_HEAD|A_ARG);
       Output_1(ci, first ? B_UNIFY_FIRSTVAR : B_UNIFY_VAR, VAROFFSET(i1));
@@ -1835,6 +1837,8 @@ compileBodyEQ(Word arg, code call, compileInfo *ci ARG_LD)
 
     if ( f1 ) Output_1(ci, C_VAR, VAROFFSET(i1));
     Output_2(ci, B_EQ_VC, VAROFFSET(i1), *a2);
+    if ( isAtom(*a2) )
+      PL_register_atom(*a2);
     succeed;
   }
   if ( i2 >= 0 && isConst(*a1) )
@@ -1928,6 +1932,15 @@ unregisterAtomsClause(Clause clause)
     { case H_CONST:
       case B_CONST:
       { word w = PC[1];
+
+	if ( isAtom(w) )
+	  PL_unregister_atom(w);
+	break;
+      }
+      case B_EQ_VC:
+      case B_UNIFY_FC:
+      case B_UNIFY_VC:			/* var, const */
+      { word w = PC[2];
 
 	if ( isAtom(w) )
 	  PL_unregister_atom(w);
