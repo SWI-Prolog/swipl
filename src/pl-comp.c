@@ -3726,6 +3726,8 @@ wamListClause(Clause clause)
 
   bp = clause->codes;
   ep = bp + clause->code_size;
+  Sfprintf(Scurout, "Clause %ld: codes %p..%p\n",
+	   PL_pointer_to_long(clause), bp, ep);
 
   while( bp < ep )
     bp = wamListInstruction(Scurout, clause->codes, bp);
