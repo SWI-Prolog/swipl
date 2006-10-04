@@ -564,3 +564,4 @@
 #define ATOM_dc_call_prolog MK_ATOM(563)
 #define ATOM_low          MK_ATOM(564)
 #define ATOM_factor       MK_ATOM(565)
+#define ATOM_gc_reclaimed MK_ATOM(566)

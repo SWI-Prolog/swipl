@@ -578,6 +578,7 @@ A comments		"comments"
 A dc_call_prolog	"$c_call_prolog"
 A low			"low"
 A factor		"factor"
+A gc_reclaimed		"<gc-reclaimed>"
 
 F abs			1
 F access		1

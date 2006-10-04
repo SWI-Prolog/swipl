@@ -3,9 +3,9 @@
     Part of SWI-Prolog
 
     Author:        Jan Wielemaker
-    E-mail:        jan@swi.psy.uva.nl
+    E-mail:        wielemak@science.uva.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (C): 1985-2002, University of Amsterdam
+    Copyright (C): 1985-2006, University of Amsterdam
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
@@ -27,6 +27,8 @@
 #define O_SECURE 1
 #endif
 #include "pl-incl.h"
+
+#define O_CLEAR_UNUSED 1
 
 #ifndef HAVE_MEMMOVE			/* Note order!!!! */
 #define memmove(dest, src, n) bcopy(src, dest, n)
@@ -708,7 +710,7 @@ term_refs_to_gvars(fid_t fid, Word *saved_bar_at)
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-clearUninitialisedVarsFrame(LocalFrame fr, Code PC);
+clearUninitialisedVarsFrame(LocalFrame fr, Code PC, bitmask *vm);
 
 Assuming the clause associated will resume   execution  at PC, determine
 the variables that are not yet initialised and set them to be variables.
@@ -782,6 +784,177 @@ clearUninitialisedVarsFrame(LocalFrame fr, Code PC)
 }
 
 
+#ifdef O_CLEAR_UNUSED
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+usedVarsFrame() creates a bitmap of variables that are still required if
+PC is at the given location in a particular frame. 
+
+NOTE: Unlike in clearUninitialisedVarsFrame(), we cannot  jump on a jump
+instruction as we  need  to  examine   all  branches.  As  all  branches
+initialise the same variabless  clearUninitialisedVarsFrame() can affort
+to examine only one of the branches.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+#define BITSPERLONG (sizeof(long)*8)
+#define VM_FAST 1
+
+typedef struct
+{ int size;				/* highest bit */
+  int isize;				/* size in integers */
+  long *entry;				/* entries in table */
+  long fast[VM_FAST];			/* initial fast table */
+} bitmask;
+
+
+static void
+init_bitmask(bitmask *vm)
+{ vm->size  = 0;
+  vm->isize = VM_FAST;
+  vm->entry = vm->fast;
+  vm->fast[0] = 0L;			/* fix if VM_FAST != 1 */
+}
+
+
+static void
+free_bitmask(bitmask *vm)
+{ if ( vm->entry != vm->fast )
+    PL_free(vm->entry);
+}
+
+
+static void
+set_bit(bitmask *vm, int i)
+{ int is = i / BITSPERLONG;
+
+  if ( i > vm->size )
+  { while ( is >= vm->isize )
+    { DEBUG(1, Sdprintf("Var %d: resizing\n", i));
+
+      if ( vm->entry == vm->fast )
+      { int bytes = sizeof(vm->fast);
+
+	vm->entry = PL_malloc(bytes*2);
+	vm->isize = VM_FAST*2;
+	memcpy(vm->entry, vm->fast, bytes);
+	memset((char*)vm->entry+bytes, 0, bytes);
+      } else
+      { int bytes = vm->isize*sizeof(long);
+
+	vm->isize *= 2;
+	vm->entry = PL_realloc(vm->entry, vm->isize*sizeof(long));
+	memset((char*)vm->entry+bytes, 0, bytes);
+      }    
+    }
+    vm->size = i;
+  }
+
+  vm->entry[is] |= 1<<(i%BITSPERLONG);
+}
+
+
+static int
+test_bit(bitmask *vm, int i)
+{ int is = i / BITSPERLONG;
+
+  return vm->entry[is] & (1<<(i%BITSPERLONG));
+}
+
+
+static void
+usedVarsFrame(LocalFrame fr, Code PC, bitmask *vm)
+{ if ( PC != NULL )
+  { code c;
+
+    for( ; ; PC = stepPC(PC))
+    { c = decode(*PC);
+
+    again:
+      switch( c )
+      {
+#if O_DEBUGGER
+	case D_BREAK:
+	  c = decode(replacedBreak(PC));
+	  goto again;
+#endif
+					/* terminate code list */
+	case I_EXIT:
+	case I_EXITFACT:
+	case I_EXITCATCH:
+	case I_EXITQUERY:
+	case I_FEXITDET:
+	case I_FEXITNDET:
+	case S_TRUSTME:
+	case S_LIST:
+	  return;
+					/* supervisor redo */
+	case I_FREDO:
+	case S_NEXTCLAUSE:
+	  goto next_clause;
+					/* Mark referenced vars */
+	case A_VAR0:
+	case B_VAR0:
+	  set_bit(vm, VAROFFSET(0));
+	  break;
+	case A_VAR1:
+	case B_VAR1:
+	  set_bit(vm, VAROFFSET(1));
+	  break;
+	case A_VAR2:
+	case B_VAR2:
+	  set_bit(vm, VAROFFSET(2));
+	  break;
+	case H_VAR:
+	case B_VAR:
+	case A_VAR:
+	case B_ARGVAR:
+        case B_UNIFY_VAR:
+	case B_UNIFY_VC:
+	case B_EQ_VC:
+	  set_bit(vm, PC[1]);
+	  break;
+	case B_UNIFY_VV:
+	case B_EQ_VV:
+	  set_bit(vm, PC[1]);
+	  set_bit(vm, PC[2]);
+	  break;
+	case B_UNIFY_FV:
+	  set_bit(vm, PC[2]);
+	  break;
+      }
+    }
+  } else
+  { int i, arity;
+
+  next_clause:
+    arity = fr->predicate->functor->arity;
+    for(i=0; i<arity; i++)
+      set_bit(vm, VAROFFSET(i));
+  }
+}
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+mark_local_variable() marks a chain of references   on  the local stack.
+This prevents parents from reclaiming  variables referenced only through
+a reference chain.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+static inline void
+mark_local_variable(Word sp ARG_LD)
+{ while(isRef(*sp))
+  { Word k = unRef(*sp);
+    
+    ldomark(sp);
+    if ( is_marked(k) || isGlobalRef(*k) )
+      return;
+    assert(onStack(local, k));
+    sp = k;
+  }
+  ldomark(sp);
+}
+
+#endif /*O_CLEAR_UNUSED*/
+
+
 static inline int
 slotsInFrame(LocalFrame fr, Code PC)
 { Definition def = fr->predicate;
@@ -799,6 +972,8 @@ the QueryFrame that started this environment,  which provides use access
 to the parent `foreign' environment.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
+#define VARNUM(i) ((i) - (ARGOFFSET / (int) sizeof(word)))
+
 static QueryFrame
 mark_environments(LocalFrame fr, Code PC)
 { GET_LD
@@ -806,34 +981,61 @@ mark_environments(LocalFrame fr, Code PC)
     return NULL;
 
   for( ; ; )
-  { int slots;
+  { 
+#ifdef O_CLEAR_UNUSED
+    int i;
+    bitmask vars;
+
+    if ( false(fr, FR_MARKED) )
+      clearUninitialisedVarsFrame(fr, PC);
+    
+    DEBUG(1, Sdprintf("Marking [%ld] %s%s\n",
+		      levelFrame(fr), predicateName(fr->predicate),
+		      true(fr, FR_MARKED) ? " (from choice)" : ""));
+
+    init_bitmask(&vars);
+    usedVarsFrame(fr, PC, &vars);
+
+    for(i=VAROFFSET(0); i<=vars.size; i++ )
+    { if ( test_bit(&vars, i) )
+      { Word sp = varFrameP(fr, i);
+
+	DEBUG(1, Sdprintf("\tvar %d\n", VARNUM(i)));
+	if ( !is_marked(sp) )
+	{ if ( isGlobalRef(*sp) )
+	    mark_variable(sp PASS_LD);
+	  else 
+	    mark_local_variable(sp PASS_LD);
+	}
+      }
+    }
+    free_bitmask(&vars);
+    set(fr, FR_MARKED);
+
+#else /*O_CLEAR_UNUSED*/
+    int slots;
     Word sp;
-#if O_SECURE
-    int oslots;
-#endif
 
     if ( true(fr, FR_MARKED) )
-      return NULL;			/* from choicepoints only */
+      return NULL;                      /* from choicepoints only */
     set(fr, FR_MARKED);
-    
+
     DEBUG(3, Sdprintf("Marking [%ld] %s\n",
-		      levelFrame(fr), predicateName(fr->predicate)));
+                      levelFrame(fr), predicateName(fr->predicate)));
 
     clearUninitialisedVarsFrame(fr, PC);
 
     slots  = slotsInFrame(fr, PC);
-#if O_SECURE
-    oslots = slots;
-#endif
     sp = argFrameP(fr, 0);
     for( ; slots-- > 0; sp++ )
     { if ( !is_marked(sp) )
       { if ( isGlobalRef(*sp) )
-	  mark_variable(sp PASS_LD);
-	else
-	  ldomark(sp);      
+          mark_variable(sp PASS_LD);
+        else
+          ldomark(sp);
       }
     }
+#endif /*O_CLEAR_UNUSED*/
 
     PC = fr->programPointer;
     if ( fr->parent != NULL )
@@ -1514,6 +1716,14 @@ sweep_environments(LocalFrame fr, Code PC)
 	  check_relocation(sp);
 	  into_relocation_chain(sp, STG_LOCAL PASS_LD);
 	}
+#ifdef O_CLEAR_UNUSED
+      } else if ( !isVar(*sp) )
+      { DEBUG(1, Sdprintf("[%d] %s: GC var %d\n",
+			  levelFrame(fr),
+			  predicateName(fr->predicate),
+			  sp-argFrameP(fr, 0)));
+	*sp = ATOM_gc_reclaimed;
+#endif /*O_CLEAR_UNUSED*/
       }
     }
 
