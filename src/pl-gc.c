@@ -1869,30 +1869,37 @@ compact_global(void)
 
   dest = gBase + total_marked;			/* first FREE cell */
   for( current = gTop; current >= gBase; current-- )
-  { long offset = (is_marked(current) || is_first(current)
-		   			? 0 : offset_cell(current));
-    current -= offset;
-
+  { 
     if ( is_marked(current) )
-    {
+    { marked_large_cell:
 #if O_SECURE
       if ( current != *--v )
         sysError("Marked cell at %p (*= %p); gTop = %p; should be %p",
 		 current, *current, gTop, *v);
 #endif
-      dest -= offset + 1;
-      DEBUG(3, Sdprintf("Marked cell at %p (size = %ld; dest = %p)\n",
-			current, offset+1, dest));
+      dest--;
+      DEBUG(3, Sdprintf("Marked cell at %p (dest = %p)\n", current, dest));
       if ( is_first(current) )
 	update_relocation_chain(current, dest PASS_LD);
       if ( is_downward_ref(current PASS_LD) )
       { check_relocation(current);
 	into_relocation_chain(current, STG_GLOBAL PASS_LD);
       }
-    } else
-    { if ( is_first(current) )
-	update_relocation_chain(current, dest PASS_LD);	/* gTop refs from marks */
-    }
+    } else if ( is_first(current) )
+    { first_large_cell:
+      update_relocation_chain(current, dest PASS_LD);	/* gTop refs from marks */
+    } else if ( storage(*current) == STG_LOCAL ) /* large cell */
+    { long offset = offset_cell(current);
+
+      assert(offset > 0);
+      current -= offset;		/* start large cell */
+      if ( is_marked(current) )
+      { dest -= offset;
+	goto marked_large_cell;
+      } else if ( is_first(current) )
+      { goto first_large_cell;
+      }					/* else: garbage large cell */
+    }					/* else: garbage */
   }
 
 #if O_SECURE
@@ -2397,10 +2404,14 @@ garbageCollect(LocalFrame fr, Choice ch)
   LD->stacks.trail.gced_size  = usedStack(trail);
   gc_status.active = FALSE;
 
+#ifdef O_CLEAR_UNUSED
+  SECURE(checkStacks(fr, ch));
+#else
   SECURE(if ( checkStacks(fr, ch) != key )
 	 { sysError("ERROR: Stack checksum failure\n");
 	   trap_gdb();
 	 });
+#endif
 
   if ( verbose )
     printMessage(ATOM_informational,
