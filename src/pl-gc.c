@@ -1857,18 +1857,75 @@ check_marked(const char *s)
 #endif /*O_SECURE*/
 
 
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+current points to the bottom of the  first garbage cell. Skip downwards,
+returning a pointer to the bottom of the   garbage  or the bottom of the
+global stack. If the found garbage  hole   is  big enough, create a cell
+that represents a large garbage string,  so   the  up-phase  can skip it
+quickly.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+static Word
+make_gc_hole(Word bottom, Word top)
+{ if ( top - bottom > 4 )
+  { int wsize = top - bottom - 1;
+    word hdr = mkIndHdr(wsize, TAG_STRING);
+
+    *top = hdr;
+    *bottom = hdr;
+
+    DEBUG(3, Sdprintf("Created Garbage hole %p..%p, size %d\n",
+		      bottom+1, top, wsize));
+  }
+
+  return bottom;
+}
+
+
+static Word
+downskip_combine_garbage(Word current, Word dest ARG_LD)
+{ Word top_gc = current + offset_cell(current);
+
+  for(current-- ; current >= gBase; current-- )
+  { if ( (*current & (MARK_MASK|FIRST_MASK|STG_LOCAL)) )
+    { if ( is_marked(current) )
+      { DEBUG(3, Sdprintf("Normal-non-GC cell at %p\n", current));
+	return make_gc_hole(current+1, top_gc);
+      } else if ( is_first(current) )
+      { update_relocation_chain(current, dest PASS_LD);
+      } else if ( storage(*current) == STG_LOCAL ) /* large cell */
+      { long offset = offset_cell(current);
+  
+	assert(offset > 0);
+	current -= offset;		/* start large cell */
+	if ( is_marked(current) )
+	{ DEBUG(3, Sdprintf("Large-non-GC cell at %p, size %d\n",
+			    current, offset+1));
+	  return make_gc_hole(current+offset+1, top_gc);
+	} else if ( is_first(current) )
+	{ update_relocation_chain(current, dest PASS_LD);
+	}
+      }
+    }
+  }
+
+  return make_gc_hole(gBase, top_gc);
+}
+
+
 static void
 compact_global(void)
 { GET_LD
   Word dest, current;
+  Word base = gBase, top;
 #if O_SECURE
   Word *v = mark_top;
 #endif
 
   DEBUG(2, Sdprintf("Scanning global stack downwards\n"));
 
-  dest = gBase + total_marked;			/* first FREE cell */
-  for( current = gTop; current >= gBase; current-- )
+  dest = base + total_marked;			/* first FREE cell */
+  for( current = gTop; current >= base; current-- )
   { 
     if ( is_marked(current) )
     { marked_large_cell:
@@ -1898,8 +1955,14 @@ compact_global(void)
 	goto marked_large_cell;
       } else if ( is_first(current) )
       { goto first_large_cell;
-      }					/* else: garbage large cell */
-    }					/* else: garbage */
+      }	else
+      { DEBUG(3, Sdprintf("Downskip from indirect\n"));
+	current = downskip_combine_garbage(current, dest PASS_LD);
+      }
+    } else
+    { DEBUG(3, Sdprintf("Downskip from normal cell\n"));
+      current = downskip_combine_garbage(current, dest PASS_LD);
+    }
   }
 
 #if O_SECURE
@@ -1911,7 +1974,7 @@ compact_global(void)
   }
 #endif
 
-  if ( dest != gBase )
+  if ( dest != base )
     sysError("Mismatch in down phase: dest = %p, gBase = %p\n",
 	     dest, gBase);
   if ( relocation_cells != relocated_cells )
@@ -1921,8 +1984,9 @@ compact_global(void)
   SECURE(check_marked("Before up"));
 
   DEBUG(2, Sdprintf("Scanning global stack upwards\n"));
-  dest = gBase;
-  for(current = gBase; current < gTop; )
+  dest = base;
+  top = gTop;
+  for(current = base; current < top; )
   { if ( is_marked(current) )
     { long l, n;
 
@@ -1952,7 +2016,12 @@ compact_global(void)
       }
 
     } else
+    { DEBUG(3, if ( offset_cell(current) > 2 )
+	         Sdprintf("Skipping garbage cell %p..%p, size %d\n",
+			  current, current + offset_cell(current),
+			  offset_cell(current)-1));
       current += offset_cell(current) + 1;
+    }
   }
 
   if ( dest != gBase + total_marked )
