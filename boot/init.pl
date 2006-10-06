@@ -164,6 +164,16 @@ call(G, A, B, C, D) :-
 	call(G, A, B, C, D).
 call(G, A, B, C, D, E) :-
 	call(G, A, B, C, D, E).
+call(G, A, B, C, D, E, F) :-
+	call(G, A, B, C, D, E, F).
+call(G, A, B, C, D, E, F, G) :-
+	call(G, A, B, C, D, E, F, G).
+call(G, A, B, C, D, E, F, G, H) :-
+	call(G, A, B, C, D, E, F, G, H).
+call(G, A, B, C, D, E, F, G, H, I) :-
+	call(G, A, B, C, D, E, F, G, H, I).
+call(G, A, B, C, D, E, F, G, H, I, J) :-
+	call(G, A, B, C, D, E, F, G, H, I, J).
 
 not(Goal) :-
 	\+ Goal.
@@ -431,8 +441,9 @@ absolute_file_name(Spec, Args, Path) :-
 	),
 	(   '$select'(extensions(Exts), Args, Conditions)
 	->  true
-	;   '$select'(file_type(Type), Args, Conditions)
-	->  '$file_type_extensions'(Type, Exts)
+	;   memberchk(file_type(Type), Args)
+	->  '$file_type_extensions'(Type, Exts),
+	    Conditions = Args
 	;   Conditions = Args,
 	    Exts = ['']
 	),
@@ -535,9 +546,11 @@ user:prolog_file_type(Ext,	executable) :-
 
 '$relative_to'(Conditions, Default, Dir) :-
 	(   '$member'(relative_to(FileOrDir), Conditions)
-	*-> (   exists_file(FileOrDir)
-	    ->  file_directory_name(FileOrDir, Dir)
-	    ;   Dir = FileOrDir
+	*-> (   exists_directory(FileOrDir)
+	    ->	Dir = FileOrDir
+	    ;	atom_concat(Dir, /, FileOrDir)
+	    ->	true
+	    ;	file_directory_name(FileOrDir, Dir)
 	    )
 	;   Default == cwd
 	->  working_directory(Dir, Dir)
@@ -589,7 +602,7 @@ user:prolog_file_type(Ext,	executable) :-
 '$file_condition'(file_type(directory), File) :- !,
 	exists_directory(File).
 '$file_condition'(file_type(_), File) :- !,
-	exists_file(File).
+	\+ exists_directory(File).
 '$file_condition'(access([A1|AT]), File) :- !,
 	'$file_condition'(access(A1), File),
 	'$file_condition'(access(AT), File).
@@ -1014,12 +1027,12 @@ load_files(Files, Options) :-
 	    TimeUsed is Time - OldTime,
 
 	    '$print_message'(MessageLevel,
-			   load_file(done(Level,
-					  file(File, Absolute),
-					  Action,
-					  LM,
-					  TimeUsed,
-					  HeapUsed)))
+			     load_file(done(Level,
+					    file(File, Absolute),
+					    Action,
+					    LM,
+					    TimeUsed,
+					    HeapUsed)))
 	),
 	flag('$autoloading', _, AutoLevel),
 	set_prolog_flag(verbose_load, DefVerbose).
@@ -1606,9 +1619,12 @@ resulting code is simply the same), I've removed that.
             '$extend'(LP, S, SR, H)
         ).
 '$translate_rule'((LP-->RP), (H:-B)):-
-	'$t_head'(LP, S, SR, H),
-	'$t_body'(RP, S, SR, B).
-
+	'$t_head'(LP, S0, SR, H),
+	'$t_body'(RP, S0, SR, B0),
+	(   B0 = (S0=X, B)		% map a(H,T) :- H = [a,b|T], b(T)
+	->  S0 = X			% into a([a,b|T]) :- b(T).
+	;   B0 = B
+	).
 
 '$t_head'((LP, List), S, SR, H) :-
 	'$append'(List, SR, List2), !,
@@ -1677,10 +1693,8 @@ then the call p([a], [a]) will succeed, which is quite definitely wrong.
 	var(Var), !.
 '$t_body'([], S, SR, S=SR) :- !.		% inline lists
 '$t_body'(List, S, SR, C) :-
-	List = [X|T], !,
-	(   T == []
-	->  C = 'C'(S, X, SR)
-	;   is_list(T)
+	List = [_|_], !,
+	(   is_list(List)
 	->  '$append'(List, SR, OL),
 	    C = (S = OL)
 	;   C = '$append'(List, SR, S)	% Deals with [H|T] in body
@@ -1751,9 +1765,6 @@ then the call p([a], [a]) will succeed, which is quite definitely wrong.
 	I2 is I + 1,
 	'$copy_args'(I2, Arity, Old, New).
 '$copy_args'(_, _, _, _).
-
-
-'C'([X|S], X, S).
 
 :- module_transparent
 	phrase/2,
