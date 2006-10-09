@@ -837,8 +837,7 @@ VMI(B_UNIFY_EXIT, 0, ())
   { NFR = lTop;
     DEF = getProcDefinedDefinition(lTop, PC, GD->procedures.equals2 PASS_LD);
     NFR->context = MODULE_system;
-    NFR->flags = FR->flags;
-    goto normal_call;
+    NFR->flags = FR->flags + FR_LEVEL_STEP;
   }
 #endif
 
@@ -931,8 +930,7 @@ VMI(B_EQ_VV, 2, (CA1_VAR, CA1_VAR))
     DEF = getProcDefinedDefinition(lTop, PC,
 				   GD->procedures.strict_equal2 PASS_LD);
     NFR->context = MODULE_system;
-    NFR->flags = FR->flags;
-    goto normal_call;
+    NFR->flags = FR->flags + FR_LEVEL_STEP;
   }
 #endif
 
@@ -956,7 +954,7 @@ VMI(B_EQ_VC, 2, (CA1_VAR, CA1_DATA))
     DEF = getProcDefinedDefinition(lTop, PC,
 				   GD->procedures.strict_equal2 PASS_LD);
     NFR->context = MODULE_system;
-    NFR->flags = FR->flags;
+    NFR->flags = FR->flags + FR_LEVEL_STEP;
     goto normal_call;
   }
 #endif
@@ -1146,7 +1144,7 @@ execution can continue at `next_instruction'
 
 VMI(I_CALL, 1, (CA1_PROC))
 { NFR          = lTop;
-  NFR->flags   = FR->flags;
+  NFR->flags   = FR->flags + FR_LEVEL_STEP;
   NFR->context = FR->context;
   if ( true(DEF, HIDE_CHILDS) ) /* parent has hide_childs */
     set(NFR, FR_NODEBUG);
@@ -1189,7 +1187,6 @@ depart_continue:
 #ifdef O_LOGICAL_UPDATE
   FR->generation     = GD->generation;
 #endif
-  incLevel(FR);
 retry_continue:
 #ifdef O_PROFILE
   FR->prof_node = NULL;
@@ -1399,7 +1396,7 @@ VMI(I_DEPART, 1, (CA1_PROC))
       lTop = lSave;
     }
 
-    if ( DEF )
+    if ( DEF )				/* when not? */
     { if ( true(DEF, HIDE_CHILDS) )
 	set(FR, FR_NODEBUG);
       leaveDefinition(DEF);
@@ -1407,6 +1404,7 @@ VMI(I_DEPART, 1, (CA1_PROC))
 
     FR->clause = NULL;		/* for save atom-gc */
     FR->predicate = DEF = ndef;
+    FR->flags += FR_LEVEL_STEP;
     copyFrameArguments(lTop, FR, ndef->functor->arity PASS_LD);
 
     END_PROF();
@@ -1858,7 +1856,7 @@ VMI(I_FAIL, 0, ())
 #ifdef O_DEBUGGER
   if ( debugstatus.debugging )
   { NFR = lTop;
-    NFR->flags = FR->flags;
+    NFR->flags = FR->flags + FR_LEVEL_STEP;
     if ( true(DEF, HIDE_CHILDS) ) /* parent has hide_childs */
       set(NFR, FR_NODEBUG);
     DEF = lookupProcedure(FUNCTOR_fail0, MODULE_system)->definition;
@@ -1880,7 +1878,7 @@ VMI(I_TRUE, 0, ())
 #ifdef O_DEBUGGER
   if ( debugstatus.debugging )
   { NFR = lTop;
-    NFR->flags = FR->flags;
+    NFR->flags = FR->flags + FR_LEVEL_STEP;
     if ( true(DEF, HIDE_CHILDS) ) /* parent has hide_childs */
       set(NFR, FR_NODEBUG);
     DEF = lookupProcedure(FUNCTOR_true0, MODULE_system)->definition;
@@ -3246,7 +3244,7 @@ atom is referenced by the goal-term anyway.
 
       DEF 		  = NFR->predicate;
       SECURE(assert(DEF == PROCEDURE_dcall1->definition));
-      NFR->flags          = FR->flags;
+      NFR->flags          = FR->flags + FR_LEVEL_STEP;
       NFR->parent	  = FR;
       NFR->programPointer = PC;
 #ifdef O_PROFILE
@@ -3256,7 +3254,6 @@ atom is referenced by the goal-term anyway.
       cl->generation.erased = ~0L;
       cl->generation.created = NFR->generation = GD->generation;
 #endif
-      incLevel(NFR);
       PC = cl->codes;
 
       enterDefinition(DEF);
@@ -3341,7 +3338,7 @@ VMI(I_USERCALLN, 1, (CA1_INTEGER))
   }
 
 i_usercall_common:
-  NFR->flags = FR->flags;
+  NFR->flags = FR->flags + FR_LEVEL_STEP;
   if ( true(DEF, HIDE_CHILDS) )
     set(NFR, FR_NODEBUG);
 
@@ -3397,7 +3394,7 @@ VMI(I_APPLY, 0, ())
   int n, arity;
 
   NFR = lTop;
-  NFR->flags = FR->flags;
+  NFR->flags = FR->flags + FR_LEVEL_STEP;
   if ( true(DEF, HIDE_CHILDS) )
     set(NFR, FR_NODEBUG);
 

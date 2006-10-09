@@ -932,7 +932,7 @@ Handling environment (or local stack) frames.
 				  (fr)->flags |= ((l) << FR_BITS); \
 				}
 #define levelFrame(fr)		(fr->flags >> FR_BITS)
-#define incLevel(fr)		(fr->flags += (1<<FR_BITS))
+#define FR_LEVEL_STEP		((1<<FR_BITS))
 #define argFrameP(f, n)		((Word)((f)+1) + (n))
 #define argFrame(f, n)		(*argFrameP((f), (n)) )
 #define varFrameP(f, n)		((Word)(f) + (n))
@@ -1889,8 +1889,6 @@ typedef struct
 #define MODULE_system	(GD->modules.system)
 #define MODULE_parse	(ReadingSource ? LD->modules.source \
 				       : MODULE_user)
-#define MODULE_context	(environment_frame ? contextModule(environment_frame) \
-					   : MODULE_user)
 
 		/********************************
 		*         PREDICATES            *
