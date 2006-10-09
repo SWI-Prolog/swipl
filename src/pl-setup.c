@@ -1284,6 +1284,7 @@ freeStacks(PL_local_data_t *ld)
   tsep = size_alignment;
 #endif
 
+  ld->stacks.global.base--;		/* see initPrologStacks() */
   tlen = (char *)ld->stacks.trail.limit - (char *)ld->stacks.trail.base;
   alen = (char *)ld->stacks.argument.limit - (char *)ld->stacks.argument.base;
   glen = ((char *)ld->stacks.global.limit - (char *)ld->stacks.global.base) +
@@ -1455,6 +1456,7 @@ void
 freeStacks(PL_local_data_t *ld)
 { DEBUG(1, Sdprintf("[%d]: freeStacks()\n", PL_thread_self()));
 
+  ld->stacks.global.base--;		/* see initPrologStacks() */
   freeStack((Stack)&ld->stacks.global);	/* Region must be entirely committed */
   freeStack((Stack)&ld->stacks.local);	/* or decommitted */
   freeStack((Stack)&ld->stacks.trail);
@@ -1685,7 +1687,8 @@ allocStacks(long local, long global, long trail, long argument)
 
 void
 freeStacks(PL_local_data_t *ld)
-{ PL_free(ld->stacks.global.base);
+{ ld->stacks.global.base--;		/* see initPrologStacks() */
+  PL_free(ld->stacks.global.base);
   PL_free(ld->stacks.trail.base);
   PL_free(ld->stacks.argument.base);
 }
