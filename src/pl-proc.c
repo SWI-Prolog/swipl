@@ -1464,7 +1464,7 @@ autoLoader(LocalFrame fr, Code PC, Definition def)
   LD->autoload_nesting++;
   if ( PC )
   { fr->parent = environment_frame;
-    fr->flags = fr->parent->flags;
+    setNextFrameFlags(fr, fr->parent);	/* necessary? */
     fr->predicate = def;
     fr->programPointer = PC;
     fr->clause = NULL;
