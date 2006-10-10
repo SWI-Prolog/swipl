@@ -1144,8 +1144,6 @@ execution can continue at `next_instruction'
 VMI(I_CALL, 1, (CA1_PROC))
 { NFR          = lTop;
   setNextFrameFlags(NFR, FR);
-  if ( true(DEF, HIDE_CHILDS) ) /* parent has hide_childs */
-    set(NFR, FR_NODEBUG);
   { Procedure proc = (Procedure) *PC++;
     DEF = getProcDefinedDefinition(NFR, PC, proc PASS_LD);
   }
@@ -1162,6 +1160,7 @@ true:
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 normal_call:
+  updateFrameDebug(FR, DEF);
 					/* ensure room for next args */
   requireStack(local, (int)argFrameP((LocalFrame)NULL, MAXARITY));
 
@@ -1189,8 +1188,6 @@ retry_continue:
 #ifdef O_PROFILE
   FR->prof_node = NULL;
 #endif
-  if ( false(DEF, HIDE_CHILDS) )	/* was SYSTEM */
-    clear(FR, FR_NODEBUG);
   LD->statistics.inferences++;
 
 #ifdef O_DEBUGLOCAL
@@ -1391,18 +1388,15 @@ VMI(I_DEPART, 1, (CA1_PROC))
       lTop = lSave;
     }
 
-    if ( DEF )				/* when not? */
-    { if ( true(DEF, HIDE_CHILDS) )
-	set(FR, FR_NODEBUG);
-      leaveDefinition(DEF);
-    }
+    leaveDefinition(DEF);
 
     if ( true(ndef, METAPRED) )
     { FR->context = contextModule(FR);
       FR->flags = (FR->flags+FR_LEVEL_STEP) | FR_CONTEXT;
     } else
       setNextFrameFlags(FR, FR);
-    FR->clause = NULL;		/* for save atom-gc */
+
+    FR->clause = NULL;			/* for save atom-gc */
     FR->predicate = DEF = ndef;
     copyFrameArguments(lTop, FR, ndef->functor->arity PASS_LD);
 
@@ -1856,8 +1850,6 @@ VMI(I_FAIL, 0, ())
   if ( debugstatus.debugging )
   { NFR = lTop;
     setNextFrameFlags(NFR, FR);
-    if ( true(DEF, HIDE_CHILDS) ) /* parent has hide_childs */
-      set(NFR, FR_NODEBUG);
     DEF = lookupProcedure(FUNCTOR_fail0, MODULE_system)->definition;
 
     goto normal_call;
@@ -1877,8 +1869,6 @@ VMI(I_TRUE, 0, ())
   if ( debugstatus.debugging )
   { NFR = lTop;
     setNextFrameFlags(NFR, FR);
-    if ( true(DEF, HIDE_CHILDS) ) /* parent has hide_childs */
-      set(NFR, FR_NODEBUG);
     DEF = lookupProcedure(FUNCTOR_true0, MODULE_system)->definition;
 
     goto normal_call;
@@ -3332,8 +3322,6 @@ VMI(I_USERCALLN, 1, (CA1_INTEGER))
 
 i_usercall_common:
   setNextFrameFlags(NFR, FR);
-  if ( true(DEF, HIDE_CHILDS) )
-    set(NFR, FR_NODEBUG);
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Now scan the argument vector of the goal and fill the arguments  of  the
@@ -3390,8 +3378,6 @@ VMI(I_APPLY, 0, ())
 
   NFR = lTop;
   setNextFrameFlags(NFR, FR);
-  if ( true(DEF, HIDE_CHILDS) )
-    set(NFR, FR_NODEBUG);
 
   ARGP = argFrameP(NFR, 0); deRef(ARGP); gp = ARGP;
   ARGP = argFrameP(NFR, 1); deRef(ARGP); lp = ARGP;
