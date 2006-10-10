@@ -128,7 +128,6 @@ static int		registerFunction(ArithFunction f, int index);
 static int		getCharExpression(term_t t, Number r ARG_LD);
 static int		ar_sign_i(Number n1);
 static int		ar_add(Number n1, Number n2, Number r);
-static int		ar_add_ui(Number n, long val);
 static int		ar_minus(Number n1, Number n2, Number r);
 
 
@@ -862,7 +861,7 @@ promoteIntNumber(Number n)
 		*     ARITHMETIC FUNCTIONS      *
 		*********************************/
 
-static int
+int
 ar_add_ui(Number n, long add)
 { switch(n->type)
   { case V_INTEGER:

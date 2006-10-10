@@ -2211,6 +2211,48 @@ common_an:
 }
 END_SHAREDVARS
 
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+A_ADD_VC: Simple case A is B + <int>, where   A is a firstvar and B is a
+normal variable. This case is very   common,  especially with relatively
+small integers.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+VMI(A_ADD_VC, 3, (CA1_VAR, CA1_VAR, CA1_INTEGER))
+{ Word rp  = varFrameP(FR, *PC++);
+  Word np  = varFrameP(FR, *PC++);
+  long add = (long)*PC++;
+
+  deRef(np);
+  if ( tagex(*np) == (TAG_INTEGER|STG_INLINE) )
+  { long v = valInt(*np);
+    int64_t r = v+add;			/* tagged ints never overflow */
+    
+    *rp = makeNum(r);
+    NEXT_INSTRUCTION;
+  } else
+  { number n;
+    fid_t fid;
+    int rc;
+  
+    fid = PL_open_foreign_frame();
+    rc = valueExpression(wordToTermRef(np), &n PASS_LD);
+    PL_close_foreign_frame(fid);
+    if ( !rc )
+      goto b_throw;
+
+    if ( ar_add_ui(&n, add) )
+    { *rp = put_number(&n);
+      clearNumber(&n);
+
+      NEXT_INSTRUCTION;
+    }
+
+    goto b_throw;
+  }
+}
+
+
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Translation of the arithmic comparison predicates (<, >, =<,  >=,  =:=).
 Both sides are pushed on the stack, so we just compare the two values on

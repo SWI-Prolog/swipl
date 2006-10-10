@@ -453,10 +453,14 @@ calculation at runtime.
 
 #define BLOCK(s) do { s; } while (0)
 
-#define Output_0(ci, c)		addBuffer(&(ci)->codes, encode(c), code)
-#define Output_a(ci, c)		addBuffer(&(ci)->codes, c, code)
-#define Output_1(ci, c, a)	BLOCK(Output_0(ci, c); Output_a(ci, a))
-#define Output_2(ci, c, a0, a1)	BLOCK(Output_1(ci, c, a0); Output_a(ci, a1))
+#define Output_0(ci,c)		addBuffer(&(ci)->codes, encode(c), code)
+#define Output_a(ci,c)		addBuffer(&(ci)->codes, c, code)
+#define Output_1(ci,c,a)	BLOCK(Output_0(ci, c); \
+				      Output_a(ci, a))
+#define Output_2(ci,c,a0,a1)	BLOCK(Output_1(ci, c, a0); \
+				      Output_a(ci, a1))
+#define Output_3(ci,c,a0,a1,a2) BLOCK(Output_2(ci, c, a0, a1); \
+				      Output_a(ci, a2))
 #define Output_n(ci, p, n)	addMultipleBuffer(&(ci)->codes, p, n, word)
 
 #define PC(ci)		entriesBuffer(&(ci)->codes, code)
@@ -509,6 +513,16 @@ isFirstVar(VarTable vt, int n)
   if ( (*p & m) )
     return FALSE;
   *p |= m;
+  return TRUE;
+}
+
+static bool
+testFirstVar(VarTable vt, int n)
+{ int m  = 1 << (n % BITSPERINT);
+  int *p = &vt->entry[n / BITSPERINT];
+  
+  if ( (*p & m) )
+    return FALSE;
   return TRUE;
 }
 
@@ -1520,6 +1534,47 @@ re-definition.
   return NOT_CALLABLE;
 }
 
+
+#if O_COMPILE_ARITH
+static bool
+compileSimpleAddition(Word p, int rvar, compileInfo *ci ARG_LD)
+{ int neg = FALSE;
+
+  deRef(p);
+
+  if ( hasFunctor(*p, FUNCTOR_plus2) ||
+       (neg=hasFunctor(*p, FUNCTOR_minus2)) )
+  { Word a1 = argTermP(*p, 0);
+    Word a2 = a1 + 1;
+    int vi, swapped = 0;
+
+    deRef(a1);
+    deRef(a2);
+
+    while(swapped++ < 2)
+    { Word tmp;
+
+      if ( (vi=isIndexedVarTerm(*a1 PASS_LD)) >= 0 &&
+	   !testFirstVar(ci->used_var, vi) &&
+	   tagex(*a2) == (TAG_INTEGER|STG_INLINE) )
+      { long i = valInt(*a2);
+	
+	if ( neg )
+	  i = -i;
+	Output_3(ci, A_ADD_VC, rvar, VAROFFSET(vi), i);
+	succeed;
+      }
+      
+      tmp = a1;
+      a1 = a2;
+      a2 = tmp;
+    }
+  }
+
+  fail;
+}
+
+
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Arithmetic compilation compiles is/2, >/2, etc.  Instead of building the
 compound terms holding the arithmetic expression as  a  whole  and  then
@@ -1549,7 +1604,6 @@ Note. This function assumes the functors   of  all arithmetic predicates
 are tagged using the functor ARITH_F. See registerArithFunctors().
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-#if O_COMPILE_ARITH
 static bool
 compileArith(Word arg, compileInfo *ci ARG_LD)
 { code a_func;
@@ -1570,6 +1624,8 @@ compileArith(Word arg, compileInfo *ci ARG_LD)
     if ( PC(ci) == tc_a1 + 2 &&	OpCode(ci, tc_a1) == encode(B_FIRSTVAR) )
     { isvar = OpCode(ci, tc_a1+1);
       seekBuffer(&ci->codes, tc_a1, code);
+      if ( compileSimpleAddition(argTermP(*arg, 1), isvar, ci PASS_LD) )
+	succeed;
     } else
       isvar = 0;
     Output_0(ci, A_ENTER);
@@ -2874,6 +2930,19 @@ decompileBody(decompileInfo *di, code end, Code until ARG_LD)
       			    build_term(functorArithFunction(*PC++), di PASS_LD);
       			    PC++;
 			    continue;
+      case A_ADD_VC:
+      { int rvar = (int)*PC++;
+	int ivar = (int)*PC++;
+	long add = (long)*PC++;
+	
+	*ARGP++ = makeVarRef(rvar);
+	*ARGP++ = makeVarRef(ivar);
+	*ARGP++ = consInt(add);
+	build_term(FUNCTOR_plus2, di PASS_LD); /* create B+<n> */
+	build_term(FUNCTOR_is2, di PASS_LD);
+	pushed++;
+	continue;
+      }
 #endif /* O_COMPILE_ARITH */
       { functor_t f;
 #if O_COMPILE_ARITH

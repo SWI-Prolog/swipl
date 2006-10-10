@@ -134,6 +134,7 @@ COMMON(void) 		cleanupArith(void);
 COMMON(int) 		indexArithFunction(functor_t fdef, Module m);
 COMMON(functor_t) 	functorArithFunction(int n);
 COMMON(bool) 		ar_func_n(code n, int argc, Number *stack);
+COMMON(int)		ar_add_ui(Number n, long add);
 COMMON(int) 		valueExpression(term_t p, Number n ARG_LD);
 COMMON(int) 		toIntegerNumber(Number n);
 COMMON(int) 		arithChar(Word p ARG_LD);

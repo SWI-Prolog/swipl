@@ -761,6 +761,7 @@ clearUninitialisedVarsFrame(LocalFrame fr, Code PC)
 	case H_FIRSTVAR:
 	case B_UNIFY_FIRSTVAR:
 	case C_VAR:
+	case A_ADD_VC:
 #if O_SECURE	  
 	  if ( varFrameP(fr, PC[1]) <
 	       argFrameP(fr, fr->predicate->functor->arity) )
@@ -918,6 +919,7 @@ usedVarsFrame(LocalFrame fr, Code PC, bitmask *vm)
 	  set_bit(vm, PC[2]);
 	  break;
 	case B_UNIFY_FV:
+	case A_ADD_VC:
 	  set_bit(vm, PC[2]);
 	  break;
       }
