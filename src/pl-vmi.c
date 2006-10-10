@@ -837,6 +837,7 @@ VMI(B_UNIFY_EXIT, 0, ())
   { NFR = lTop;
     DEF = getProcDefinedDefinition(lTop, PC, GD->procedures.equals2 PASS_LD);
     setNextFrameFlags(NFR, FR);
+    goto normal_call;
   }
 #endif
 
@@ -929,6 +930,7 @@ VMI(B_EQ_VV, 2, (CA1_VAR, CA1_VAR))
     DEF = getProcDefinedDefinition(lTop, PC,
 				   GD->procedures.strict_equal2 PASS_LD);
     setNextFrameFlags(NFR, FR);
+    goto normal_call;
   }
 #endif
 

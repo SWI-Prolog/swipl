@@ -1754,16 +1754,20 @@ PL_open_query(Module ctx, int flags, Procedure proc, term_t args)
 					/* fill top-frame */
   top	             = &qf->top_frame;
   top->parent	     = NULL;
-  top->flags	     = 0;		/* TBD: level? */
   top->predicate     = PROCEDURE_dc_call_prolog->definition;
   top->clause	     = NULL;
 #ifdef O_PROFILE
   top->prof_node     = NULL;
 #endif					/* fill first frame */
+  if ( environment_frame )
+    setNextFrameFlags(top, environment_frame);
+  else
+    top->flags	     = 0;
 
   fr		     = &qf->frame;
   fr->parent	     = top;
-  fr->flags	     = FR_INBOX;
+  setNextFrameFlags(fr, top);
+  set(top, FR_NODEBUG);
   fr->programPointer = &exitcode;
   def		     = getProcDefinedDefinition(fr, NULL, proc PASS_LD);
   arity		     = def->functor->arity;
@@ -1792,15 +1796,6 @@ PL_open_query(Module ctx, int flags, Procedure proc, term_t args)
 					/* lTop above the arguments */
   lTop = (LocalFrame)ap;
 
-					/* initialise flags and level */
-  if ( qf->saved_environment )
-  { setLevelFrame(fr, levelFrame(qf->saved_environment)+1);
-    if ( true(qf->saved_environment, FR_NODEBUG) )
-      set(fr, FR_NODEBUG);
-  } else
-  { setLevelFrame(fr, 1);
-  }
-			
   DEBUG(3, Sdprintf("Level = %d\n", levelFrame(fr)));
   if ( true(qf, PL_Q_NODEBUG) )
   { set(fr, FR_NODEBUG);
