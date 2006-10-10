@@ -1387,6 +1387,7 @@ VMI(I_DEPART, 1, (CA1_PROC))
       lTop = lSave;
     }
 
+    FR->clause = NULL;			/* for save atom-gc */
     leaveDefinition(DEF);
     proc = (Procedure) *PC++;
     DEF = getProcDefinedDefinition(lTop, PC, proc PASS_LD);
@@ -1396,7 +1397,6 @@ VMI(I_DEPART, 1, (CA1_PROC))
     } else
       setNextFrameFlags(FR, FR);
 
-    FR->clause = NULL;			/* for save atom-gc */
     FR->predicate = DEF;
     copyFrameArguments(lTop, FR, DEF->functor->arity PASS_LD);
 
@@ -2098,13 +2098,20 @@ a_var_n:
   p = varFrameP(FR, offset);
   deRef2(p, p2);
 
+					/* speedup common case a bit */
+  if ( tagex(*p2) == (TAG_INTEGER|STG_INLINE) )
+  { n->value.i = valInt(*p2);
+    n->type = V_INTEGER;
+  a_ok:
+    ARGP = (Word)(n+1);
+    NEXT_INSTRUCTION;
+    /*NOTREACHED*/
+  }
+
   switch(tag(*p2))
   { case TAG_INTEGER:
       get_integer(*p2, n);
-    a_ok:
-      ARGP = (Word)(n+1);
-      NEXT_INSTRUCTION;
-      /*NOTREACHED*/
+      goto a_ok;
     case TAG_FLOAT:
       n->value.f = valReal(*p2);
       n->type = V_REAL;
