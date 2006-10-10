@@ -951,7 +951,8 @@ Handling environment (or local stack) frames.
 #endif
 
 #define setNextFrameFlags(next, fr) \
-	(next)->flags = ((fr)->flags + FR_LEVEL_STEP) & (~FR_CONTEXT)
+	(next)->flags = ((fr)->flags + FR_LEVEL_STEP) & \
+			(~FR_CONTEXT|FR_SKIPPED|FR_WATCHED|FR_CATCHED)
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Predicate reference counting. The aim  of   this  mechanism  is to avoid
