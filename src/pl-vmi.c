@@ -1378,27 +1378,27 @@ VMI(I_DEPART, 1, (CA1_PROC))
        && trueFeature(TAILRECURSION_FEATURE)
 #endif
      )
-  { Procedure proc = (Procedure) *PC++;
-    Definition ndef = getProcDefinedDefinition(lTop, PC, proc PASS_LD);
+  { Procedure proc;
 
     if ( true(FR, FR_WATCHED) )
     { LocalFrame lSave = lTop;
-      lTop = (LocalFrame)argFrameP(lTop, ndef->functor->arity);
+      lTop = (LocalFrame)ARGP;		/* just pushed arguments, so top */
       frameFinished(FR, FINISH_EXIT PASS_LD);
       lTop = lSave;
     }
 
     leaveDefinition(DEF);
-
-    if ( true(ndef, METAPRED) )
+    proc = (Procedure) *PC++;
+    DEF = getProcDefinedDefinition(lTop, PC, proc PASS_LD);
+    if ( true(DEF, METAPRED) )
     { FR->context = contextModule(FR);
       FR->flags = (FR->flags+FR_LEVEL_STEP) | FR_CONTEXT;
     } else
       setNextFrameFlags(FR, FR);
 
     FR->clause = NULL;			/* for save atom-gc */
-    FR->predicate = DEF = ndef;
-    copyFrameArguments(lTop, FR, ndef->functor->arity PASS_LD);
+    FR->predicate = DEF;
+    copyFrameArguments(lTop, FR, DEF->functor->arity PASS_LD);
 
     END_PROF();
     START_PROF(DEPART_CONTINUE, "DEPART_CONTINUE");
