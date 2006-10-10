@@ -910,13 +910,14 @@ with one operation, it turns out to be faster as well.
 Handling environment (or local stack) frames.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-#define FR_BITS			6	/* mask-bits */
+#define FR_BITS			7	/* mask-bits */
 #define FR_NODEBUG		(0x01L)	/* Invisible frame */
 #define FR_SKIPPED		(0x02L)	/* We have skipped on this frame */
 #define FR_MARKED		(0x04L)	/* GC */
 #define FR_WATCHED		(0x08L)	/* GUI debugger */
 #define FR_CATCHED		(0x10L)	/* Frame catched an exception */
 #define FR_INBOX		(0x20L) /* Inside box (for REDO in built-in) */
+#define FR_CONTEXT		(0x40L)	/* fr->context is set */
 
 /* FR_LEVEL now handles levels upto 32M.  This is a bit low, but as it is
    only used for the debugger (skip, etc) it is most likely acceptable.
@@ -943,12 +944,14 @@ Handling environment (or local stack) frames.
 #define slotsFrame(f)		(true((f)->predicate, FOREIGN) ? \
 				      (f)->predicate->functor->arity : \
 				      (f)->clause->clause->prolog_vars)
-#define contextModule(f)	((f)->context)
 #ifdef O_LOGICAL_UPDATE
 #define generationFrame(f)	((f)->generation)
 #else
 #define generationFrame(f)	(0)
 #endif
+
+#define setNextFrameFlags(next, fr) \
+	(next)->flags = ((fr)->flags + FR_LEVEL_STEP) & (~FR_CONTEXT)
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Predicate reference counting. The aim  of   this  mechanism  is to avoid

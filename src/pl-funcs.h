@@ -3,9 +3,9 @@
     Part of SWI-Prolog
 
     Author:        Jan Wielemaker
-    E-mail:        jan@swi.psy.uva.nl
+    E-mail:        wielemak@science.uva.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (C): 1985-2002, University of Amsterdam
+    Copyright (C): 1985-2006, University of Amsterdam
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
@@ -92,6 +92,7 @@ COMMON(word) 		pl_unify_with_occurs_check(term_t t1, term_t t2);
 COMMON(fid_t) 		PL_open_signal_foreign_frame(void);
 COMMON(void)		updateAlerted(PL_local_data_t *ld);
 COMMON(int)		raiseSignal(PL_local_data_t *ld, int sig);
+COMMON(Module)		contextModule(LocalFrame fr);
 
 /* pl-supervisor.c */
 

@@ -797,7 +797,8 @@ Finish up the clause.
     cl->variables += p-p0;
 
     fr->clause = cref;
-    fr->context = module;
+    fr->context = module;		/* is setContextModule() */
+    fr->flags |= FR_CONTEXT;
     fr->predicate = getProcDefinition(proc);
 
     DEBUG(1, Sdprintf("; now %d vars\n", clause.variables));

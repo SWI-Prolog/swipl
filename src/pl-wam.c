@@ -3,9 +3,9 @@
     Part of SWI-Prolog
 
     Author:        Jan Wielemaker
-    E-mail:        jan@swi.psy.uva.nl
+    E-mail:        wielemak@science.uva.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (C): 1985-2002, University of Amsterdam
+    Copyright (C): 1985-2006, University of Amsterdam
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
@@ -548,13 +548,13 @@ frameFinished(LocalFrame fr, enum finished reason ARG_LD)
 
 	exception_term = 0;
 	*valTermRef(exception_bin) = 0;
-	rval = callProlog(fr->context, clean, PL_Q_CATCH_EXCEPTION, &ex);
+	rval = callProlog(contextModule(fr), clean, PL_Q_CATCH_EXCEPTION, &ex);
 	if ( rval || !ex )
 	{ *valTermRef(exception_bin) = *valTermRef(pending);
 	  exception_term = exception_bin;
 	}
       } else
-      { rval = callProlog(fr->context, clean, PL_Q_CATCH_EXCEPTION, &ex);
+      { rval = callProlog(contextModule(fr), clean, PL_Q_CATCH_EXCEPTION, &ex);
       }
       unblockGC(PASS_LD1);
 
@@ -713,6 +713,27 @@ getProcDefinedDefinition(LocalFrame fr, Code PC, Procedure proc ARG_LD)
   return def;
 #endif
 }
+
+
+Module
+contextModule(LocalFrame fr)
+{ for(; fr; fr = fr->parent)
+  { if ( true(fr, FR_CONTEXT) )
+      return fr->context;
+    if ( false(fr->predicate, METAPRED) )
+      return fr->predicate->module;
+  }
+
+  return MODULE_user;
+}
+
+
+void
+setContextModule(LocalFrame fr, Module context)
+{ fr->context = context;
+  set(fr, FR_CONTEXT);
+}
+
 
 		 /*******************************
 		 *	   CYCLIC TERMS		*
@@ -1817,13 +1838,12 @@ PL_open_query(Module ctx, int flags, Procedure proc, term_t args)
 					/* context module */
   if ( true(def, METAPRED) )
   { if ( ctx )
-      fr->context = ctx;
+      setContextModule(fr, ctx);
     else if ( qf->saved_environment )
-      fr->context = qf->saved_environment->context;
+      setContextModule(fr, contextModule(qf->saved_environment));
     else
-      fr->context = MODULE_user;
-  } else
-    fr->context = def->module;
+      setContextModule(fr, MODULE_user);
+  }
 
   environment_frame = fr;
   DEBUG(2, Sdprintf("QID=%d\n", QidFromQuery(qf)));
@@ -2122,7 +2142,6 @@ wakeup:
   DEF = getProcDefinedDefinition(lTop, PC,
 				 PROCEDURE_dwakeup1
 				 PASS_LD);
-  NFR->context = MODULE_system;
   NFR->flags = FR->flags;
   ARGP = argFrameP(NFR, 0);
   ARGP[0] = *valTermRef(LD->attvar.head);
