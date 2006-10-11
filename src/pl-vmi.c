@@ -1394,7 +1394,8 @@ VMI(I_DEPART, 1, (CA1_PROC))
     DEF = getProcDefinedDefinition(lTop, PC, proc PASS_LD);
     if ( true(DEF, METAPRED) )
     { FR->context = contextModule(FR);
-      FR->flags = (FR->flags+FR_LEVEL_STEP) | FR_CONTEXT;
+      FR->flags = (((FR->flags+FR_LEVEL_STEP) | FR_CONTEXT) &
+		   ~(FR_SKIPPED|FR_WATCHED|FR_CATCHED));
     } else
       setNextFrameFlags(FR, FR);
 
