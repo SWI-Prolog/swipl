@@ -725,7 +725,7 @@ valueExpression(term_t t, Number r ARG_LD)
     LD->in_arithmetic--;
 #endif /*HAVE___TRY*/
 
-    if ( r->type == V_REAL && !check_float(r->value.f) )
+    if ( rval && r->type == V_REAL && !check_float(r->value.f) )
       return FALSE;
 
     return rval;
