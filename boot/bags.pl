@@ -32,7 +32,8 @@
 :- module($bags,
 	  [ findall/3, 
 	    bagof/3, 
-	    setof/3
+	    setof/3,
+	    '$on_bag_error'/2
 	  ]).
 
 :- module_transparent
@@ -41,17 +42,26 @@
 	bagof/3, 
 	assert_bag/2.
 
-%	findall(-Var, +Goal, -Bag)
-%	Bag holds all alternatives for Var  in  Goal.   Bag  might  hold
-%	duplicates.   Equivalent  to bagof, using the existence operator
-%	(^) on all free variables of Goal.  Succeeds with Bag  =  []  if
+%%	findall(-Templ, +Goal, -Bag)
+%	
+%	Bag holds all alternatives for  Templ   in  Goal. Bag might hold
+%	duplicates. Equivalent to bagof, using   the  existence operator
+%	(^) on all free variables of  Goal.   Succeeds  with Bag = [] if
 %	Goal fails immediately.
 
-findall(Var, Goal, Bag) :-
-	assert_bag(v-Var, Goal),
-	collect_bags([], [v-VarBag]), !,
-	VarBag = Bag.
-findall(_, _, []).
+findall(Templ, Goal, List) :-
+	'$create_bag'(Bag),
+	(   catch(Goal, E, '$on_bag_error'(Bag, E)),
+	    '$append_bag'(Bag, Templ),
+	    fail
+	;   true
+	),
+	'$bag_to_list'(Bag, List).
+
+'$on_bag_error'(Bag, Error) :-
+	'$destroy_bag'(Bag),
+	throw(Error).
+
 
 %	setof(+Var, +Goal, -Set
 %	Equivalent to bagof/3, but sorts the resulting bag  and  removes
