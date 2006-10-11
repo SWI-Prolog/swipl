@@ -207,6 +207,170 @@ PRED_IMPL("$discard_bag", 0, discard_bag, 0)
 
 
 		 /*******************************
+		 *	NEW IMPLEMENTATION	*
+		 *******************************/
+
+#define BAG_MAGIC	0x74eb8afc
+#define CHUNK_SIZE 	256
+
+typedef struct achunk
+{ struct achunk *next;
+  int		used;
+  struct assoc	assocs[CHUNK_SIZE];
+} *AChunk;
+
+typedef struct bag
+{ int	magic;
+  Assoc	head;
+  Assoc	tail;
+  int	size;
+  int	gsize;
+  AChunk chunks;
+  struct achunk chunk1;
+} *Bag;
+
+
+static
+PRED_IMPL("$create_bag", 1, create_bag, 0)
+{ PRED_LD
+  Bag b = allocHeap(sizeof(*b));
+
+  b->magic	  = BAG_MAGIC;
+  b->head	  = NULL;
+  b->tail	  = NULL;
+  b->size	  = 0;
+  b->gsize	  = 0;
+  b->chunks	  = &b->chunk1;
+  b->chunks->used = 0;
+  b->chunks->next = NULL;
+
+  return PL_unify_pointer(A1, b);
+}
+
+
+static void
+destroy_bag(Bag b ARG_LD)
+{ Assoc a;
+  AChunk c, next;
+
+  for(a=b->head; a; a=a->next)
+    freeRecord(a->record);
+
+  for(c=b->chunks; c != &b->chunk1; c = next)
+  { next = c->next;
+    freeHeap(c, sizeof(*c));
+  }
+  
+  freeHeap(b, sizeof(*b));
+}
+
+
+static Assoc
+allocAssocBag(Bag b ARG_LD)
+{ AChunk c;
+
+  c = b->chunks;
+  if ( c->used < CHUNK_SIZE )
+    return &c->assocs[c->used++];
+
+  c = allocHeap(sizeof(*c));
+  c->used = 1;
+  c->next = b->chunks;
+  b->chunks = c;
+
+  return c->assocs;
+}
+
+
+static int
+get_bag(term_t t, Bag *b ARG_LD)
+{ if ( !PL_get_pointer(t, (void**)b) || (*b)->magic != BAG_MAGIC )
+    return PL_error(NULL, 0, NULL, ERR_TYPE, PL_new_atom("bag"), t);
+
+  succeed;
+}
+
+
+static
+PRED_IMPL("$append_bag", 2, append_bag, 0)
+{ PRED_LD
+  Bag b;
+  Assoc a;
+
+  if ( !get_bag(A1, &b PASS_LD) )
+    fail;
+
+  a = allocAssocBag(b PASS_LD);
+  a->record = compileTermToHeap(A2, 0);
+  a->next   = NULL;
+  if ( b->tail )
+  { b->tail->next = a;
+    b->tail = a;
+  } else
+  { b->head = b->tail = a;
+  }
+  b->size++;
+  b->gsize += a->record->gsize;
+
+  succeed;
+}
+
+
+static
+PRED_IMPL("$bag_to_list", 2, bag_to_list, 0)
+{ PRED_LD
+  Bag b;
+  term_t tmp = PL_new_term_ref();
+  Word base, next = NULL, end;
+  int cells;
+  Assoc a;
+
+  if ( !get_bag(A1, &b PASS_LD) )
+    fail;
+
+  if ( b->size == 0 )
+  { destroy_bag(b PASS_LD);
+    return PL_unify_nil(A2);
+  }
+
+  cells = b->gsize + b->size*3 + 1;
+  requireStack(global, cells*sizeof(word));
+  end = gTop + cells;
+  next = base = gTop++;
+
+  for(a=b->head; a; a=a->next)
+  { copyRecordToGlobal(tmp, a->record PASS_LD);
+    *next = consPtr(gTop, TAG_COMPOUND|STG_GLOBAL);
+    gTop[0] = FUNCTOR_dot2;
+    gTop[1] = *valTermRef(tmp);
+    gTop[2] = ATOM_nil;
+    next = &gTop[2];
+    gTop += 3;
+  }
+  assert(end == gTop);
+
+  destroy_bag(b PASS_LD);
+
+  return unify_ptrs(valTermRef(A2), base PASS_LD);
+}
+
+
+static
+PRED_IMPL("$destroy_bag", 1, destroy_bag, 0)
+{ PRED_LD
+  Bag b;
+
+  if ( !get_bag(A1, &b PASS_LD) )
+    fail;
+  
+  destroy_bag(b PASS_LD);
+
+  succeed;
+}
+
+
+
+		 /*******************************
 		 *      PUBLISH PREDICATES	*
 		 *******************************/
 
@@ -214,4 +378,9 @@ BeginPredDefs(bag)
   PRED_DEF("$record_bag", 1, record_bag, 0)
   PRED_DEF("$collect_bag", 2, collect_bag, 0)
   PRED_DEF("$discard_bag", 0, discard_bag, 0)
+
+  PRED_DEF("$create_bag", 1, create_bag, 0)
+  PRED_DEF("$append_bag", 2, append_bag, 0)
+  PRED_DEF("$bag_to_list", 2, bag_to_list, 0)
+  PRED_DEF("$destroy_bag", 1, destroy_bag, 0)
 EndPredDefs
