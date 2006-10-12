@@ -63,7 +63,8 @@ findall(Templ, Goal, List) :-
 	throw(Error).
 
 
-%	setof(+Var, +Goal, -Set
+%%	setof(+Var, +Goal, -Set
+%
 %	Equivalent to bagof/3, but sorts the resulting bag  and  removes
 %	duplicate answers.
 
@@ -71,22 +72,25 @@ setof(Var, Goal, Set) :-
 	bagof(Var, Goal, Bag), 
 	sort(Bag, Set).
 
-%	bagof(+Var, +Goal, -Bag)
+%%	bagof(+Var, +Goal, -Bag)
+%	
 %	Implements Clocksin and  Melish's  bagof/3  predicate.   Bag  is
 %	unified  with the alternatives of Var in Goal, Free variables of
 %	Goal are bound, unless asked not to with the existence  operator
 %	(^).
 
 bagof(Gen, Goal, Bag) :-
-	$e_free_variables(Gen^Goal, Vars),
-	assert_bag(Vars-Gen, Goal), 
-	collect_bags([], Bags), 
-	$member(Vars-Bag, Bags),
+	'$e_free_variables'(Gen^Goal, Vars),
+	(   Vars == v
+	->  findall(Gen, Goal, Bag)
+	;   assert_bag(Vars-Gen, Goal), 
+	    collect_bags([], Bags), 
+	    '$member'(Vars-Bag, Bags)
+	),
 	Bag \== [].
 
 assert_bag(Templ, G) :-
 	$record_bag(-), 
-%	call_cleanup(G, exception(_), $discard_bag),
 	catch(G, E, ($discard_bag, throw(E))),
 	    $record_bag(Templ), 
 	fail.
