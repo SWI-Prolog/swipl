@@ -1285,6 +1285,18 @@ unref_cont:
 }
 
 
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Structural equivalence of a term with the   first  argument of a record.
+This routine is used for bagof/3 and setof/3 to split the set of results
+by the unbound variables. All records are of the format v(...)-Term.
+
+Return values:
+
+	< 0:	Term is before record
+	= 0:	Term =@= record
+	> 0:	Term is after record
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
 int
 structuralEqualArg1OfRecord(term_t t, Record r ARG_LD)
 { tmp_buffer avars;
