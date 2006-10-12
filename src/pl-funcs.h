@@ -139,10 +139,6 @@ COMMON(int) 		valueExpression(term_t p, Number n ARG_LD);
 COMMON(int) 		toIntegerNumber(Number n);
 COMMON(int) 		arithChar(Word p ARG_LD);
 
-/* pl-bag.c */
-COMMON(void) 		resetBags(void);
-COMMON(int)  		checkBags(void);
-
 /* pl-comp.c */
 COMMON(void) 		initWamTable(void);
 COMMON(void) 		get_head_and_body_clause(term_t clause,

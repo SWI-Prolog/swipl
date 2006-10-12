@@ -3,9 +3,9 @@
     Part of SWI-Prolog
 
     Author:        Jan Wielemaker
-    E-mail:        jan@swi.psy.uva.nl
+    E-mail:        wielemak@scienc.uva.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (C): 1985-2002, University of Amsterdam
+    Copyright (C): 1985-2006, University of Amsterdam
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
@@ -61,20 +61,6 @@ freeAssoc(Assoc prev, Assoc a ARG_LD)
     freeRecord(a->record);
 
   freeHeap(a, sizeof(*a));
-}
-
-
-void
-resetBags()				/* cleanup after an abort */
-{ GET_LD
-  Assoc a, next;
-
-  for( a=alist; a; a = next )
-  { next = a->next;
-    if ( a->record )
-      freeRecord(a->record);
-    freeHeap(a, sizeof(*a));
-  }
 }
 
 
@@ -261,6 +247,7 @@ destroy_bag(Bag b ARG_LD)
     freeHeap(c, sizeof(*c));
   }
   
+  b->magic = 0;
   freeHeap(b, sizeof(*b));
 }
 
