@@ -38,6 +38,7 @@ COMMON(void)	clearGMPNumber(Number n);
 COMMON(void)	addMPZToBuffer(Buffer b, mpz_t mpz);
 COMMON(char *)	loadMPZFromCharp(const char *data, Word r, Word *store);
 COMMON(char *)	skipMPZOnCharp(const char *data);
+COMMON(char *)	loadMPZFromCharpToNumber(Number n, const char *data);
 
 #define clearNumber(n) \
 	if ( (n)->type != V_INTEGER ) clearGMPNumber(n)

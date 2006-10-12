@@ -542,6 +542,7 @@ COMMON(int) 		Pause(real time);
 /* pl-prims.c */
 COMMON(word) 		pl_notunify(term_t t1, term_t t2);
 COMMON(int) 		compareStandard(Word t1, Word t2, int eq ARG_LD);
+COMMON(int)		compareAtoms(atom_t w1, atom_t w2);
 COMMON(int) 		lengthList(term_t list, int errors);
 COMMON(word) 		pl_univ(term_t t, term_t l);
 COMMON(int) 		numberVars(term_t t, nv_options *opts, int n ARG_LD);

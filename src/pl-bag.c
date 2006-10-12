@@ -150,7 +150,7 @@ PRED_IMPL("$collect_bag", 2, collect_bag, 0)
     { if ( !a->record )
 	break;
 
-      if ( !structuralEqualArg1OfRecord(var_term, a->record PASS_LD) )
+      if ( !structuralEqualArg1OfRecord(var_term, a->record PASS_LD) == 0 )
       { prev = a;
 	continue;
       }

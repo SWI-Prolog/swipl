@@ -184,6 +184,20 @@ avoided by creating a dummy mpz that looks big enough to mpz_import().
 
 #define SHIFTSIGN32 ((sizeof(int)-4)*8)
 
+static int
+sizeMPZOnCharp(const char *data)
+{ int size;
+
+  size  = (data[0]&0xff)<<24;
+  size |= (data[1]&0xff)<<16;
+  size |= (data[2]&0xff)<<8;
+  size |= (data[3]&0xff);
+  size = (size << SHIFTSIGN32)>>SHIFTSIGN32;	/* sign extend */
+
+  return size;
+}
+
+
 char *
 loadMPZFromCharp(const char *data, Word r, Word *store)
 { GET_LD
@@ -195,11 +209,7 @@ loadMPZFromCharp(const char *data, Word r, Word *store)
   Word p;
   word m;
 
-  size |= (data[0]&0xff)<<24;
-  size |= (data[1]&0xff)<<16;
-  size |= (data[2]&0xff)<<8;
-  size |= (data[3]&0xff);
-  size = (size << SHIFTSIGN32)>>SHIFTSIGN32;	/* sign extend */
+  size = sizeMPZOnCharp(data);
   data += 4;
 
   DEBUG(1, Sdprintf("loadMPZFromCharp(): size = %d bytes\n", size));
@@ -233,13 +243,7 @@ loadMPZFromCharp(const char *data, Word r, Word *store)
 
 char *
 skipMPZOnCharp(const char *data)
-{ int size = 0;
-
-  size |= (data[0]&0xff)<<24;
-  size |= (data[1]&0xff)<<16;
-  size |= (data[2]&0xff)<<8;
-  size |= (data[3]&0xff);
-  size = (size << SHIFTSIGN32)>>SHIFTSIGN32;	/* sign extend */
+{ int size = sizeMPZOnCharp(data);
   data += 4;
 
   if ( size < 0 )
@@ -247,6 +251,23 @@ skipMPZOnCharp(const char *data)
 
   return (char *)data + size;
 }
+
+
+char *
+loadMPZFromCharpToNumber(Number n, const char *data)
+{ int size = sizeMPZOnCharp(data);
+
+  data += 4;
+  if ( size < 0 )
+    size = -size;			/* TBD: should we use this? */
+
+  mpz_init(n->value.mpz);
+  n->type = V_MPZ;
+  mpz_import(n->value.mpz, size, 1, 1, 1, 0, data);
+	   
+  return (char *)data + size;
+}
+
 
 #undef SHIFTSIGN32
 

@@ -1105,6 +1105,30 @@ right_recursion:
 		 *******************************/
 
 static int
+get_rec_number(Number n, int stag, CopyInfo info ARG_LD)
+{ switch(stag)
+  { case PL_TYPE_TAGGED_INTEGER:
+    case PL_TYPE_INTEGER:
+      n->value.i = fetchInt64(info);
+      n->type = V_INTEGER;
+      succeed;
+    case PL_TYPE_FLOAT:
+      memcpy(&n->value.f, info->data, sizeof(double));
+      info->data += sizeof(double);
+      n->type = V_REAL;
+      succeed;
+#ifdef O_GMP
+    case PL_REC_MPZ:
+      info->data = loadMPZFromCharpToNumber(n, info->data);
+      succeed;
+#endif
+    default:
+      fail;
+  }
+}
+
+
+static int
 se_record(Word p, CopyInfo info ARG_LD)
 { word w;
   int stag;
@@ -1120,13 +1144,13 @@ unref_cont:
       { uint i = fetchSizeInt(info);
 
 	if ( i != info->nvars )
-	  fail;
+	  return info->nvars - i;
 
 	*p = (info->nvars<<7)|TAG_ATOM|STG_GLOBAL;
 	info->vars[info->nvars++] = p;
-	succeed;
+	return 0;
       }
-      fail;
+      return -1;			/* var < nonvar */
     case TAG_ATTVAR:
       if ( stag == PL_REC_ALLOCVAR )	/* skip variable allocation */
 	stag = fetchOpCode(info);
@@ -1135,7 +1159,7 @@ unref_cont:
 	uint i = fetchSizeInt(info);
 
 	if ( i != info->nvars )
-	  fail;
+	  return info->nvars - i;
 
 	addBuffer(info->avars, *p, word);
 	*p = (info->nvars<<7)|TAG_ATOM|STG_GLOBAL;
@@ -1144,17 +1168,41 @@ unref_cont:
 	p = ap;				/* do the attribute value */
 	goto right_recursion;
       }
-      fail;
+      return -1;
+    case TAG_INTEGER:
+    case TAG_FLOAT:
+    { number l, r;
+
+      if ( get_rec_number(&r, stag, info PASS_LD) )
+      { int rc;
+
+	get_number(w, &l PASS_LD);
+	rc = cmpNumbers(&l, &r);
+	clearNumber(&l);
+	clearNumber(&r);
+	return rc;
+      }
+
+      switch(stag)
+      { case PL_TYPE_ATOM:
+	case PL_TYPE_COMPOUND:
+	case TAG_STRING:
+	  return -1;
+	default:
+	  return 1;
+      }
+    }
     case TAG_ATOM:
-      if ( storage(w) == STG_GLOBAL )
+      if ( storage(w) == STG_GLOBAL )	/* variable, not for the first time */
       { if ( stag == PL_TYPE_VARIABLE )
 	{ uint n = (uint)((unsigned long)(w) >> 7);
 	  uint i = fetchSizeInt(info);
 
 	  if ( i == n )
-	    succeed;
+	    return 0;
+	  return n-i;
 	}
-	fail;
+	return -1;
       }
 
       DEBUG(9, Sdprintf("Matching '%s'\n", stringAtom(w)));
@@ -1162,119 +1210,79 @@ unref_cont:
       { atom_t val = fetchWord(info);
 
 	if ( val == w )
-	  succeed;
-      } else if ( stag == PL_TYPE_EXT_ATOM )
-      { atom_t val;
+	  return 0;
+	return compareAtoms(w, val);
+      } 
 
-	fetchAtom((CopyInfo)info, &val);		/* TBD: Optimise! */
-	if ( val == w )
-	  succeed;
+      switch(stag)
+      { case PL_TYPE_COMPOUND:
+	case TAG_STRING:
+	  return -1;
+	default:
+	  return 1;
       }
-
-      fail;
-    case TAG_INTEGER:
-      if ( isTaggedInt(w) )
-      { if ( stag == PL_TYPE_TAGGED_INTEGER )
-	{ int64_t val = valInt(w);
-	  int64_t v2 = fetchInt64(info);
-
-	  if ( v2 == val )
-	    succeed;
-	}
-      } else
-      { if ( stag == PL_TYPE_INTEGER )
-	{ int64_t val = valBignum(w);
-	  int64_t v2 = fetchInt64(info);
-
-	  if ( v2 == val )
-	    succeed;
-	}
-      }
-      fail;
     case TAG_STRING:
       if ( stag == PL_TYPE_STRING )
-      { Word f  = addressIndirect(w);
-	int n   = wsizeofInd(*f);
-	int pad = padHdr(*f);		/* see also getCharsString() */
-	uint l  = n*sizeof(word)-pad;
-
+      { PL_chars_t l, r;
 	uint llen = fetchSizeInt(info);
-	if ( llen == l &&
-	     memcmp((char *)(f+1), info->data, l) == 0 )
-	{ info->data += l;
 
-	  succeed;
+	get_string_text(w, &l PASS_LD);
+	if ( info->data[0] == 'B' )
+	{ r.text.t = (char *)&info->data[1];
+	  r.length = llen-1;
+	  r.encoding = ENC_ISO_LATIN_1;
+	} else				/* TBD: alignment! */
+	{ r.text.w = (pl_wchar_t *)info->data;
+	  r.text.w++;
+	  r.length = (llen/sizeof(pl_wchar_t))-1;
+	  r.encoding = ENC_WCHAR;
 	}
+	info->data += llen;
+	r.storage   = PL_CHARS_STACK;
+	r.canonical = TRUE;  
+	llen = (l.length > r.length ? l.length : r.length);
+
+	return PL_cmp_text(&l, 0, &r, 0, llen);
       }
-      fail;
-    case TAG_FLOAT:
-      if ( stag == PL_TYPE_FLOAT )
-      { Word v = valIndirectP(w);
-	Word d = (Word)info->data;
-
-	if ( memcmp(v, d, sizeof(double)) == 0 )
-	{ info->data += sizeof(double);
-	  succeed;
-	}
-      } else if ( stag == PL_TYPE_EXT_FLOAT )
-      { Word v = valIndirectP(w);
-	double d;
-
-	fetchExtFloat(info, &d);
-	if ( memcmp(v, &d, sizeof(double)) == 0 )
-	  succeed;
-      }
-
-      fail;
+      return stag == TAG_COMPOUND ? -1 : 1;
     case TAG_COMPOUND:
+    { word fdef;
       DEBUG(9, Sdprintf("Matching %s/%d\n",
 			stringAtom(valueFunctor(functorTerm(w))->name),
 			arityTerm(w)));
-      if ( stag == PL_TYPE_COMPOUND )
-      { Functor f = valueTerm(w);
-	word fdef = fetchWord(info);
 
+      if ( stag == PL_TYPE_COMPOUND )
+      { Functor f;
+
+	fdef = fetchWord(info);
+      compound:
+	f = valueTerm(w);
 	if ( fdef == f->definition )
 	{ int arity = arityFunctor(fdef);
 
 	  p = f->arguments;
 	  for(; --arity > 0; p++)
-	  { if ( !se_record(p, info PASS_LD) )
-	      fail;
+	  { int rc = se_record(p, info PASS_LD);
+
+	    if ( rc != 0 )
+	      return rc;
 	  }
 	  goto right_recursion;
-	}
-      } else if ( stag == PL_TYPE_EXT_COMPOUND )
-      { Functor f = valueTerm(w);
-	FunctorDef fd = valueFunctor(f->definition);
-	long arity = fetchSizeInt(info);
-	atom_t name;
+	} else
+	{ FunctorDef fd1 = valueFunctor(f->definition);
+	  FunctorDef fd2 = valueFunctor(fdef);
 
-	if ( (unsigned)arity != fd->arity )
-	  fail;
-	fetchAtom((CopyInfo)info, &name);	/* TBD: optimise */
-	if ( name != fd->name )
-	  fail;
-	
-	p = f->arguments;
-	for(; --arity > 0; p++)
-	{ if ( !se_record(p, info PASS_LD) )
-	    fail;
+	  if ( fd1->arity != fd2->arity )
+	    return fd1->arity > fd2->arity ? 1 : -1;
+	  
+	  return compareAtoms(fd1->name, fd2->name);
 	}
-        goto right_recursion;
       } else if ( stag == PL_TYPE_CONS )
-      { Functor f = valueTerm(w);
-	
-	if ( f->definition == FUNCTOR_dot2 )
-	{ p = f->arguments;
-	  if ( !se_record(p, info PASS_LD) )
-	    fail;
-	  p++;
-	  goto right_recursion;
-	}
+      { fdef = FUNCTOR_dot2;
+	goto compound;
       }
-
-      fail;
+      return 1;
+    }
     case TAG_REFERENCE:
       p = unRef(w);
       goto unref_cont;
