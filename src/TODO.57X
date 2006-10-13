@@ -159,6 +159,15 @@ Arithmetic:
 
 
 ================================================================
+Findall/Setof/Bagof:
+
+	* setof/3: use AVL-tree for values to avoid returning duplicates
+	and remove them only on sort.
+
+	* Move toplevel of the all-solutioon predicates to C?
+
+
+================================================================
 bench_peirera(1) on 5.6.18 (AMD2600+)
 ----------------------------------------------------------------
 tail_call_atom_atom    took 1.17-0.20=0.97/79412 =      12.2 usec/iter.
