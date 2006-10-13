@@ -129,11 +129,11 @@ initWamTable()
 #endif /* VMCODE_IS_ADDRESS */
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-This module forms together  with  the  module  'pl-wam.c'  the  complete
-kernel  of  SWI-Prolog.   It  contains  the  compiler, the predicates to
-interface the compiler to Prolog and the  decompiler.   SWI-Prolog  does
-not  offer  a  Prolog  interpreter,  which  implies that common database
-predicates such as assert/1 and retract/1 have to do  compilation  resp.
+This module forms together with  the   module  pl-wam.c and pl-vmi.c the
+kernel of SWI-Prolog. It  contains  the   compiler,  the  predicates  to
+interface the compiler to Prolog and the decompiler. SWI-Prolog does not
+offer  a  Prolog  interpreter,  which    implies  that  common  database
+predicates such as assert/1 and retract/1   have to do compilation resp.
 decompilation between the term representation used on the runtime stacks
 and the compiled representation used in the heap.
 
@@ -196,6 +196,8 @@ typedef struct
   int		subclausearg;		/* processing subclausearg */
   int		argvars;		/* islocal argument pseudo vars */
   int		argvar;			/* islocal current pseudo var */
+  int		uses_non_hvar;		/* call uses vars not from args */
+  int		max_hvar_offset;	/* highest offset of headvars */
   tmp_buffer	codes;			/* scratch code table */
   VarTable	used_var;		/* boolean array of used variables */
 } compileInfo, *CompileInfo;
@@ -296,12 +298,12 @@ is used for sharing variables that occurr on their own in the head  with
 the  argument  part  of the environment frame instead of putting them in
 the variable part.
 
-AnalyseVariables2() just scans the term, fills the  variable  definition
-array  and  binds  found  variables  to entries of this array.  The last
-argument indicates which plain argument we are processing.  It is set to
--1 when called with the head.  While scaning the head  arguments  it  is
-set  to  the argument number.  For all other code it is arity (body code
-and nested terms of the head).  This is used for  the  argument/variable
+AnalyseVariables2() just scans the term,   fills the variable definition
+array and binds found variables  to  entries   of  this  array. The last
+argument indicates which plain argument we are  processing. It is set to
+-1 when called with the head. While   scanning  the head arguments it is
+set to the argument number. For all other   code  it is arity (body code
+and nested terms of the head). This   is  used for the argument/variable
 block merging.
 
 After this scan the variable definition records are  scanned  to  assign
@@ -389,7 +391,7 @@ right_recursion:
 
 static void
 analyse_variables(Word head, Word body, CompileInfo ci ARG_LD)
-{ int nvars = 0;
+{ int headvars = 0, nvars = 0;
   int n;
   int body_voids = 0;
   int arity = ci->arity;
@@ -398,10 +400,11 @@ analyse_variables(Word head, Word body, CompileInfo ci ARG_LD)
     resetVarDefs(arity PASS_LD);
 
   if ( head )
-    nvars = analyseVariables2(head, 0, arity, -1, ci PASS_LD);
+    headvars = analyseVariables2(head, 0, arity, -1, ci PASS_LD);
   if ( body )
-    nvars = analyseVariables2(body, nvars, arity, arity, ci PASS_LD);
+    nvars = analyseVariables2(body, headvars, arity, arity, ci PASS_LD);
 
+  ci->max_hvar_offset = -1;
   for(n=0; n<arity+nvars; n++)
   { VarDef vd = LD->comp.vardefs[n];
 
@@ -414,7 +417,10 @@ analyse_variables(Word head, Word body, CompileInfo ci ARG_LD)
       if (n >= arity)
 	body_voids++;
     } else
-      vd->offset = n + ci->argvars - body_voids;
+    { vd->offset = n + ci->argvars - body_voids;
+      if ( n < arity+headvars )
+	ci->max_hvar_offset = vd->offset;
+    }
   }
 
   LD->comp.filledVars = arity + nvars;
@@ -1239,7 +1245,9 @@ isvar:
       { if ( where & A_ARG )
 	{ Output_0(ci, B_ARGVAR);
 	} else
-	{ if ( index < 3 )
+	{ ci->uses_non_hvar++;
+
+	  if ( index < 3 )
 	  { Output_0(ci, B_VAR0 + index);
 	    return NONVOID;
 	  }
@@ -1262,7 +1270,10 @@ isvar:
     { if ( where & A_ARG )
       { Output_0(ci, first ? B_ARGFIRSTVAR : B_ARGVAR);
       } else
-      { if ( index < 3 && !first )
+      { if ( index > ci->max_hvar_offset )
+	  ci->uses_non_hvar++;
+
+	if ( index < 3 && !first )
 	{ Output_0(ci, B_VAR0 + index);
 	  return NONVOID;
 	}
@@ -1441,15 +1452,7 @@ will use the meta-call mechanism for all these types of calls.
 #endif
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-Term, not a variable and not a module   call. First of all, we check for
-`inline calls'. This refers to a  light-weight calling mechanism applied
-to deterministic foreign predicates that are   called with simple normal
-variable arguments only. This deals with fast  calling of checks such as
-var/1 as well as  A  =  B.  If   we  are  compiling  clauses  for call/1
-(islocal), we skip this, as it   complicates the compilation process and
-the dynamic clause will be used  once   only  anyhow. Moreover, it would
-require  one  more  place  to  do    the   special  variable-linking  in
-compileArgument().
+Term, not a variable and not a module call.
 
 For normal cases, simply compile the arguments   (push on the stack) and
 create a call-instruction. Finally, some  special   atoms  are mapped to
@@ -1476,6 +1479,7 @@ re-definition.
 	}
       }
 
+      ci->uses_non_hvar = FALSE;
       for(arg = argTermP(*arg, 0); ar > 0; ar--, arg++)
 	compileArgument(arg, A_BODY, ci PASS_LD);
 
@@ -1499,6 +1503,10 @@ re-definition.
 	succeed;
 #endif
       }
+      if ( call == I_DEPART &&
+	   !ci->uses_non_hvar &&
+	   trueFeature(OPTIMISE_FEATURE) )
+	call = I_DEPART_SIMPLE;
       Output_1(ci, call, (code) proc);
 
       succeed;
@@ -2998,6 +3006,7 @@ decompileBody(decompileInfo *di, code end, Code until ARG_LD)
       case I_CONTEXT:	    di->body_context = (Module) *PC++;
       			    continue;
       case I_DEPART:
+      case I_DEPART_SIMPLE:
       case I_CALL:        { Procedure proc = (Procedure)XR(*PC++);
 			    build_term(proc->definition->functor->functor, di PASS_LD);
 			    pushed++;
@@ -4506,6 +4515,7 @@ pl_clause_term_position(term_t ref, term_t pc, term_t locterm)
         continue;
       case I_CALL:
       case I_DEPART:
+      case I_DEPART_SIMPLE:
       case I_CUT:
       case I_FAIL:
       case I_TRUE:
@@ -4580,6 +4590,7 @@ pl_break_pc(term_t ref, term_t pc, term_t nextpc, control_t h)
       case I_EXITFACT:
       case I_CALL:
       case I_DEPART:
+      case I_DEPART_SIMPLE:
       case I_CUT:
       case I_FAIL:
       case I_TRUE:

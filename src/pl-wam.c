@@ -2229,7 +2229,6 @@ START_PROF(P_SHALLOW_BACKTRACK, "P_SHALLOW_BACKTRACK");
       { ch = newChoice(CHP_DEBUG, FR PASS_LD);
       }
 
-      requireStack(local, (int)argFrameP((LocalFrame)NULL, MAXARITY));
       NEXT_INSTRUCTION;
     }
   }  
@@ -2364,8 +2363,6 @@ next_choice:
 	  ch = newChoice(CHP_DEBUG, FR PASS_LD);
       }
 
-			/* require space for the args of the next frame */
-      requireStack(local, (int)argFrameP((LocalFrame)NULL, MAXARITY));
       NEXT_INSTRUCTION;
     }
     case CHP_TOP:			/* Query toplevel */

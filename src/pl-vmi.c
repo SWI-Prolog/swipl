@@ -1412,6 +1412,65 @@ VMI(I_DEPART, 1, (CA1_PROC))
 }
 
 
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+I_DEPART_SIMPLE: Simple version of  depart   because  all  variables are
+older than the current frame, so we can simply copy their values.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+VMI(I_DEPART_SIMPLE, 1, (CA1_PROC))
+{
+#if TAILRECURSION
+  if ( (void *)BFR <= (void *)FR
+#if O_DEBUGGER
+       && trueFeature(TAILRECURSION_FEATURE)
+#endif
+     )
+  { Procedure proc;
+
+    if ( true(FR, FR_WATCHED) )
+    { LocalFrame lSave = lTop;
+      lTop = (LocalFrame)ARGP;		/* just pushed arguments, so top */
+      frameFinished(FR, FINISH_EXIT PASS_LD);
+      lTop = lSave;
+    }
+
+    FR->clause = NULL;			/* for save atom-gc */
+    leaveDefinition(DEF);
+    proc = (Procedure) *PC++;
+    DEF = getProcDefinedDefinition(lTop, PC, proc PASS_LD);
+    if ( true(DEF, METAPRED) )
+    { FR->context = contextModule(FR);
+      FR->flags = (((FR->flags+FR_LEVEL_STEP) | FR_CONTEXT) &
+		   ~(FR_SKIPPED|FR_WATCHED|FR_CATCHED));
+    } else
+      setNextFrameFlags(FR, FR);
+
+    { Word dest = argFrameP(FR, 0);
+      Word src  = argFrameP(lTop, 0);
+      Word end  = src+DEF->functor->arity;
+
+      while(src < end)
+      { SECURE(if ( isRefL(*src) && unRefL(*src) > (Word)FR)
+	       { Sdprintf("Wrong pointer, var %d calling %s from %s\n",
+			  src-argFrameP(lTop, 0),
+			  predicateName(DEF),
+			  predicateName(FR->predicate));
+	       });
+	*dest++ = *src++;
+      }
+    }
+    FR->predicate = DEF;
+
+    END_PROF();
+    START_PROF(DEPART_CONTINUE, "DEPART_CONTINUE");
+    goto depart_continue;
+  }
+#endif /*TAILRECURSION*/
+
+  VMI_GOTO(I_CALL);
+}
+
+
 		 /*******************************
 		 *	       EXIT		*
 		 *******************************/
