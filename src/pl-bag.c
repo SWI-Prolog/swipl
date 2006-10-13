@@ -41,6 +41,14 @@ static Word assoc_to_list(Assoc a, int size, int gsize ARG_LD);
 		 *	 BAGOF/SETOF BAGS	*
 		 *******************************/
 
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Bagof support. For bagof/3 and setof/3 we maintain an AVL tree of values
+for the free-variable template.  
+
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+
 #include "pl-avl.h"
 
 typedef struct bindnode
@@ -52,6 +60,12 @@ typedef struct bindnode
   Assoc		tail;
 } bindnode;
 
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+compare_bindnodes() assumes the left-side is the   node that is searched
+or inserted, while the right node is   already in the tree. Therefore we
+use the term of the left, and the record of the right node.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static int
 compare_bindnodes(void *l, void *r, NODE type)
@@ -142,10 +156,6 @@ PRED_IMPL("$insert_bagof", 2, insert_bagof, 0)
 
   node.record = compileTermToHeap(binding, 0);
   node.term   = vars;
-  node.size   = 0;
-  node.gsize  = 0;
-  node.head   = 0;
-  node.tail   = 0;
 
   a = allocHeap(sizeof(*a));
   a->record  = node.record;
