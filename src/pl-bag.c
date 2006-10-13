@@ -29,171 +29,228 @@
 #undef LD
 #define LD LOCAL_LD
 
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-This module defines support  predicates  for  the  Prolog  all-solutions
-predicates findall/3, bagof/3 and setof/3.  These predicates are:
-
-	$record_bag(Key, Value)		Record a value under a key.
-    	$collect_bag(Bindings, Values)	Retract all Solutions matching
-					Bindings.
-
-The (toplevel) remainder of the all-solutions predicates is  written  in
-Prolog.
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-#define alist LD->bags.bags		/* Each thread has its own */
-					/* storage for this */
-
 typedef struct assoc
 { Record record;
   struct assoc *next;
 } *Assoc;
 
+static Word assoc_to_list(Assoc a, int size, int gsize ARG_LD);
+
+
+		 /*******************************
+		 *	 BAGOF/SETOF BAGS	*
+		 *******************************/
+
+#include "pl-avl.h"
+
+typedef struct bindnode
+{ Record	record;			/* first binding */
+  term_t	term;			/* As term (for search) */
+  int		size;			/* # values on this binding */
+  int		gsize;			/* Required global stack for list */
+  Assoc		head;			/* solution list */
+  Assoc		tail;
+} bindnode;
+
+
+static int
+compare_bindnodes(void *l, void *r, NODE type)
+{ GET_LD;
+  bindnode *ln = l;
+  bindnode *rn = r;
+
+  return structuralEqualArg1OfRecord(ln->term, rn->record PASS_LD);
+}
+
 
 static void
-freeAssoc(Assoc prev, Assoc a ARG_LD)
-{ if ( prev == NULL )
-  { alist = a->next;
-  } else
-    prev->next = a->next;
+free_assoc_list(Assoc a)
+{ GET_LD
+  Assoc next;
 
-  if ( a->record )
+  for(; a; a=next)
+  { next = a->next;
     freeRecord(a->record);
-
-  freeHeap(a, sizeof(*a));
-}
-
-
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-$record_bag(Key-Value)
-
-Record a solution of bagof.  Key is a term  v(V0,  ...Vn),  holding  the
-variable binding for solution `Gen'.  Key is ATOM_mark for the mark.
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-static
-PRED_IMPL("$record_bag", 1, record_bag, 0)
-{ PRED_LD
-  Assoc a = allocHeap(sizeof(*a));
-
-  if ( PL_is_atom(A1) )			/* mark */
-  { a->record = 0;
-  } else
-    a->record = compileTermToHeap(A1, 0);
-
-  DEBUG(1, { Sdprintf("Recorded %p: ", a->record);
-	     PL_write_term(Serror, A1, 1200, PL_WRT_ATTVAR_WRITE);
-	     Sdprintf("\n");
-	   });
-
-  a->next    = alist;
-  alist      = a;
-
-  succeed;
-}
-
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-This predicate will fail if no more records are left before the mark.
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-static
-PRED_IMPL("$collect_bag", 2, collect_bag, 0)
-{ PRED_LD
-  
-  term_t bindings = A1;
-  term_t bag = A2;
-
-  term_t var_term = PL_new_term_refs(4);	/* v() term on global stack */
-  term_t list     = var_term+1;			/* list to construct */
-  term_t binding  = var_term+2;			/* binding */
-  term_t tmp      = var_term+3;
-  Assoc a, next;
-  Assoc prev = NULL;
-  
-  if ( !(a = alist) )
-    fail;
-  if ( !a->record )
-  { freeAssoc(prev, a PASS_LD);
-    fail;				/* trapped the mark */
-  }
-
-  PL_put_nil(list);
-					/* get variable term on global stack */
-  copyRecordToGlobal(binding, a->record PASS_LD);
-  DEBUG(9, Sdprintf("First binding (%p): ", a->record);
-	   PL_write_term(Serror, binding, 1200, PL_WRT_ATTVAR_WRITE);
-	   Sdprintf("\n"));
-  _PL_get_arg(1, binding, var_term);
-  PL_unify(bindings, var_term);
-  _PL_get_arg(2, binding, tmp);
-  PL_cons_list(list, tmp, list);
-
-  next = a->next;
-  freeAssoc(prev, a PASS_LD);  
-
-  if ( next != NULL )
-  { for( a = next, next = a->next; next; a = next, next = a->next )
-    { if ( !a->record )
-	break;
-
-      if ( !structuralEqualArg1OfRecord(var_term, a->record PASS_LD) == 0 )
-      { prev = a;
-	continue;
-      }
-
-      copyRecordToGlobal(binding, a->record PASS_LD);
-      _PL_get_arg(1, binding, tmp);
-      PL_unify(tmp, bindings);
-      _PL_get_arg(2, binding, tmp);
-      PL_cons_list(list, tmp, list);
-      SECURE(checkData(valTermRef(list)));
-      freeAssoc(prev, a PASS_LD);
-    }
-  }
-
-  SECURE(checkData(valTermRef(var_term)));
-
-  return PL_unify(bag, list);
-}
-
-
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-An exception was generated during  the   execution  of  the generator of
-findall/3, bagof/3 or setof/3. Reclaim  all   records  and  re-throw the
-exception.
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-static void
-discardBag(ARG1_LD)
-{ Assoc a, next;
-
-  for( a=alist; a; a = next )
-  { if ( a->record )
-    { DEBUG(1, Sdprintf("\tFree %p\n", a->record));
-      freeRecord(a->record);
-      next = a->next;
-    } else
-    { alist = a->next;
-      next = NULL;
-    }
-
     freeHeap(a, sizeof(*a));
   }
 }
 
 
-static
-PRED_IMPL("$discard_bag", 0, discard_bag, 0)
-{ PRED_LD
+static void
+destroy_bindnode(void *client_data, void *ptr)
+{ bindnode *node = ptr;
 
-  discardBag(PASS_LD1);
+  free_assoc_list(node->head);
+}
+
+
+
+static
+PRED_IMPL("$create_bagof", 1, create_bagof, 0)
+{ PRED_LD
+  avl_tree *t = allocHeap(sizeof(*t));
+
+  avlinit(t,
+	  NULL,				/* client data */
+	  sizeof(bindnode),		/* item size */
+	  compare_bindnodes,		/* compare nodes */
+	  NULL,				/* destroy node */
+	  NULL, NULL);			/* alloc/free (TBD: pool) */
+
+  return PL_unify_pointer(A1, t);
+}
+
+
+static int
+get_bagof(term_t t, avl_tree **b ARG_LD)
+{ if ( !PL_get_pointer(t, (void**)b) )
+    return PL_error(NULL, 0, NULL, ERR_TYPE, PL_new_atom("bag"), t);
 
   succeed;
 }
 
 
+static
+PRED_IMPL("$destroy_bagof", 1, destroy_bagof, 0)
+{ PRED_LD
+  avl_tree *tree;
+
+  if ( !get_bagof(A1, &tree PASS_LD) )
+    fail;
+  
+  avlfree(tree);
+  freeHeap(tree, sizeof(*tree));
+
+  succeed;
+}
+
+
+static
+PRED_IMPL("$insert_bagof", 2, insert_bagof, 0)
+{ PRED_LD
+  avl_tree *tree;
+  bindnode node, *data;
+  Assoc a;
+  term_t binding = A2;			/* v(...)-Gen */
+  term_t vars = PL_new_term_ref();	/* v(...) */
+
+  if ( !get_bagof(A1, &tree PASS_LD) )
+    fail;
+
+  if ( !PL_get_arg(1, binding, vars) )
+    fail;
+
+  node.record = compileTermToHeap(binding, 0);
+  node.term   = vars;
+  node.size   = 0;
+  node.gsize  = 0;
+  node.head   = 0;
+  node.tail   = 0;
+
+  a = allocHeap(sizeof(*a));
+  a->record  = node.record;
+  a->next    = NULL;
+
+  if ( (data = avlfind(tree, &node)) )
+  { data->size++;
+    data->gsize += node.record->gsize;
+    data->tail->next = a;
+    data->tail = a;
+  } else
+  { node.size  = 1;
+    node.gsize = node.record->gsize;
+    node.head  = a;
+    node.tail  = a;
+    data = avlins(tree, &node);
+  }
+
+  succeed;
+}
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+$collect_bagof(+Handle, +Vars, -Bag)
+
+vars: v(....) term.  All arguments are variables.
+
+restore_bindings() gets the variable template and   the  list. Note that
+the list was created using assoc_to_list()   and contains no references.
+It contains cells v(...)-Binding. Our task   is  to restore the variable
+bindings by unifying vars  with  the  v(...)   term  of  each  cell  and
+destructively rewrite the list value to   contain Binding instead of the
+whole term. I guess we can optimize  the   unify  a bit, but that is for
+later.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+static void
+restore_bindings(Word vars, Word list ARG_LD)
+{ while(isList(*list))
+  { Word head = argTermP(*list, 0);
+    Word arg1 = argTermP(*head, 0);
+    if ( !unify_ptrs(vars, arg1 PASS_LD) )
+      assert(0);
+    *head = linkVal(arg1+1);
+
+    list = head+1;
+  }
+
+  assert(isNil(*list));
+}
+
+
+static
+PRED_IMPL("$collect_bagof", 3, collect_bagof, PL_FA_NONDETERMINISTIC)
+{ PRED_LD
+  avl_tree *tree;
+
+  switch( CTX_CNTRL )
+  { case FRG_FIRST_CALL:
+      if ( !get_bagof(A1, &tree PASS_LD) )
+	fail;
+      goto next;
+    case FRG_REDO:
+    { bindnode node;
+      fid_t fid;
+
+      tree = CTX_PTR;
+    next:
+      fid = PL_open_foreign_frame();
+      while ( avldelmin(tree, &node) )
+      { Word list = assoc_to_list(node.head, node.size, node.gsize PASS_LD);
+
+	free_assoc_list(node.head);
+	restore_bindings(valTermRef(A2), list PASS_LD);
+	if ( unify_ptrs(valTermRef(A3), list PASS_LD) )
+	{ PL_close_foreign_frame(fid);
+	  if ( avlcount(tree) == 0 )
+	  { freeHeap(tree, sizeof(*tree));
+	    succeed;
+	  } else
+	  { ForeignRedoPtr(tree);
+	  }
+	}
+
+	PL_rewind_foreign_frame(fid);
+      }
+      freeHeap(tree, sizeof(*tree));
+      fail;
+    }
+    case FRG_CUTTED:
+      tree = CTX_PTR;
+      tree->destroy = destroy_bindnode;
+      avlfree(tree);
+      freeHeap(tree, sizeof(*tree));
+      succeed;
+    default:
+      assert(0);
+      fail;
+  }
+}
+
+
+
 		 /*******************************
-		 *	NEW IMPLEMENTATION	*
+		 *	   FINDALL BAGS		*
 		 *******************************/
 
 #define BAG_MAGIC	0x74eb8afc
@@ -303,29 +360,18 @@ PRED_IMPL("$append_bag", 2, append_bag, 0)
 }
 
 
-static
-PRED_IMPL("$bag_to_list", 2, bag_to_list, 0)
-{ PRED_LD
-  Bag b;
-  term_t tmp = PL_new_term_ref();
+static Word
+assoc_to_list(Assoc a, int size, int gsize ARG_LD)
+{ term_t tmp = PL_new_term_ref();
   Word base, next = NULL, end;
   int cells;
-  Assoc a;
 
-  if ( !get_bag(A1, &b PASS_LD) )
-    fail;
-
-  if ( b->size == 0 )
-  { destroy_bag(b PASS_LD);
-    return PL_unify_nil(A2);
-  }
-
-  cells = b->gsize + b->size*3 + 1;
+  cells = gsize + size*3 + 1;
   requireStack(global, cells*sizeof(word));
   end = gTop + cells;
   next = base = gTop++;
 
-  for(a=b->head; a; a=a->next)
+  for(; a; a=a->next)
   { copyRecordToGlobal(tmp, a->record PASS_LD);
     *next = consPtr(gTop, TAG_COMPOUND|STG_GLOBAL);
     gTop[0] = FUNCTOR_dot2;
@@ -336,9 +382,28 @@ PRED_IMPL("$bag_to_list", 2, bag_to_list, 0)
   }
   assert(end == gTop);
 
+  return base;
+}
+
+
+static
+PRED_IMPL("$bag_to_list", 2, bag_to_list, 0)
+{ PRED_LD
+  Bag b;
+  Word list;
+
+  if ( !get_bag(A1, &b PASS_LD) )
+    fail;
+
+  if ( b->size == 0 )
+  { destroy_bag(b PASS_LD);
+    return PL_unify_nil(A2);
+  }
+
+  list = assoc_to_list(b->head, b->size, b->gsize PASS_LD);
   destroy_bag(b PASS_LD);
 
-  return unify_ptrs(valTermRef(A2), base PASS_LD);
+  return unify_ptrs(valTermRef(A2), list PASS_LD);
 }
 
 
@@ -362,10 +427,13 @@ PRED_IMPL("$destroy_bag", 1, destroy_bag, 0)
 		 *******************************/
 
 BeginPredDefs(bag)
-  PRED_DEF("$record_bag", 1, record_bag, 0)
-  PRED_DEF("$collect_bag", 2, collect_bag, 0)
-  PRED_DEF("$discard_bag", 0, discard_bag, 0)
+					/* bagof */
+  PRED_DEF("$create_bagof", 1, create_bagof, 0)
+  PRED_DEF("$destroy_bagof", 1, destroy_bagof, 0)
+  PRED_DEF("$insert_bagof", 2, insert_bagof, 0)
+  PRED_DEF("$collect_bagof", 3, collect_bagof, PL_FA_NONDETERMINISTIC)
 
+					/* findall */
   PRED_DEF("$create_bag", 1, create_bag, 0)
   PRED_DEF("$append_bag", 2, append_bag, 0)
   PRED_DEF("$bag_to_list", 2, bag_to_list, 0)

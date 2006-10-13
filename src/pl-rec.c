@@ -1186,7 +1186,7 @@ unref_cont:
       switch(stag)
       { case PL_TYPE_ATOM:
 	case PL_TYPE_COMPOUND:
-	case TAG_STRING:
+	case PL_TYPE_STRING:
 	  return -1;
 	default:
 	  return 1;
@@ -1216,7 +1216,7 @@ unref_cont:
 
       switch(stag)
       { case PL_TYPE_COMPOUND:
-	case TAG_STRING:
+	case PL_TYPE_STRING:
 	  return -1;
 	default:
 	  return 1;
@@ -1244,7 +1244,7 @@ unref_cont:
 
 	return PL_cmp_text(&l, 0, &r, 0, llen);
       }
-      return stag == TAG_COMPOUND ? -1 : 1;
+      return stag == PL_TYPE_COMPOUND ? -1 : 1;
     case TAG_COMPOUND:
     { word fdef;
       DEBUG(9, Sdprintf("Matching %s/%d\n",

@@ -934,8 +934,8 @@ type(42).
 type(3.14).
 type([a, list]).
 type(compound(1)).
-type(compound(A, A)).
-type(compound(_A, _B)).
+type(compound(_A, _B)).			% non-shared vars
+type(compound(A, A, 3)).		% shared vars
 
 set(X, 1) :- type(X).
 set(X, 2) :- type(X).
@@ -953,7 +953,7 @@ sets(setof-2) :-
 	       compound(1)-[1, 2],
 	       [a, list]-[1, 2],
 	       compound(_A, _B)-[1, 2],
-	       compound(A, A)-[1, 2]].
+	       compound(A, A, 3)-[1, 2]].
 sets(vars-1) :-
 	'$e_free_variables'(A^satisfy(B^C^(setof(D:E,
 						 (country(E), area(E, D)),
