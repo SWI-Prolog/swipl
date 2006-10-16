@@ -3,9 +3,9 @@
     Part of SWI-Prolog
 
     Author:        Jan Wielemaker
-    E-mail:        jan@swi.psy.uva.nl
+    E-mail:        wielemak@science.uva.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (C): 1985-2002, University of Amsterdam
+    Copyright (C): 1985-2006, University of Amsterdam
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
@@ -3082,8 +3082,10 @@ qp_statistics__LD(atom_t key, int64_t v[], PL_local_data_t *ld)
 #endif
 { int vn;
 
-  if ( key == ATOM_runtime )
-  { v[0] = (int64_t)(LD->statistics.user_cputime * 1000.0);
+  if ( key == ATOM_runtime )		/* compat: exclude gc-time */
+  { v[0] = (int64_t)((LD->statistics.user_cputime -
+		      gc_status.time -
+		      GD->atoms.gc_time) * 1000.0);
     v[1] = v[0] - LD->statistics.last_cputime;
     LD->statistics.last_cputime = (long)v[0];
     vn = 2;
