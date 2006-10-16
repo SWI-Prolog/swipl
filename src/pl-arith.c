@@ -127,7 +127,6 @@ static ArithFunction	isCurrentArithFunction(functor_t, Module);
 static int		registerFunction(ArithFunction f, int index);
 static int		getCharExpression(term_t t, Number r ARG_LD);
 static int		ar_sign_i(Number n1);
-static int		ar_add(Number n1, Number n2, Number r);
 static int		ar_minus(Number n1, Number n2, Number r);
 
 
@@ -728,9 +727,6 @@ valueExpression(term_t t, Number r ARG_LD)
     LD->in_arithmetic--;
 #endif /*HAVE___TRY*/
 
-    if ( rval && r->type == V_REAL && !check_float(r->value.f) )
-      return FALSE;
-
     return rval;
   }
 }
@@ -899,7 +895,7 @@ ar_add_ui(Number n, long add)
 
 #define SAME_SIGN(i1, i2) (((i1) ^ (i2)) < 0)
 
-static int
+int
 ar_add(Number n1, Number n2, Number r)
 { same_type_numbers(n1, n2);
 
@@ -940,7 +936,8 @@ ar_add(Number n1, Number n2, Number r)
     case V_REAL:
     { r->value.f = n1->value.f + n2->value.f; 
       r->type = V_REAL;
-      succeed;
+
+      return check_float(r->value.f);
     }
   }
 
@@ -985,7 +982,8 @@ ar_minus(Number n1, Number n2, Number r)
     case V_REAL:
     { r->value.f = n1->value.f - n2->value.f; 
       r->type = V_REAL;
-      succeed;
+
+      return check_float(r->value.f);
     }
   }
 
@@ -1134,7 +1132,7 @@ ar_shift_right(Number n1, Number n2, Number r)
   { promoteToRealNumber(n1); \
     r->value.f = op(n1->value.f); \
     r->type    = V_REAL; \
-    succeed; \
+    return check_float(r->value.f); \
   }
 
 /* Binary functions requiring integer argument */
@@ -1193,7 +1191,7 @@ ar_shift_right(Number n1, Number n2, Number r)
     promoteToRealNumber(n2); \
     r->value.f = func(n1->value.f, n2->value.f); \
     r->type = V_REAL; \
-    succeed; \
+    return check_float(r->value.f); \
   }
 
 UNAIRY_FLOAT_FUNCTION(ar_sin, sin)
@@ -1260,7 +1258,7 @@ doreal:
   r->value.f = pow(n1->value.f, n2->value.f);
   r->type = V_REAL;
 
-  succeed;
+  return check_float(r->value.f);
 }
 
 
@@ -1271,7 +1269,8 @@ ar_sqrt(Number n1, Number r)
     return PL_error("sqrt", 1, NULL, ERR_AR_UNDEF);
   r->value.f = sqrt(n1->value.f);
   r->type    = V_REAL;
-  succeed;
+
+  return check_float(r->value.f);
 }
 
 
@@ -1282,7 +1281,8 @@ ar_asin(Number n1, Number r)
     return PL_error("asin", 1, NULL, ERR_AR_UNDEF);
   r->value.f = asin(n1->value.f);
   r->type    = V_REAL;
-  succeed;
+
+  return check_float(r->value.f);
 }
 
 
@@ -1304,7 +1304,8 @@ ar_log(Number n1, Number r)
     return PL_error("log", 1, NULL, ERR_AR_UNDEF);
   r->value.f = log(n1->value.f);
   r->type    = V_REAL;
-  succeed;
+
+  return check_float(r->value.f);
 }
 
 
@@ -1315,7 +1316,8 @@ ar_log10(Number n1, Number r)
     return PL_error("log10", 1, NULL, ERR_AR_UNDEF);
   r->value.f = log10(n1->value.f);
   r->type    = V_REAL;
-  succeed;
+
+  return check_float(r->value.f);
 }
 
 
@@ -1416,7 +1418,8 @@ ar_rem(Number n1, Number n2, Number r)
       assert(0);
       fail;
   }
-  succeed;
+
+  return check_float(r->value.f);
 }
 
 
@@ -1575,7 +1578,7 @@ ar_divide(Number n1, Number n2, Number r)
   r->value.f = n1->value.f / n2->value.f;
   r->type = V_REAL;
 
-  succeed;
+  return check_float(r->value.f);
 }
 
 
@@ -1645,7 +1648,7 @@ mul64(int64_t x, int64_t y, int64_t *r)
 }
 
 
-static int
+int
 ar_mul(Number n1, Number n2, Number r)
 { same_type_numbers(n1, n2);
 
@@ -1676,7 +1679,8 @@ ar_mul(Number n1, Number n2, Number r)
     case V_REAL:
       r->value.f = n1->value.f * n2->value.f;
       r->type = V_REAL;
-      succeed;
+
+      return check_float(r->value.f);
   }
 
   assert(0);
@@ -2745,10 +2749,7 @@ ar_func_n(code n, int argc, Number *stack)
   }
 
   if ( rval )
-  { if ( result.type == V_REAL && !check_float(result.value.f) )
-      return FALSE;
-
-    *sp++ = result;
+  { *sp++ = result;
     *stack = sp;
   }
 

@@ -2262,15 +2262,58 @@ common_an:
   n = (Number) ARGP;
 
   if ( !ar_func_n(fn, an, &n) )
-  { if ( exception_term )
-      goto b_throw;
-    BODY_FAILED;
-  }
+    goto b_throw;
 
   ARGP = (Word) n;
   NEXT_INSTRUCTION;
 }
 END_SHAREDVARS
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+A_ADD: Shorthand for A_FUNC2 ar_add()
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+VMI(A_ADD, 0, ())
+{ Number n1, n2 = (Number)ARGP;
+  number r;
+
+  n2--;
+  n1 = n2 - 1;
+  if ( ar_add(n1, n2, &r) )
+  { clearNumber(n1);
+    clearNumber(n2);
+
+    *n1 = r;
+    ARGP = (Word)n2;
+    NEXT_INSTRUCTION;
+  }
+
+  goto b_throw;
+}
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+A_MUL: Shorthand for A_FUNC2 ar_mul()
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+VMI(A_MUL, 0, ())
+{ Number n1, n2 = (Number)ARGP;
+  number r;
+
+  n2--;
+  n1 = n2 - 1;
+  if ( ar_mul(n1, n2, &r) )
+  { clearNumber(n1);
+    clearNumber(n2);
+
+    *n1 = r;
+    ARGP = (Word)n2;
+    NEXT_INSTRUCTION;
+  }
+
+  goto b_throw;
+}
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
