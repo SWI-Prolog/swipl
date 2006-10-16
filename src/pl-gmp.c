@@ -496,8 +496,16 @@ PL_unify_number(term_t t, Number n)
       { number n2;
 
 	get_integer(*p, &n2);
-	
-	return ar_compare(n, &n2, EQ);
+	if ( n->type == n2.type )
+	{ return ar_compare_eq(n, &n2);
+	} else
+	{ int rc;
+
+	  same_type_numbers(n, &n2);
+	  rc = ar_compare_eq(n, &n2);
+	  clearNumber(&n2);
+	  return rc;
+	}	
       }
       break;
 #ifdef O_GMP
