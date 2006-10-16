@@ -7,6 +7,10 @@
 					http://gollem.science.uva.nl/bugzilla/
 					--------------------------------------
 
+  * MODIFIED: statistics(runtime, [Time,SinceLast]) now uses time excluding
+    GC and AGC time for compatibility to Quintus, SICStus and YAP.
+    statistics(cputime, Time) still uses combined time.
+
   * MODIFIED: ~@ in format now causes format to fail if the called predicate
     fails.
 
