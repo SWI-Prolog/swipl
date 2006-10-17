@@ -33,7 +33,8 @@
 	  [ findall/3, 
 	    bagof/3, 
 	    setof/3,
-	    '$on_bag_error'/2
+	    '$on_bag_error'/2,
+	    '$on_bagof_error'/2
 	  ]).
 
 :- module_transparent
@@ -54,9 +55,8 @@ findall(Templ, Goal, List) :-
 	(   catch(Goal, E, '$on_bag_error'(Bag, E)),
 	    '$append_bag'(Bag, Templ),
 	    fail
-	;   true
-	),
-	'$bag_to_list'(Bag, List).
+	;   '$bag_to_list'(Bag, List)
+	).
 
 '$on_bag_error'(Bag, Error) :-
 	'$destroy_bag'(Bag),
@@ -82,21 +82,16 @@ setof(Var, Goal, Set) :-
 bagof(Gen, Goal, Bag) :-
 	'$e_free_variables'(Gen^Goal, Vars),
 	(   Vars == v
-	->  findall(Gen, Goal, Bag)
-	;   assert_bag(Vars-Gen, Goal), 
-	    collect_bags([], Bags), 
-	    '$member'(Vars-Bag, Bags)
-	),
-	Bag \== [].
+	->  findall(Gen, Goal, Bag),
+	    Bag \== []
+	;   '$create_bagof'(Handle),
+	    (	catch(Goal, E, '$on_bagof_error'(Handle, E)),
+		'$insert_bagof'(Handle, Vars-Gen),
+		fail
+	    ;	'$collect_bagof'(Handle, Vars, Bag)
+	    )
+	).
 
-assert_bag(Templ, G) :-
-	$record_bag(-), 
-	catch(G, E, ($discard_bag, throw(E))),
-	    $record_bag(Templ), 
-	fail.
-assert_bag(_, _).
-
-collect_bags(Sofar, Result) :-
-	$collect_bag(Vars, Bag), !,
-	collect_bags([Vars-Bag|Sofar], Result).
-collect_bags(L, L).
+'$on_bagof_error'(Bag, Error) :-
+	'$destroy_bagof'(Bag),
+	throw(Error).
