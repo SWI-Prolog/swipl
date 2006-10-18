@@ -66,6 +66,8 @@ Virtual machine instructions can return with one of:
 	Failed unifying the head: backtrack to next clause
 
 	* BODY_FAILED
+	Failure of in-body instructions (I_FAIL, B_UNIFY_EXIT, ...)
+
 	* FRAME_FAILED
 	Other failures: deep backtracking.
 
@@ -877,7 +879,7 @@ VMI(B_UNIFY_VV, 2, (CA1_VAR, CA1_VAR))
     NEXT_INSTRUCTION;
   }
 
-  FRAME_FAILED;
+  BODY_FAILED;
 }
 
 
@@ -938,7 +940,7 @@ VMI(B_EQ_VV, 2, (CA1_VAR, CA1_VAR))
   if ( compareStandard(v1, v2, TRUE PASS_LD) == 0 )
     NEXT_INSTRUCTION;
 
-  FRAME_FAILED;
+  BODY_FAILED;
 }
 
 
@@ -963,7 +965,7 @@ VMI(B_EQ_VC, 2, (CA1_VAR, CA1_DATA))
   if ( *v1 == c )
     NEXT_INSTRUCTION;
 
-  FRAME_FAILED;
+  BODY_FAILED;
 }
 
 #endif /*O_COMPILE_IS*/
@@ -2190,15 +2192,9 @@ a_var_n:
       lTop = lsave;
   
       if ( rc )
-      { goto a_ok;
-      } else
-      { 
-  #if O_CATCHTHROW
-	if ( exception_term )
-	  goto b_throw;
-  #endif
-	BODY_FAILED;		/* check this */
-      }
+	goto a_ok;
+      else
+	goto b_throw;
     }
   }
 }
@@ -2943,6 +2939,7 @@ VMI(I_FEXITNDET, 0, ())
 VMI(I_FREDO, 0, ())
 { context.context = (word)FR->clause;
   context.control = FRG_REDO;
+  context.engine  = LD;
   PC -= 4;
   goto foreign_redo;
 }
