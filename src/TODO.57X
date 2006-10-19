@@ -23,7 +23,7 @@ Open ends:
 		- Deterministic
 		- Non-deterministic
 	* Dynamic
-		- Thread-local
+		- Thread-local			[OK, TBD: tests]
 		- Normal
 	* Static
 		- Generic (current model)

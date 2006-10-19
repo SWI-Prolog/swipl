@@ -681,11 +681,6 @@ getProcDefinedDefinition(LocalFrame fr, Code PC, Procedure proc ARG_LD)
   if ( !def->definition.clauses && false(def, PROC_DEFINED) )
     def = trapUndefined(fr, PC, proc PASS_LD);
 
-#ifdef O_PLMT
-  if ( true(def, P_THREAD_LOCAL) )
-    return getProcDefinition__LD(def PASS_LD);
-#endif
-
   return def;
 }
 
@@ -2106,9 +2101,7 @@ resumebreak:
 wakeup:
   DEBUG(1, Sdprintf("Activating wakeup\n"));
   NFR = lTop;
-  DEF = getProcDefinedDefinition(lTop, PC,
-				 PROCEDURE_dwakeup1
-				 PASS_LD);
+  DEF = PROCEDURE_dwakeup1->definition;
   NFR->flags = FR->flags;
   ARGP = argFrameP(NFR, 0);
   ARGP[0] = *valTermRef(LD->attvar.head);

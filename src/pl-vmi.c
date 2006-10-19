@@ -838,7 +838,7 @@ VMI(B_UNIFY_EXIT, 0, ())
 #if O_DEBUGGER
   if ( debugstatus.debugging )
   { NFR = lTop;
-    DEF = getProcDefinedDefinition(lTop, PC, GD->procedures.equals2 PASS_LD);
+    DEF = GD->procedures.equals2->definition;
     setNextFrameFlags(NFR, FR);
     goto normal_call;
   }
@@ -930,8 +930,7 @@ VMI(B_EQ_VV, 2, (CA1_VAR, CA1_VAR))
     *ARGP++ = linkVal(v1);
     *ARGP++ = linkVal(v2);
     NFR = lTop;
-    DEF = getProcDefinedDefinition(lTop, PC,
-				   GD->procedures.strict_equal2 PASS_LD);
+    DEF = GD->procedures.strict_equal2->definition;
     setNextFrameFlags(NFR, FR);
     goto normal_call;
   }
@@ -954,8 +953,7 @@ VMI(B_EQ_VC, 2, (CA1_VAR, CA1_DATA))
     *ARGP++ = linkVal(v1);
     *ARGP++ = c;
     NFR = lTop;
-    DEF = getProcDefinedDefinition(lTop, PC,
-				   GD->procedures.strict_equal2 PASS_LD);
+    DEF = GD->procedures.strict_equal2->definition;
     setNextFrameFlags(NFR, FR);
     goto normal_call;
   }
@@ -1145,11 +1143,11 @@ execution can continue at `next_instruction'
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 VMI(I_CALL, 1, (CA1_PROC))
-{ NFR          = lTop;
+{ Procedure proc = (Procedure) *PC++;
+
+  NFR = lTop;
   setNextFrameFlags(NFR, FR);
-  { Procedure proc = (Procedure) *PC++;
-    DEF = getProcDefinedDefinition(NFR, PC, proc PASS_LD);
-  }
+  DEF = getProcDefinedDefinition(NFR, PC, proc PASS_LD);
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 This is the common part of the call variations.  By now the following is
@@ -1936,7 +1934,7 @@ VMI(S_VIRGIN, 0, ())
     NEXT_INSTRUCTION;
   }
 
-  goto old_call;			/* temporary */
+  goto old_call;			/* TBD: temporary */
 }
 
 
@@ -1967,6 +1965,22 @@ VMI(S_UNDEF, 0, ())
   }
 
   FRAME_FAILED;
+}
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+S_THREAD_LOCAL: Get thread-local definition
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+VMI(S_THREAD_LOCAL, 0, ())
+{ FR->predicate = DEF = getProcDefinition__LD(DEF PASS_LD);
+
+  if ( DEF->codes )
+  { PC = DEF->codes;
+    NEXT_INSTRUCTION;
+  }
+
+  goto old_call;			/* TBD: temporary */
 }
 
 

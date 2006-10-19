@@ -209,7 +209,6 @@ createUndefSupervisor(Definition def)
 }
 
 
-
 		 /*******************************
 		 *	      ENTRY		*
 		 *******************************/
@@ -252,9 +251,10 @@ of the sequence.
 
 void
 initSupervisors(void)
-{ MAKE_SV1(exit,	I_EXIT);
-  MAKE_SV1(exit_query,	I_EXITQUERY);
-  MAKE_SV1(next_clause,	S_NEXTCLAUSE);
-  MAKE_SV1(virgin,	S_VIRGIN);
-  MAKE_SV1(undef,	S_UNDEF);
+{ MAKE_SV1(exit,	 I_EXIT);
+  MAKE_SV1(exit_query,	 I_EXITQUERY);
+  MAKE_SV1(next_clause,	 S_NEXTCLAUSE);
+  MAKE_SV1(virgin,	 S_VIRGIN);
+  MAKE_SV1(undef,	 S_UNDEF);
+  MAKE_SV1(thread_local, S_THREAD_LOCAL);
 }

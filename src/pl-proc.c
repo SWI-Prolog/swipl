@@ -2076,6 +2076,7 @@ set_thread_local_procedure(Procedure proc, bool val)
     }
     set(def, DYNAMIC|VOLATILE|P_THREAD_LOCAL);
 
+    def->codes = SUPERVISOR(thread_local);
     attachMutexAndUnlock(def);
     succeed;
   } else				/* local --> static */
