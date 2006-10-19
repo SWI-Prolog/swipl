@@ -117,6 +117,7 @@ initWamTable(void)
     dewam_table[wam_table[n]-dewam_table_offset] = (unsigned char) n;
 
   checkCodeTable();
+  initSupervisors();
 }
 
 #else /* VMCODE_IS_ADDRESS */
@@ -124,6 +125,7 @@ initWamTable(void)
 void
 initWamTable()
 { checkCodeTable();
+  initSupervisors();
 }
 
 #endif /* VMCODE_IS_ADDRESS */

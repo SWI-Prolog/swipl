@@ -1593,10 +1593,7 @@ VMI(I_EXITFACT, 0, ())
 #ifdef O_ATTVAR
     if ( LD->alerted & ALERT_WAKEUP )
     { if ( *valTermRef(LD->attvar.head) ) /* can be faster */
-      { static code exit;
-      
-	exit = encode(I_EXIT);
-	PC = &exit;
+      { PC = PL_code_data.supervisors.exit;
 	goto wakeup;
       }
       LD->alerted &= ~ALERT_WAKEUP;
@@ -2012,10 +2009,7 @@ VMI(S_LIST, 2, (CA1_CLAUSEREF, CA1_CLAUSEREF))
   else if ( isNil(*k) )
     cref = (ClauseRef)PC[0];
   else if ( isVar(*k) )
-  { static code c;			/* TBD: generic code sequences */
-
-    c = encode(S_NEXTCLAUSE);
-    PC = &c;
+  { PC = PL_code_data.supervisors.next_clause;
     VMI_GOTO(S_ALLCLAUSES);
   } else
     FRAME_FAILED;

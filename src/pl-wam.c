@@ -1695,9 +1695,6 @@ PL_open_query(Module ctx, int flags, Procedure proc, term_t args)
   Definition def;
   int arity;
   Word ap;
-  static code exitcode;
-
-  exitcode = encode(I_EXITQUERY);
 
   DEBUG(2, { FunctorDef f = proc->definition->functor;
 	     unsigned int n;
@@ -1743,7 +1740,7 @@ PL_open_query(Module ctx, int flags, Procedure proc, term_t args)
   fr->parent	     = top;
   setNextFrameFlags(fr, top);
   set(top, FR_NODEBUG);
-  fr->programPointer = &exitcode;
+  fr->programPointer = PL_code_data.supervisors.exit_query;
   def		     = getProcDefinedDefinition(fr, NULL, proc PASS_LD);
   arity		     = def->functor->arity;
 
