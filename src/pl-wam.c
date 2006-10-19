@@ -1740,7 +1740,7 @@ PL_open_query(Module ctx, int flags, Procedure proc, term_t args)
   fr->parent	     = top;
   setNextFrameFlags(fr, top);
   set(top, FR_NODEBUG);
-  fr->programPointer = PL_code_data.supervisors.exit_query;
+  fr->programPointer = SUPERVISOR(exit_query);
   def		     = getProcDefinedDefinition(fr, NULL, proc PASS_LD);
   arity		     = def->functor->arity;
 

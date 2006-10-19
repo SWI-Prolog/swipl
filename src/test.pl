@@ -1417,6 +1417,7 @@ catchme :-
 
 undef :-
 	'this is not defined'.
+undef.
 
 exception(call-1) :-
 	catch(do_exception_1, E, true),
@@ -1431,13 +1432,12 @@ exception(call-4) :-
 	X = a.
 exception(call-5) :-
 	catch(throwit, _, catchme).
-
 exception(context-1) :-
 	catch(functor(_,_,_), E, true),
-	error_pred(E, functor/3).
+	error_context(E, functor/3).
 exception(context-2) :-
 	catch(undef, E, true),
-	error_pred(E, undef/0).
+	error_context(E, undef/0).
 
 
 		 /*******************************
@@ -2523,9 +2523,12 @@ error(error(Ex, _Ctx), Expected) :-
 	format('~NWrong exception: ~p (expected ~p)~n', [Ex, Expected]),
 	fail.
 
-error_pred(error(_, context(Pred, _)), Pred).
-error_pred(error(_, context(Module:Pred, _)), Pred) :-
-	hidden_module(Module).
+error_context(error(_, context(Pred, _)), Pred) :- !.
+error_context(error(_, context(Module:Pred, _)), Pred) :-
+	hidden_module(Module), !.
+error_context(Error, _Pred) :-
+	format('Wrong error context: ~q~n', [Error]),
+	fail.
 
 hidden_module(user) :- !.
 hidden_module(system) :- !.

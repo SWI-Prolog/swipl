@@ -98,8 +98,7 @@ COMMON(Module)		contextModule(LocalFrame fr);
 
 COMMON(void)		freeCodes(Code cl);
 COMMON(int)		createForeignSupervisor(Definition def, Func f);
-COMMON(int)		createSingleClauseSupervisor(Definition def);
-COMMON(int)		createListSupervisor(Definition def);
+COMMON(int)		createSupervisor(Definition def);
 COMMON(void)		initSupervisors(void);
 
 /* pl-atom.c */

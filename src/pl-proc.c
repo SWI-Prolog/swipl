@@ -158,7 +158,7 @@ resetProcedure(Procedure proc, bool isnew)
       freeCodes(def->codes);
   }
 
-  def->codes = NULL;
+  def->codes = SUPERVISOR(virgin);
 }
 
 
@@ -2210,12 +2210,8 @@ reindexDefinition(Definition def)
   DEBUG(2, Sdprintf("reindexDefinition(%s)\n", predicateName(def)));
   def->indexPattern &= ~NEED_REINDEX;
 
-                                       /* directly link one and only clause */
-  if ( false(def, DYNAMIC|MULTIFILE) )
-  { if ( createSingleClauseSupervisor(def) ||
-	 createListSupervisor(def) )
+  if ( createSupervisor(def) )
     goto out;
-  }
 
   if ( true(def, AUTOINDEX) || pattern == 0x1 )
   { for(cref = def->definition.clauses; cref; cref = cref->next)
