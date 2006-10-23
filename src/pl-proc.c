@@ -1495,10 +1495,9 @@ discontiguous should not cause an undefined predicate warning.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static Definition
-trapUndefined_unlocked(LocalFrame fr, Code PC, Procedure proc ARG_LD)
+trapUndefined_unlocked(LocalFrame fr, Code PC, Definition def ARG_LD)
 { int retry_times = 0;
   Definition newdef;
-  Definition def = proc->definition;
   Module module = def->module;
   FunctorDef functor = def->functor;
 
@@ -1578,15 +1577,15 @@ that should be considered.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 Definition
-trapUndefined(LocalFrame fr, Code PC, Procedure proc ARG_LD)
+trapUndefined(LocalFrame fr, Code PC, Definition undef ARG_LD)
 { LocalFrame lSafe = lTop;
   Definition def;
 
-  lTop = (LocalFrame)argFrameP(fr, proc->definition->functor->arity);
+  lTop = (LocalFrame)argFrameP(fr, undef->functor->arity);
 #ifdef O_PLMT
   PL_mutex_lock(GD->thread.MUTEX_load);
 #endif
-  def = trapUndefined_unlocked(fr, PC, proc PASS_LD);
+  def = trapUndefined_unlocked(fr, PC, undef PASS_LD);
 #ifdef O_PLMT
   PL_mutex_unlock(GD->thread.MUTEX_load);
 #endif

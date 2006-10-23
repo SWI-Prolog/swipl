@@ -1147,7 +1147,7 @@ VMI(I_CALL, 1, (CA1_PROC))
 
   NFR = lTop;
   setNextFrameFlags(NFR, FR);
-  DEF = getProcDefinedDefinition(NFR, PC, proc PASS_LD);
+  DEF = getProcDefinedDefinition(NFR, PC, proc->definition PASS_LD);
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 This is the common part of the call variations.  By now the following is
@@ -1371,7 +1371,7 @@ VMI(I_DEPART, 1, (CA1_PROC))
     FR->clause = NULL;			/* for save atom-gc */
     leaveDefinition(DEF);
     proc = (Procedure) *PC++;
-    DEF = getProcDefinedDefinition(lTop, PC, proc PASS_LD);
+    DEF = getProcDefinedDefinition(lTop, PC, proc->definition PASS_LD);
     if ( true(DEF, METAPRED) )
     { FR->context = contextModule(FR);
       FR->flags = (((FR->flags+FR_LEVEL_STEP) | FR_CONTEXT) &
@@ -1417,7 +1417,7 @@ VMI(I_DEPART_SIMPLE, 1, (CA1_PROC))
     FR->clause = NULL;			/* for save atom-gc */
     leaveDefinition(DEF);
     proc = (Procedure) *PC++;
-    DEF = getProcDefinedDefinition(lTop, PC, proc PASS_LD);
+    DEF = getProcDefinedDefinition(lTop, PC, proc->definition PASS_LD);
     if ( true(DEF, METAPRED) )
     { FR->context = contextModule(FR);
       FR->flags = (((FR->flags+FR_LEVEL_STEP) | FR_CONTEXT) &
@@ -3555,7 +3555,7 @@ contextModule().
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
   DEF = getProcDefinedDefinition(NFR, PC,
-				 resolveProcedure(functor, module)
+				 resolveProcedure(functor, module)->definition
 				 PASS_LD);
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -

@@ -675,11 +675,9 @@ getProcDefinition__LD(Definition def ARG_LD)
 
 
 static inline Definition
-getProcDefinedDefinition(LocalFrame fr, Code PC, Procedure proc ARG_LD)
-{ Definition def = proc->definition;
-
-  if ( !def->definition.clauses && false(def, PROC_DEFINED) )
-    def = trapUndefined(fr, PC, proc PASS_LD);
+getProcDefinedDefinition(LocalFrame fr, Code PC, Definition def ARG_LD)
+{ if ( !def->definition.clauses && false(def, PROC_DEFINED) )
+    def = trapUndefined(fr, PC, def PASS_LD);
 
   return def;
 }
@@ -1736,7 +1734,8 @@ PL_open_query(Module ctx, int flags, Procedure proc, term_t args)
   setNextFrameFlags(fr, top);
   set(top, FR_NODEBUG);
   fr->programPointer = SUPERVISOR(exit_query);
-  def		     = getProcDefinedDefinition(fr, NULL, proc PASS_LD);
+  def		     = getProcDefinedDefinition(fr, NULL, 
+						proc->definition PASS_LD);
   arity		     = def->functor->arity;
 
   if ( flags == TRUE )			/* compatibility */
