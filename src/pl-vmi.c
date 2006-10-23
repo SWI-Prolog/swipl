@@ -1147,21 +1147,18 @@ VMI(I_CALL, 1, (CA1_PROC))
 
   NFR = lTop;
   setNextFrameFlags(NFR, FR);
-  DEF = getProcDefinedDefinition(NFR, PC, proc->definition PASS_LD);
+  DEF = proc->definition;
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 This is the common part of the call variations.  By now the following is
 true:
 
   - NFR				Points to new frame
-  - arguments, nodebug		filled
-  - context			filled with context for
-				transparent predicate
-  - DEF				filled
+  - arguments			filled in NFR frame
+  - DEF				filled with pred to call
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 normal_call:
-  updateFrameDebug(FR, DEF);
 					/* ensure room for next args */
   requireStack(local, (int)argFrameP((LocalFrame)NULL, MAXARITY));
 
@@ -1257,8 +1254,12 @@ retry_continue:
 
 #if O_DEBUGGER
     if ( debugstatus.debugging )
-    { CL = DEF->definition.clauses;
+    { DEF = getProcDefinedDefinition(FR, NULL, DEF PASS_LD);
+      FR->predicate = DEF;
+      updateFrameDebug(FR, DEF);
+      CL = DEF->definition.clauses;
       set(FR, FR_INBOX);
+
       switch(tracePort(FR, BFR, CALL_PORT, NULL PASS_LD))
       { case ACTION_FAIL:	goto frame_failed;
 	case ACTION_IGNORE:     VMI_GOTO(I_EXIT);
@@ -1925,7 +1926,10 @@ S_VIRGIN: Fresh, unused predicate
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 VMI(S_VIRGIN, 0, ())
-{ reindexDefinition(DEF);
+{ DEF = getProcDefinedDefinition(FR, NULL, DEF PASS_LD);
+  FR->predicate = DEF;
+
+  reindexDefinition(DEF);		/* will block if it needs to do work */
 
   if ( DEF->codes == SUPERVISOR(virgin) )
   { DEF->codes = NULL;
@@ -1946,7 +1950,9 @@ one instruction and dynamic checking.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 VMI(S_UNDEF, 0, ())
-{ if ( true(DEF->module, UNKNOWN_ERROR) )
+{ updateFrameDebug(FR, DEF);
+
+  if ( true(DEF->module, UNKNOWN_ERROR) )
   { fid_t fid;
     Definition caller;
 
@@ -1994,6 +2000,7 @@ TBD: get rid of clause-references
 VMI(S_TRUSTME, 1, (CA1_CLAUSEREF))
 { ClauseRef cref = (ClauseRef)*PC++;
 
+  updateFrameDebug(FR, DEF);
   ARGP = argFrameP(FR, 0);
   TRUST_CLAUSE(cref);
 }
@@ -2044,6 +2051,7 @@ VMI(S_LIST, 2, (CA1_CLAUSEREF, CA1_CLAUSEREF))
 { ClauseRef cref;
   Word k;
 
+  updateFrameDebug(FR, DEF);
   ARGP = argFrameP(FR, 0);
   deRef2(ARGP, k);
   if ( isList(*k) )
