@@ -34,7 +34,8 @@
 	    maplist/3,			% :Goal, ?List, ?List
 	    maplist/4,			% :Goal, ?List, ?List, ?List
 	    sublist/3,			% :Goal, +List, -List
-	    forall/2			% :Goal, :Goal
+	    forall/2,			% :Goal, :Goal
+	    apply/2			% :Goal, +ExtraArgs
 	  ]).
 
 :- module_transparent
@@ -45,9 +46,10 @@
 	maplist/4, 
 	maplist2/4, 
 	sublist/3, 
-	forall/2.
+	forall/2,
+	apply/2.
 
-%	maplist(:Goal, +List)
+%%	maplist(:Goal, +List)
 %
 %	True if Goal can succesfully be applied on all elements of List.
 %	Arguments are reordered to gain performance as well as to make
@@ -61,7 +63,7 @@ maplist2([Elem|Tail], Goal) :-
 	call(Goal, Elem), 
 	maplist2(Tail, Goal).
 
-%	maplist(:Goal, ?List1, ?List2)
+%%	maplist(:Goal, ?List1, ?List2)
 %
 %	True if Goal can succesfully be applied to all succesive pairs
 %	of elements of List1 and List2.
@@ -74,7 +76,7 @@ maplist2([Elem1|Tail1], [Elem2|Tail2], Goal) :-
 	call(Goal, Elem1, Elem2), 
 	maplist2(Tail1, Tail2, Goal).
 
-%	maplist(:Goal, ?List1, ?List2, ?List)
+%%	maplist(:Goal, ?List1, ?List2, ?List)
 %
 %	True if Goal can succesfully be applied to all succesive triples
 %	of elements of List1 and List2.
@@ -87,7 +89,7 @@ maplist2([Elem1|Tail1], [Elem2|Tail2], [Elem3|Tail3], Goal) :-
 	call(Goal, Elem1, Elem2, Elem3), 
 	maplist2(Tail1, Tail2, Tail3, Goal).
 
-%	sublist(:Goal, +List1, ?List2)
+%%	sublist(:Goal, +List1, ?List2)
 %	
 %	Succeeds if List2 unifies with a list holding those terms for wich
 %	apply(Goal, Elem) succeeds.
@@ -100,7 +102,7 @@ sublist(Goal, [H|T], Sub) :-
 sublist(Goal, [_|T], R) :-
 	sublist(Goal, T, R).
 
-%	forall(+Condition, +Action)
+%%	forall(+Condition, +Action)
 %	
 %	True if Action if true for all variable bindings for which Condition
 %	if true.
@@ -109,3 +111,17 @@ sublist(Goal, [_|T], R) :-
 
 forall(Cond, Action) :-
 	\+ (Cond, \+ Action).
+
+%%	apply(:Goal, +ExtraArgs) is nondet.
+%
+%	Extend Goal with arguments from ExtraArgs and call it.
+%	
+%	@depricated	Almost all usage can be replaced by call/N.
+
+apply(Goal, Extra) :-
+	strip_module(Goal, M, G0),
+	G0 =.. List0,
+	'$append'(List0, Extra, List),
+	G =.. List,
+	M:G.
+	

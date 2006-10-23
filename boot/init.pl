@@ -131,8 +131,7 @@ noprofile(Spec)		 :- '$set_pattr'(Spec, (noprofile)).
 	block/3,
 	catch/3,
 	call_cleanup/2,
-	call_cleanup/3,
-	apply/2.
+	call_cleanup/3.
 
 %   ->/2, ;/2, |/2 and \+/1 are normally compiled. These predicate catch them
 %   in case they are called via the meta-call predicates.
@@ -193,17 +192,13 @@ ignore(Goal) :-
 	Goal, !.
 ignore(_Goal).
 
-apply(Pred, Arguments) :-
-	'$apply'(Pred, Arguments).		% handled by the compiler
-
 _Var^Goal :-					% setof/3, bagof/3
 	Goal.
 
 %	block/3, !/1, exit/2, fail/1
 %	`longjmp' like control-structures.  See manual.  The predicate
 %	system:block/3 is used by the VMI's I_CUT_BLOCK and B_EXIT.
-%	'$exit' and '$cut' are interpreted by the compiler/decompiler,
-%	just like '$apply'/2.
+%	'$exit' and '$cut' are interpreted by the compiler/decompiler.
 
 block(_Label, Goal, _RVal) :-
 	Goal.

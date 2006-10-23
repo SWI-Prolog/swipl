@@ -1488,9 +1488,6 @@ re-definition.
       if ( fdef->name == ATOM_call && fdef->arity > 1 )
       { Output_1(ci, I_USERCALLN, (code)(fdef->arity - 1));
 	succeed;
-      } else if ( functor == FUNCTOR_apply2 )
-      { Output_0(ci, I_APPLY);
-	succeed;
 #if O_BLOCK
       } else if ( functor == FUNCTOR_dcut1 )
       { Output_0(ci, I_CUT_BLOCK);
@@ -2995,8 +2992,7 @@ decompileBody(decompileInfo *di, code end, Code until ARG_LD)
 	case B_THROW:	    f = FUNCTOR_dthrow1;	goto f_common;
 #endif
         case I_USERCALLN:   f = lookupFunctorDef(ATOM_call, *PC++ + 1);
-							goto f_common;
-	case I_APPLY:	    f = FUNCTOR_apply2;		f_common:
+			  f_common:
 			    build_term(f, di PASS_LD);
 			    pushed++;
 			    continue;
@@ -4536,7 +4532,6 @@ pl_clause_term_position(term_t ref, term_t pc, term_t locterm)
       case I_CUT:
       case I_FAIL:
       case I_TRUE:
-      case I_APPLY:
       case I_USERCALL0:
       case I_USERCALLN:
       case I_CATCH:
@@ -4611,7 +4606,6 @@ pl_break_pc(term_t ref, term_t pc, term_t nextpc, control_t h)
       case I_CUT:
       case I_FAIL:
       case I_TRUE:
-      case I_APPLY:
       case I_USERCALL0:
       case I_USERCALLN:
 	if ( PL_unify_integer(pc, PC-clause->codes) &&
