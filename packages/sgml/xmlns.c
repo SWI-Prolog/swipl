@@ -30,7 +30,7 @@
 #ifdef XMLNS
 
 static xmlns *
-xmlns_push(dtd_parser *p, const ichar *ns, const ochar *url)
+xmlns_push(dtd_parser *p, const ichar *ns, const ichar *url)
 { sgml_environment *env = p->environments;
   dtd_symbol *n = (*ns ? dtd_add_symbol(p->dtd, ns) : (dtd_symbol *)NULL);
   dtd_symbol *u = dtd_add_symbol(p->dtd, url); /* TBD: ochar/ichar */
@@ -113,8 +113,8 @@ update_xmlns(dtd_parser *p, dtd_element *e, int natts, sgml_attribute *atts)
 
     if ( (name=isxmlns(name, nschr)) &&
 	 atts->definition->type == AT_CDATA &&
-	 atts->value.textA )
-      xmlns_push(p, name, atts->value.textA);
+	 atts->value.textW )
+      xmlns_push(p, name, atts->value.textW);
   }
 }
 

@@ -22,7 +22,9 @@
     Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 */
 
+#define _ISOC99_SOURCE 1		/* fwprintf(), etc prototypes */
 #include <stdio.h>
+#include <wchar.h>
 #include <assert.h>
 #include <string.h>
 #include <ctype.h>
@@ -239,8 +241,8 @@ prolog_print_content(dtd_element *e)
 	printf(")");
       } else
       { printf("[]");
-	fprintf(stderr,
-		"Warning: element %s has no content model\n",
+	fwprintf(stderr,
+		L"Warning: element %s has no content model\n",
 		e->name->name);
 	errors++;
       }
@@ -412,7 +414,7 @@ prolog_print_element(dtd_element *e, unsigned int flags)
   istrcpy(nbuf, e->name->name);
   istrupper(nbuf);
 
-  printf("\n%% Element <%s>\n", nbuf);
+  wprintf(L"\n%% Element <%s>\n", nbuf);
 
   if ( e->structure )
   { dtd_edef *def = e->structure;
@@ -448,8 +450,8 @@ prolog_print_element(dtd_element *e, unsigned int flags)
 	prolog_print_attribute(e, al->attribute);
     }
   } else
-  { fprintf(stderr, "Warning: element %s has no definition\n",
-	    e->name->name);
+  { fwprintf(stderr, L"Warning: element %s has no definition\n",
+	     e->name->name);
     errors++;
   }
 }
@@ -471,14 +473,14 @@ prolog_print_dtd(dtd *dtd, unsigned int flags)
 
   errors = 0;
 
-  printf("/*  This file represents the SGML DOCTYPE \"%s\"\n", dtd->doctype);
+  wprintf(L"/*  This file represents the SGML DOCTYPE \"%s\"\n", dtd->doctype);
   printf("    converted using dtd2pl version %s\n", DTD2PL_VERSION);
   printf("    Conversion date: %s\n\n", ctime(&now));
   printf("    dtd2pl is written by Jan Wielemaker\n");
   printf("    E-mail: jan@swi.psy.uva.nl\n");
   printf("*/\n\n");
 
-  printf(":- module(%s_dtd, []).\n\n", dtd->doctype);
+  wprintf(L":- module(%s_dtd, []).\n\n", dtd->doctype);
   printf(":- op(100, xf,  ?).\n");
   printf(":- op(100, xf,  +).\n");
   printf(":- op(100, xf,  *).\n");
