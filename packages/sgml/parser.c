@@ -142,7 +142,7 @@ pop_location(dtd_parser *p, locbuf *saved)
 static inline void
 _sgml_cplocation(dtd_srcloc *d, dtd_srcloc *loc)
 { d->type    = loc->type;
-  d->name    = loc->name;
+  d->name.file = loc->name.file;
   d->line    = loc->line;
   d->linepos = loc->linepos;
   d->charpos = loc->charpos;
@@ -363,7 +363,9 @@ find_pentity(dtd *dtd, dtd_symbol *id)
 }
 
 
-static const ichar *
+/* returned path must be freed when done */
+
+static ichar *
 entity_file(dtd *dtd, dtd_entity *e)
 { switch(e->type)
   { case ET_SYSTEM:
@@ -376,12 +378,11 @@ entity_file(dtd *dtd, dtd_entity *e)
 			    e->exturl,
 			    dtd->dialect != DL_SGML);
 
-      if ( f )
-      { const ichar *file;
+      if ( f )				/* owned by catalog */
+      { ichar *file;
 
-	if ( is_absolute_path(f) ||
-	     !e->baseurl )
-	  file = f;
+	if ( is_absolute_path(f) || !e->baseurl )
+	  file = istrdup(f);
 	else
 	  file = localpath(e->baseurl, f);
 
@@ -396,12 +397,13 @@ entity_file(dtd *dtd, dtd_entity *e)
 
 static const ichar *
 entity_value(dtd_parser *p, dtd_entity *e, int *len)
-{ const ichar *file;
+{ ichar *file;
 
   if ( !e->value && (file=entity_file(p->dtd, e)) )
   { int normalise = (e->content == EC_SGML || e->content == EC_CDATA);
 
     e->value = load_sgml_file_to_charp(file, normalise, &e->length);
+    sgml_free(file);
   }
 
   if ( len )
@@ -1227,7 +1229,7 @@ process_entity_value_declaration(dtd_parser *p,
 
   if ( e->type == ET_SYSTEM )
   { if ( (s=itake_url(dtd, decl, &e->exturl)) )
-    { e->baseurl = (ichar*)baseurl(p);
+    { e->baseurl = istrdup(baseurl(p));
       return s;
     }
 
@@ -1248,7 +1250,7 @@ process_entity_value_declaration(dtd_parser *p,
 	if ( isee_func(dtd, decl, CF_LIT) ||
 	     isee_func(dtd, decl, CF_LITA) )
 	{ if ( (s=itake_url(dtd, decl, &e->exturl)) )
-	  { e->baseurl = (ichar*)baseurl(p);
+	  { e->baseurl = istrdup(baseurl(p));
 	    decl = s;
 	  }
 	}
@@ -3172,8 +3174,8 @@ process_attributes(dtd_parser *p, dtd_element *e, const ichar *decl,
 
 	  if ( !e->undefined &&
 	       !(dtd->dialect != DL_SGML &&
-		 (istreq((ichar*)"xmlns", nm->name) ||
-		  istrprefix((ichar*)"xmlns:", nm->name))) )
+		 (istreq(L"xmlns", nm->name) ||
+		  istrprefix(L"xmlns:", nm->name))) )
 	    gripe(ERC_NO_ATTRIBUTE, e->name->name, nm->name);
 	}
 	atts[attn].definition = a;
@@ -3481,16 +3483,16 @@ process_doctype(dtd_parser *p, const ichar *decl, const ichar *decl0)
   }
 
   if ( !dtd->doctype )			/* i.e. anonymous DTD */
-  { const ichar *file;
+  { ichar *file;
     dtd_parser *clone;
 
     dtd->doctype = istrdup(id->name);	/* Fill it */
     if ( et )
       file = entity_file(dtd, et);
     else
-      file = find_in_catalogue(CAT_DOCTYPE,
-			       dtd->doctype, NULL, NULL,
-			       dtd->dialect != DL_SGML);
+      file = istrdup(find_in_catalogue(CAT_DOCTYPE,
+				       dtd->doctype, NULL, NULL,
+				       dtd->dialect != DL_SGML));
 
     if ( !file )
     { gripe(ERC_EXISTENCE, L"DTD", dtd->doctype);
@@ -3499,6 +3501,7 @@ process_doctype(dtd_parser *p, const ichar *decl, const ichar *decl0)
       if ( !load_dtd_from_file(clone, file) )
 	gripe(ERC_EXISTENCE, L"file", file);
       free_dtd_parser(clone);
+      sgml_free(file);
     }
   }
 
@@ -3894,11 +3897,14 @@ process_include(dtd_parser *p, const ichar *entity_name)
 
   if ( (id=dtd_find_entity_symbol(dtd, entity_name)) &&
        (pe=find_pentity(p->dtd, id)) )
-  { const ichar *file;
+  { ichar *file;
 
     if ( (file = entity_file(dtd, pe)) )
-      return sgml_process_file(p, file, SGML_SUB_DOCUMENT);
-    else
+    { int rc = sgml_process_file(p, file, SGML_SUB_DOCUMENT);
+      sgml_free(file);
+
+      return rc;
+    } else
     { const ichar *text = entity_value(p, pe, NULL);
 
       if ( !text )
@@ -4282,7 +4288,7 @@ process_entity(dtd_parser *p, const ichar *name)
     const ichar *text;
     const ichar *s;
     int   chr;
-    const ichar *file;
+    ichar *file;
 
     if ( !(id=dtd_find_entity_symbol(dtd, name)) ||
 	 !(e=id->entity) )
@@ -4295,9 +4301,12 @@ process_entity(dtd_parser *p, const ichar *name)
     if ( !e->value &&
 	 e->content == EC_SGML &&
 	 (file=entity_file(p->dtd, e)) )
-    { empty_icharbuf(p->buffer);		/* dubious */
+    { int rc;
 
-      return sgml_process_file(p, file, SGML_SUB_DOCUMENT);
+      empty_icharbuf(p->buffer);		/* dubious */
+      rc = sgml_process_file(p, file, SGML_SUB_DOCUMENT);
+      sgml_free(file);
+      return rc;
     }
 
     if ( !(text = entity_value(p, e, &len)) )

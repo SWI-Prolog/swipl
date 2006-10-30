@@ -403,11 +403,13 @@ pl_set_sgml_parser(term_t parser, term_t option)
   if ( PL_is_functor(option, FUNCTOR_file1) )
   { term_t a = PL_new_term_ref();
     wchar_t *file;
+    dtd_symbol *fs;
 
     PL_get_arg(1, option, a);
     if ( !PL_get_wchars(a, NULL, &file, CVT_ATOM|CVT_EXCEPTION) )
       return FALSE;
-    set_file_dtd_parser(p, IN_FILE, istrdup(file)); /* TBD: free() */
+    fs = dtd_add_symbol(p->dtd, file);	/* symbol will be freed */
+    set_file_dtd_parser(p, IN_FILE, fs->name);
   } else if ( PL_is_functor(option, FUNCTOR_line1) )
   { term_t a = PL_new_term_ref();
 

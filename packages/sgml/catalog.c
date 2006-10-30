@@ -127,6 +127,11 @@ is_absolute_path(const ichar *name)
 }
 
 
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+localpath() creates an absolute  path  for   name  relative  to ref. The
+returned path must be freed using sgml_free() when done.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
 ichar *
 localpath(const ichar *ref, const ichar *name)
 { ichar *local;

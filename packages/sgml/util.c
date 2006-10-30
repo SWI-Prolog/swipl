@@ -59,14 +59,18 @@ istrlen(const ichar *s)
 
 ichar *
 istrdup(const ichar *s)
-{ ichar *dup = sgml_malloc((istrlen(s)+1)*sizeof(ichar));
-  ichar *d = dup;
+{ if ( s )
+  { ichar *dup = sgml_malloc((istrlen(s)+1)*sizeof(ichar));
+    ichar *d = dup;
 
-  while(*s)
-    *d++ = *s++;
-  *d = 0;
-
-  return dup;
+    while(*s)
+      *d++ = *s++;
+    *d = 0;
+    
+    return dup;
+  } else
+  { return NULL;
+  }
 }
 
 
