@@ -27,7 +27,7 @@
 #include <wchar.h>
 #include <assert.h>
 #include <string.h>
-#include <ctype.h>
+#include <wctype.h>
 #include <time.h>
 #include "dtd.h"
 #include "util.h"
@@ -54,20 +54,20 @@ Contributed by Richard O'Keefe.  Thanks!
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static int
-atomType(char const *s, int len)
-{ static char const symbols[] = "#$&*+-./:<=>?@\\^`~";
+atomType(ichar const *s, int len)
+{ static ichar const symbols[] = L"#$&*+-./:<=>?@\\^`~";
   unsigned char const *u = (unsigned char const *)s;
 
   switch (len)
   { case 0:
       return AT_QUOTE;
     case 1:
-      return islower(u[0]) ? AT_LOWER
-	   : u[0] == '.'   ? AT_FULLSTOP
-	   : u[0] == '!'   ? AT_SOLO
-	   : u[0] == ';'   ? AT_SOLO
-	   : u[0] == ','   ? AT_SOLO
-	   :                 AT_QUOTE;
+      return iswlower(u[0]) ? AT_LOWER
+	   : u[0] == '.'    ? AT_FULLSTOP
+	   : u[0] == '!'    ? AT_SOLO
+	   : u[0] == ';'    ? AT_SOLO
+	   : u[0] == ','    ? AT_SOLO
+	   :                  AT_QUOTE;
     case 2:
       if (u[0] == '[' && u[1] == ']') return AT_SPECIAL;
       if (u[0] == '{' && u[1] == '}') return AT_SPECIAL;
@@ -76,11 +76,11 @@ atomType(char const *s, int len)
       break;
   }
 
-  if (islower(u[0]))
-  { do ++u; while (--len > 0 && (isalnum(*u) || *u == '_'));
+  if (iswlower(u[0]))
+  { do ++u; while (--len > 0 && (iswalnum(*u) || *u == '_'));
     return len == 0 ? AT_LOWER : AT_QUOTE;
-  } else if (strchr(symbols, *u) != (char*)0)
-  { do ++u; while (--len > 0 && strchr(symbols, *u) != 0);
+  } else if (wcschr(symbols, *u) != NULL)
+  { do ++u; while (--len > 0 && wcschr(symbols, *u) != 0);
     return len == 0 ? AT_SYMBOL : AT_QUOTE;
   } else
   { return AT_QUOTE;
@@ -88,20 +88,19 @@ atomType(char const *s, int len)
 }
 
 
-static const char *
+static const ichar *
 atom(const ichar *text)
-{ const char *name = (const char *)text;
-  int len = strlen(name);
+{ int len = wcslen(text);
 
-  switch(atomType(name, len))
+  switch(atomType(text, len))
   { case AT_QUOTE:
     case AT_FULLSTOP:
-    { char *tmp = ringallo(len*2+1);
-      char *o = tmp;
+    { ichar *tmp = ringallo((len*2+1)*sizeof(ichar));
+      ichar *o = tmp;
 
       *o++ = '\'';
-      for( ; --len >= 0; name++)
-      { switch( *name )
+      for( ; --len >= 0; text++)
+      { switch( *text )
 	{ case '\n':
 	    *o++ = '\\';
 	    *o++ = 'n';
@@ -117,7 +116,7 @@ atom(const ichar *text)
 	  case '\'':
 	    *o++ = '\\';
 	  default:
-	    *o++ = *name;
+	    *o++ = *text;
 	}
       }
       *o++ = '\'';
@@ -126,7 +125,7 @@ atom(const ichar *text)
       return tmp;
     }
     default:
-      return name;
+      return text;
   }
 }
 
@@ -141,19 +140,19 @@ static void
 prolog_print_entity(const char *which, dtd_entity *e)
 { switch( e->type )
   { case ET_LITERAL:
-      printf("%s(%s, %s).\n",
-	     which,
-	     atom(e->name->name),
-	     atom(e->value));
+      wprintf(L"%s(%ls, %ls).\n",
+	      which,
+	      atom(e->name->name),
+	      atom(e->value));
       break;
     case ET_SYSTEM:
-      printf("%s(%s, system(%s)).\n",
+      wprintf(L"%s(%ls, system(%ls)).\n",
 	     which,
 	     atom(e->name->name),
 	     atom(e->exturl));
       break;
     case ET_PUBLIC:
-      printf("%s(%s, public(%s, %s)).\n",
+      wprintf(L"%s(%ls, public(%ls, %ls)).\n",
 	     which,
 	     atom(e->name->name),
 	     atom(e->extid),
@@ -174,7 +173,7 @@ prolog_print_model(dtd_model *m)
       printf("'#pcdata'");
       goto card;
     case MT_ELEMENT:
-      printf("%s", atom(m->content.element->name->name));
+      wprintf(L"%ls", atom(m->content.element->name->name));
       goto card;
     case MT_AND:
       sep = " & ";
@@ -254,7 +253,7 @@ prolog_print_content(dtd_element *e)
 static ichar *
 istrblank(const ichar *s)
 { for( ; *s; s++ )
-  { if ( isspace(*s) )
+  { if ( iswspace(*s) )
       return (ichar *)s;
   }
 
@@ -264,15 +263,15 @@ istrblank(const ichar *s)
 
 static void
 print_listval(attrtype type, int len, const ichar *text)
-{ char *t = sgml_malloc(len+1);
+{ ichar *t = sgml_malloc((len+1)*sizeof(ichar));
 
-  strncpy(t, (char *)text, len);
+  istrncpy(t, text, len);
   t[len] = '\0';
 
   if ( type == AT_NUMBERS )
-    printf("%s", t);
+    wprintf(L"%ls", t);
   else
-    printf("%s", atom((ichar *)t));
+    wprintf(L"%ls", atom(t));
 
   sgml_free(t);
 }
@@ -280,7 +279,7 @@ print_listval(attrtype type, int len, const ichar *text)
 
 static void
 prolog_print_attribute(dtd_element *e, dtd_attr *at)
-{ printf("    attribute(%s, %s, ",
+{ wprintf(L"    attribute(%ls, %ls, ",
 	 atom(e->name->name), atom(at->name->name));
 
   switch(at->type)			/* print type */
@@ -331,7 +330,7 @@ prolog_print_attribute(dtd_element *e, dtd_attr *at)
       for(nl = at->typeex.nameof; nl; nl = nl->next)
       { if ( n++ > 0 )
 	  printf(", ");
-	printf("%s", atom(nl->value->name));
+	wprintf(L"%ls", atom(nl->value->name));
       }
       printf("])");
     }
@@ -366,7 +365,7 @@ prolog_print_attribute(dtd_element *e, dtd_attr *at)
 
       switch( at->type )
       { case AT_CDATA:
-	  printf("%s", atom(at->att_def.cdata));
+	  wprintf(L"%ls", atom(at->att_def.cdata));
 	  break;
 	case AT_NUMBER:
 	  printf("%ld", at->att_def.number);
@@ -374,7 +373,7 @@ prolog_print_attribute(dtd_element *e, dtd_attr *at)
 	case AT_NAME:
 	case AT_NUTOKEN:
 	case AT_NMTOKEN:
-	  printf("%s", atom(at->att_def.name->name));
+	  wprintf(L"%ls", atom(at->att_def.name->name));
 	  break;
 	default:
 	  if ( at->islist )
@@ -419,10 +418,10 @@ prolog_print_element(dtd_element *e, unsigned int flags)
   if ( e->structure )
   { dtd_edef *def = e->structure;
 
-    printf("element(%s, omit(%s, %s), ",
-	   atom(e->name->name),
-	   bool(def->omit_open),
-	   bool(def->omit_close));
+    wprintf(L"element(%ls, omit(%s, %s), ",
+	    atom(e->name->name),
+	    bool(def->omit_open),
+	    bool(def->omit_close));
     prolog_print_content(e);
     printf(").\n");
 
@@ -430,17 +429,17 @@ prolog_print_element(dtd_element *e, unsigned int flags)
     { dtd_element_list *el;
   
       for(el = def->excluded; el; el=el->next)
-	printf("exclude(%s, %s).\n",
-	       atom(e->name->name),
-	       atom(el->value->name->name));
+	wprintf(L"exclude(%ls, %ls).\n",
+		atom(e->name->name),
+		atom(el->value->name->name));
     }
     if ( def->included )
     { dtd_element_list *el;
   
       for(el = def->included; el; el=el->next)
-	printf("include(%s, %s).\n",
-	       atom(e->name->name),
-	       atom(el->value->name->name));
+	wprintf(L"include(%ls, %ls).\n",
+		atom(e->name->name),
+		atom(el->value->name->name));
     }
 
     if ( flags & PL_PRINT_ATTRIBUTES )
