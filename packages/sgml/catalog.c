@@ -32,6 +32,10 @@
 #define DTD_MINOR_ERRORS 1
 #include <dtd.h>			/* error codes */
 
+#ifdef WIN32
+#define swprintf _snwprintf
+#endif
+
 #ifdef _REENTRANT
 #include <pthread.h>
 
@@ -537,7 +541,7 @@ find_in_catalogue(int kind,
 		  ichar const *name,
 		  ichar const *pubid, ichar const *sysid, int ci)
 { ichar penname[FILENAME_MAX];
-  const int penlen = sizeof(penname)/sizeof(ichar);
+  const size_t penlen = sizeof(penname)/sizeof(ichar);
   catalogue_item_ptr item;
   ichar const *result;
   catalog_file *catfile;

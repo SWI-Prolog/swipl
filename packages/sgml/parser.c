@@ -47,6 +47,7 @@
 
 #ifdef WIN32
 #define inline __inline
+#define swprintf _snwprintf
 #endif
 
 
@@ -3639,7 +3640,7 @@ set_encoding(dtd_parser *p, const ichar *enc)
 
   for(i=enc, o=buf; *i; )
   { if ( *i < 128 && o < e )
-    { *o++ = *i++;
+    { *o++ = (char)*i++;
     } else
     { goto error;
     }    

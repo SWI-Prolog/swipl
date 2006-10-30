@@ -49,7 +49,7 @@ typedef struct
   wchar_t localbuf[256];		/* Initial local store */
 } ocharbuf;
 
-int		istrlen(const ichar *s);
+size_t		istrlen(const ichar *s);
 ichar *         istrdup(const ichar *s);
 ichar *         istrndup(const ichar *s, int len);
 ichar *		istrcpy(ichar *d, const ichar *s);

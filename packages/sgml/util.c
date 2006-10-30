@@ -46,9 +46,9 @@
 #include <assert.h>
 #include "utf8.h"
 
-int
+size_t
 istrlen(const ichar *s)
-{ int len =0;
+{ size_t len =0;
   
   while(*s++)
     len++;
