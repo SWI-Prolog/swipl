@@ -22,11 +22,10 @@
     Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 */
 
+#define _ISOC99_SOURCE 1		/* fwprintf(), etc prototypes */
+
 #ifdef WIN32
 #include <windows.h>
-#define PL_FNCHARS PL_UTF8CHARS
-#else
-#define PL_FNCHARS PL_MBCHARS
 #endif
 
 #define DTD_MINOR_ERRORS 1		/* get detailed errors */
