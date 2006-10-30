@@ -147,7 +147,7 @@ xmlns_resolve_attribute(dtd_parser *p, dtd_symbol *id,
       *local = s+1;
       n = dtd_add_symbol(dtd, buf);
 
-      if ( istrprefix((ichar*)"xml", buf) )	/* XML reserved namespaces */
+      if ( istrprefix(L"xml", buf) )	/* XML reserved namespaces */
       { *url = n->name;
         return TRUE;
       } else if ( (ns = xmlns_find(p->environments, n)) )
@@ -158,7 +158,7 @@ xmlns_resolve_attribute(dtd_parser *p, dtd_symbol *id,
 	return TRUE;
       } else
       { *url = n->name;			/* undefined namespace */
-	gripe(ERC_EXISTENCE, "namespace", n->name);
+	gripe(ERC_EXISTENCE, L"namespace", n->name);
 	return FALSE;
       }
     }
