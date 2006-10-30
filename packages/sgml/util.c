@@ -145,7 +145,7 @@ istreq(const ichar *s1, const ichar *s2)
 
 int
 istrncaseeq(const ichar *s1, const ichar *s2, int len)
-{ while(--len >= 0 && tolower(*s1) == tolower(*s2))
+{ while(--len >= 0 && towlower(*s1) == towlower(*s2))
     s1++, s2++;
   
   if ( len < 0 )
@@ -194,7 +194,7 @@ istrlower(ichar *s)
 { ichar *r = s;
 
   for( ; *s; s++)
-    *s = tolower(*s);
+    *s = towlower(*s);
 
   return r;
 }
@@ -225,7 +225,7 @@ istrcasehash(const ichar *t, int tsize)
   unsigned int shift = 5;
 
   while(*t)
-  { unsigned int c = tolower(*t++);	/* case insensitive */
+  { unsigned int c = towlower(*t++);	/* case insensitive */
     
     c -= 'a';
     value ^= c << (shift & 0xf);

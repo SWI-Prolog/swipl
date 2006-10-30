@@ -40,6 +40,7 @@
 #include "utf8.h"
 #include <errno.h>
 #include <wctype.h>
+#include "xml_unicode.h"
 
 #define DEBUG(g) ((void)0)
 #define ZERO_TERM_LEN (-1)		/* terminated by nul */
@@ -187,15 +188,21 @@ HasClass(dtd *dtd, wint_t chr, int mask)
   else
   { switch(mask)
     { case CH_NAME:
-	return iswalnum(chr) || iswdigit(chr);
+	return ( xml_basechar(chr) ||
+		 xml_digit(chr) ||
+		 xml_ideographic(chr) ||
+		 xml_combining_char(chr) ||
+		 xml_extender(chr)
+	       );
       case CH_NMSTART:
-	return iswalnum(chr);
+	return ( xml_basechar(chr) ||
+		 xml_ideographic(chr) );
       case CH_WHITE:
 	return FALSE;			/* only ' ' and '\t' */
       case CH_BLANK:
 	return iswspace(chr);
       case CH_DIGIT:
-	return iswdigit(chr);
+	return xml_digit(chr);
       case CH_RS:
       case CH_RE:
 	return FALSE;
@@ -804,20 +811,6 @@ isee_identifier(dtd *dtd, const ichar *in, char *id)
 }
 
 
-#if 0
-static const ichar *
-isee_text(dtd *dtd, const ichar *in, char *id)
-{ while (*id && *id == tolower(*in) )
-    id++, in++;
-
-  if ( *id == 0 )
-    return in;
-
-  return NULL;
-}
-#endif
-
-
 static const ichar *
 itake_name(dtd *dtd, const ichar *in, dtd_symbol **id)
 { ichar buf[MAXNMLEN];
@@ -833,7 +826,7 @@ itake_name(dtd *dtd, const ichar *in, dtd_symbol **id)
       *o++ = *in++;
   } else
   { while( HasClass(dtd, *in, CH_NAME) && o < e )
-      *o++ = tolower(*in++);
+      *o++ = towlower(*in++);
   }
 
   if ( o == e )
@@ -864,7 +857,7 @@ itake_entity_name(dtd *dtd, const ichar *in, dtd_symbol **id)
       *o++ = *in++;
   } else
   { while( HasClass(dtd, *in, CH_NAME) && o < e )
-      *o++ = tolower(*in++);
+      *o++ = towlower(*in++);
   }
   if ( o == e )
   { gripe(ERC_REPRESENTATION, L"Entity NAME too long");
@@ -893,7 +886,7 @@ itake_nmtoken(dtd *dtd, const ichar *in, dtd_symbol **id)
       *o++ = *in++;
   } else
   { while( HasClass(dtd, *in, CH_NAME) && o < e )
-      *o++ = tolower(*in++);
+      *o++ = towlower(*in++);
   }
   if ( o == e )
   { gripe(ERC_REPRESENTATION, L"NMTOKEN too long");
@@ -923,7 +916,7 @@ itake_nutoken(dtd *dtd, const ichar *in, dtd_symbol **id)
       *o++ = *in++;
   } else
   { while( HasClass(dtd, *in, CH_NAME) && o < e )
-      *o++ = tolower(*in++);
+      *o++ = towlower(*in++);
   }
 
   if ( o == e )
@@ -1034,7 +1027,7 @@ itake_nmtoken_chars(dtd *dtd, const ichar *in, ichar *out, int len)
   while( HasClass(dtd, *in, CH_NAME) )
   { if ( --len <= 0 )
       gripe(ERC_REPRESENTATION, L"Name token too long");
-    *out++ = (dtd->case_sensitive ? *in++ : tolower(*in++));
+    *out++ = (dtd->case_sensitive ? *in++ : towlower(*in++));
   }
   *out++ = '\0';
 
@@ -3035,11 +3028,11 @@ get_attribute_value(dtd_parser *p, ichar const *decl, sgml_attribute *att)
 	    *d++ = c;
 	  }
 	} else
-	{ *d++ = tolower(c);
+	{ *d++ = towlower(c);
 	  while ((c = *s++) != '\0' && !HasClass(dtd, c, CH_BLANK))
 	  { token |= HasClass(dtd, c, CH_DIGIT) ? 0
 	      : HasClass(dtd, c, CH_NAME) ? NAM_LATER : /* oops! */ ANY_OTHER;
-	    *d++ = tolower(c);
+	    *d++ = towlower(c);
 	  }
 	}
 	while (c != '\0' && HasClass(dtd, c, CH_BLANK))
