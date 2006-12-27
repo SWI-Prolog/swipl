@@ -83,7 +83,8 @@ PL_get_frame(term_t r, LocalFrame *fr)
   if ( PL_get_long(r, &i) )
   { LocalFrame f = ((LocalFrame)((Word)lBase + i));
 
-    assert(f >= lBase && f < lTop);
+    if ( !(f >= lBase && f < lTop) )
+      fail;
     *fr = f;
 
     succeed;
@@ -1065,7 +1066,7 @@ traceInterception(LocalFrame frame, Choice bfr, int port, Code PC)
 	{ debugstatus.retryFrame = fr;
 	  rval = ACTION_RETRY;
 	} else
-	  warning("prolog_trace_interception/3: bad argument to retry/1");
+	  PL_warning("prolog_trace_interception/3: bad argument to retry/1");
       }
     }
     PL_close_query(qid);
@@ -1816,6 +1817,17 @@ callEventHook(int ev, ...)
 		           PL_TERM, ref);
 	break;
       }
+#ifdef O_PLMT
+      case PL_EV_THREADFINISHED:
+      { PL_thread_info_t *info = va_arg(args, PL_thread_info_t*);
+	term_t id = PL_new_term_ref();
+
+	unify_thread_id(id, info);
+	PL_unify_term(arg, PL_FUNCTOR_CHARS, "thread_finished", 1,
+		             PL_TERM, id);
+	break;
+      }
+#endif
       default:
 	warning("callEventHook(): unknown event: %d", ev);
         goto out;

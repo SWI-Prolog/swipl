@@ -143,10 +143,18 @@ clearInteger(Number n)
 #endif
 }
 
+
+typedef struct
+{ number low;
+  number high;
+  int hinf;
+} between_state;
+
+
 static
 PRED_IMPL("between", 3, between, PL_FA_NONDETERMINISTIC)
 { GET_LD
-  number *state;
+  between_state *state;
   term_t low = A1;
   term_t high = A2;
   term_t n = A3;
@@ -160,9 +168,11 @@ PRED_IMPL("between", 3, between, PL_FA_NONDETERMINISTIC)
 	  return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_integer, low);
 	if ( !PL_get_number(high, &h) || !intNumber(&h) )
 	{ if ( PL_is_inf(high) )
+	  { h.type = V_INTEGER;		/* make clearInteger() safe */
 	    hinf = TRUE;
-	  else
-	    return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_integer, high);
+	  } else
+	  { return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_integer, high);
+	  }
 	}
 
 					/* between(+,+,+) */
@@ -199,9 +209,10 @@ PRED_IMPL("between", 3, between, PL_FA_NONDETERMINISTIC)
 	  succeed;
 	}
 
-	state = allocHeap(sizeof(number)*2);
-	cpNumber(&state[0], &l);
-	cpNumber(&state[1], &h);
+	state = allocHeap(sizeof(*state));
+	cpNumber(&state->low, &l);
+	cpNumber(&state->high, &h);
+	state->hinf = hinf;
 	clearInteger(&l);
 	clearInteger(&h);
 	ForeignRedoPtr(state);
@@ -209,18 +220,19 @@ PRED_IMPL("between", 3, between, PL_FA_NONDETERMINISTIC)
     case FRG_REDO:
       { state = CTX_PTR;
 
-	ar_add_ui(&state[0], 1L);
-	PL_unify_number(n, &state[0]);
-	if ( cmpNumbers(&state[0], &state[1]) == 0 )
+	ar_add_ui(&state->low, 1L);
+	PL_unify_number(n, &state->low);
+	if ( !state->hinf &&
+	     cmpNumbers(&state->low, &state->high) == 0 )
 	  goto cleanup;
 	ForeignRedoPtr(state);
       }
     case FRG_CUTTED:
       { state = CTX_PTR;
       cleanup:
-	clearInteger(&state[0]);
-	clearInteger(&state[1]);
-	freeHeap(state,  sizeof(number)*2);
+	clearInteger(&state->low);
+	clearInteger(&state->high);
+	freeHeap(state, sizeof(*state));
       }
     default:;
       succeed;
@@ -870,10 +882,10 @@ ar_add_ui(Number n, long add)
 	   (r > 0 && add < 0 && n->value.i < 0) )
       { if ( !promoteIntNumber(n) )
 	  fail;
+      } else
+      { n->value.i = r;
+	succeed;
       }
-
-      n->value.i = r;
-      succeed;
     }
 #ifdef O_GMP
     case V_MPZ:
@@ -1055,19 +1067,17 @@ ar_shift(Number n1, Number n2, Number r, int dir)
 
   switch(n2->type)
   { case V_INTEGER:
-      if ( n2->value.i < LONG_MIN )
-	shift = LONG_MIN;
-      else if ( n2->value.i > LONG_MAX )
-	shift = LONG_MAX;
+      if ( n2->value.i < LONG_MIN  ||
+	   n2->value.i > LONG_MAX )
+	return PL_error(plop, 2, NULL, ERR_EVALUATION, ATOM_int_overflow);
       else
 	shift = (long)n2->value.i;
       break;
 #ifdef O_GMP
     case V_MPZ:
-      if ( mpz_cmp_si(n2->value.mpz, LONG_MIN) < 0 )
-	shift = LONG_MIN;
-      else if ( mpz_cmp_si(n2->value.mpz, LONG_MAX) > 0 )
-	shift = LONG_MAX;
+      if ( mpz_cmp_si(n2->value.mpz, LONG_MIN) < 0 ||
+	   mpz_cmp_si(n2->value.mpz, LONG_MAX) > 0 )
+	return PL_error(plop, 2, NULL, ERR_EVALUATION, ATOM_int_overflow);
       else
 	shift = mpz_get_si(n2->value.mpz);
       break;
@@ -1075,6 +1085,11 @@ ar_shift(Number n1, Number n2, Number r, int dir)
     default:
       assert(0);
       fail;
+  }
+
+  if ( shift < 0 )
+  { shift = -shift;
+    dir = -dir;
   }
 
   switch(n1->type) 
@@ -2105,14 +2120,12 @@ ar_floor(Number n1, Number r)
     case V_REAL:
     {
 #ifdef HAVE_FLOOR
-      double f = floor(n1->value.f);
-      if ( f >= (double)PLMININT && f <= (double)PLMAXINT )
-      { r->type = V_INTEGER;
-	r->value.i = (int64_t)f;
-      } else
+      r->type = V_REAL;
+      r->value.f = floor(n1->value.f);
+      if ( !toIntegerNumber(r) )
       {
 #ifdef O_GMP
-	mpz_init_set_d(r->value.mpz, f);
+	mpz_init_set_d(r->value.mpz, n1->value.f);
 	r->type = V_MPZ;
 #else
 	return PL_error("floor", 1, NULL, ERR_EVALUATION, ATOM_int_overflow);
@@ -2166,14 +2179,12 @@ ar_ceil(Number n1, Number r)
     case V_REAL:
     {
 #ifdef HAVE_CEIL
-       double f = ceil(n1->value.f);
-       if ( f >= (double)PLMININT && f <= (double)PLMAXINT )
-       { r->type = V_INTEGER;
-	 r->value.i = (int64_t)f;
-       } else
+       r->type = V_REAL;
+       r->value.f = ceil(n1->value.f);
+       if ( !toIntegerNumber(r) )
        {
 #ifdef O_GMP
-         mpz_init_set_d(r->value.mpz, f);
+         mpz_init_set_d(r->value.mpz, n1->value.f);
 	 r->type = V_MPZ;
 #else
          return PL_error("ceil", 1, NULL, ERR_EVALUATION, ATOM_int_overflow);
@@ -2217,8 +2228,9 @@ ar_float_fractional_part(Number n1, Number r)
 #ifdef O_GMP
     case V_MPZ:
 #endif
-      cpNumber(r, n1);
-      break;
+      r->value.i = 0;
+      r->type = V_INTEGER;
+      succeed;
 #ifdef O_GMP
     case V_MPQ:
       r->type = V_MPQ;
@@ -2300,13 +2312,36 @@ ar_truncate(Number n1, Number r)
 
 static int
 ar_random(Number n1, Number r)
-{ if ( !toIntegerNumber(n1) )
+{ uint64_t bound;
+
+  if ( !toIntegerNumber(n1) )
     return PL_error("random", 1, NULL, ERR_AR_TYPE, ATOM_integer, n1);
 
-  if ( n1->value.i < 1 )
-    return mustBePositive("random", 1, n1);
+  switch(n1->type)
+  {
+#ifdef O_GMP
+    case V_MPZ:
+    { int64_t i;
 
-  r->value.i = (uint64_t)_PL_Random() % (uint64_t)n1->value.i;
+      if ( !mpz_to_int64(n1->value.mpz, &i) )
+	return PL_error("random", 1, NULL, ERR_REPRESENTATION, ATOM_integer);
+      if ( i < 1 )
+	return mustBePositive("random", 1, n1);
+      bound = (uint64_t)i;
+      break;
+    }
+#endif
+    case V_INTEGER:
+      if ( n1->value.i < 1 )
+	return mustBePositive("random", 1, n1);
+      bound = (uint64_t)n1->value.i;
+      break;
+    default:
+      assert(0);
+      fail;
+  }
+
+  r->value.i = _PL_Random() % bound;
   r->type = V_INTEGER;
 
   succeed;

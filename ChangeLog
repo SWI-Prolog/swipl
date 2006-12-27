@@ -7,6 +7,10 @@
 					http://gollem.science.uva.nl/bugzilla/
 					--------------------------------------
 
+====================================================================
+MERGED MAIN BRANCH (Dec 27, 2006) Labeled main branch with V57XMERGE
+====================================================================
+
   * MODIFIED: statistics(runtime, [Time,SinceLast]) now uses time excluding
     GC and AGC time for compatibility to Quintus, SICStus and YAP.
     statistics(cputime, Time) still uses combined time.
@@ -20,6 +24,172 @@
 BRANCH 5.7.0 (Sep 4, 2007)
 ==========================
 
+  * FIXED: float_fractional_part function for integers.  See mailinglist.
+
+==================================
+VERSION 5.6.25 (December 21, 2006)
+==================================
+
+  * FIXED: nth0(nth0(2, [a,b,c|_], x).  Ryszard Szopa.
+
+  * FIXED: length/2: length(-List, +Bignum) and speed of non-determinism
+    of length(-,-).  Ulrich Neumerkel.
+
+  * ADDED: library(pairs).  With help from Richard O'Keefe.
+
+  * FIXED: random/1 to handle large integers more elegantly.
+    Roberto Bagnara.
+
+  * DELETED: random/3 from library(quintus).  library(random) provides a
+    more portable alternative.  Roberto Bagnara.
+
+  * ADDED: Moved library(broadcast) from XPCE libraries to Prolog library.
+
+  * MODIFIED: PL_release_stream() now checks for errors and returns
+    FALSE if the stream is in an error state.
+
+  * FIXED: Accept c:\\ as absolute path in Windows (Paulo Moura).
+
+  * ADDED: library(error), providing must_be/2, type_error/2, etc.
+    After discussion on mailinglist.
+
+  * FIXED: Bug#239: crash on illegal call to clause/3.  Keri Harris.
+
+  * FIXED: Bug#236: error-handling on illegal setenv calls.  Keri Harris.
+
+  * ADDED: SIO_FLUSHOUTPUT to control-functions to allow flushing compressed
+    streams.
+
+  * FIXED: Deal with new definition of variable EMACS after a mail from
+    the Emacs developers.  Now EMACS inferior mode is implied if $EMACS
+    is defined and non-empty.
+
+==================================
+VERSION 5.6.24 (November 28, 2006)
+==================================
+
+  * FIXED: dde_request to progman returning nul-characters at the end.
+    Windows XP/SP2 returns wrong length for the CF_TEXT result.
+
+  * PORT: Bug#237: Use clock_gettime() for get_time/1 if provided.
+    Keri Harris.
+
+  * FIXED: Bug#236: setenv/2 error reporting.  Keri Harris.
+
+  * ADDED: Flag shared_object_search_path holding variable name for the
+    searching .so/.dll files.
+
+  * FIXED: Possible crash in current_prolog_flag(-, +).
+
+  * MODIFIED: raised priority of | to 1105 to facilitate CHR.  Unlikely
+    to cause problems.  If it does adjust code or use :- op(1100, xfy, (|)).
+    Jon Sneyers.
+
+  * FIXED: Instantiation error on :- [X].  Bart Demoen.
+
+  * FIXED: Possible crash in file-name canonisation.  Roberto Bagnara.
+    SECURITY: This is used by absolute_file_name/[2,3], which is adviced
+    for path-name validation in web-servers.  Makes DoS attacks possible.
+    Unclear whether or not the bug is exploitable aotherwise.
+
+  * FIXED: Bug#233 Compilation error in single-threaded mode.  Keri Harris.
+
+==================================
+VERSION 5.6.23 (November 10, 2006)
+==================================
+
+  * PORT: Allow building 32-bit version on 64-bits Linux.
+
+  * PORT: By default build shared object on x86_64-linux platforms.  Needed
+    for embedding in Java and unlike IA32, creating a shared object does not
+    affect performance.
+
+  * ADDED: collation_key/2 and locale_sort/2 for locale-dependent ordering.
+    With help from Pierre Nugues and Richard O'Keefe.
+
+  * MODIFIED: Initialisation initialises the LC_COLLATE locale.
+
+  * MODIFIED: Moved predsort/3, merge/3 and merge_set/3 to new library(sort).
+    Applications not relying on autoloading must update use_module declarations
+    if one of these predicates is used. 
+
+  * ENHANCED: Check file-descriptor in Sfdopen(). Julien Olivain.
+
+  * ADDED: debugger event for finished threads.
+
+  * FIXED: Avoid history expansion on ..., !.  Kimberly Voll.
+
+  * FIXED: negative shift.  Roberto Bagnara.
+
+  * FIXED: Possible crash in recompilation if another thread is doing
+    GC.  Mike Elston.
+
+=================================
+VERSION 5.6.22 (October 17, 2006)
+=================================
+
+  * FIXED: Bug#227: meta-declaration of with_output_to/2.  Holger
+    Kanwischer.
+
+  * FIXED: Bug#223: Read of large non-decimal negative numbers.  
+    Marius Filip.
+
+  * FIXED: absolute_file_name/3 to honour tests for file_type(directory)
+    and demand files of other types *not* to be a directory.
+
+  * FIXED: Support Unicode in windows open_shared_object/2, underlying
+    load_foreign_library/1.  Maria Sergeeva.
+
+  * FIXED: Support Unicode in Windows environment strings, setenv/2
+    and getenv/2.  Maria Sergeeva.
+
+  * FIXED: Bug#221: Create dynamic predicates with long UNICODE names.
+    Holger Kanwischer.
+
+================================
+VERSION 5.6.21 (October 2, 2006)
+================================
+
+  * PORT: Bug#219: Bus error with gmp on linux/sparc.  Keri Harris.
+
+  * FIXED: Bug#217: floor/1 and ceil/1 return wrong value for 1<<63.
+    Marius Filip.
+
+  * ADDED: call/7-11 as predicates.  Paulo Moura.
+
+  * PORT: Bug#206: timezone trouble on FreeBSD.  With help from Matthew Condell
+    and Darren Bane.
+
+  * PORT: Bug#212: Paralel make.  Keri Harris.
+
+  * FIXED: Bug#201: graphical tracer running out of local stack.  
+    Robert Oschler.
+
+  * FIXED: Avoid undefined pce_expansion:push_compile_operators/1 in
+    Prolog stack utility.  Mike Elston.
+
+  * MODIFIED: relative_to option of absolute_file_name/3 is considered a
+    directory if the directory exists or ends in /.  Otherwise it is assumed
+    to be a file.
+
+===================================
+VERSION 5.6.20 (September 18, 2006)
+===================================
+
+  * FIXED: between(N, infinite, X).  Matt Lilley.
+
+===================================
+VERSION 5.6.19 (September 11, 2006)
+===================================
+
+  * MODIFIED: More efficient DCG translation.  No longer produces 'C'/3
+    calls.  'C'/3 has been moved to backcomp.pl
+
+  * FIXED: Bug#205: support GNU-make when not named make.  Marc Espie.
+
+  * FIXED: Bug 204: ** for rationals.  Mike Elston.
+
+>>>>>>> 1.1351
   * ADDED: Library heaps.pl.  Adapted by Markus Triska.
 
   * FIXED: Renamed depreciated --> deprecated.  Mike Elston.

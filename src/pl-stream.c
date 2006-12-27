@@ -1336,6 +1336,9 @@ Sflush(IOSTREAM *s)
 { if ( s->buffer && (s->flags & SIO_OUTPUT) )
   { if ( S__flushbuf(s) < 0 )
       return -1;
+    if ( s->functions->control &&
+	 (*s->functions->control)(s->handle, SIO_FLUSHOUTPUT, NULL) < 0 )
+      return -1;
   }
 
   return 0;
@@ -2375,6 +2378,7 @@ Scontrol_file(void *handle, int action, void *arg)
       return -1;
     }
     case SIO_SETENCODING:
+    case SIO_FLUSHOUTPUT:
       return 0;
     default:
       return -1;
@@ -2567,7 +2571,13 @@ Sfdopen(int fd, const char *type)
   long lfd;
 
   if ( fd < 0 )
+  { errno = EINVAL;
     return NULL;
+  }
+#if defined(HAVE_FCNTL) && defined(F_GETFL)
+  if ( fcntl(fd, F_GETFL) == -1 )
+    return NULL;
+#endif
 
   if ( *type == 'r' )
     flags = SIO_FILE|SIO_INPUT|SIO_RECORDPOS;

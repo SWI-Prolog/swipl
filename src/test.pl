@@ -302,6 +302,8 @@ arithmetic(arith-9) :-
 	4000 =:= integer(10000 * float_fractional_part(1e10 + 0.4)).
 arithmetic(arith-10) :-
 	-4000 =:= integer(10000 * float_fractional_part(-1e10 - 0.4)).
+arithmetic(float_fractional_part-1) :-
+	0 =:= float_fractional_part(4).
 arithmetic(arith-11) :-
 	1.0 is sin(pi/2),
 	\+ 1 is sin(pi/2).
@@ -327,6 +329,20 @@ arithmetic(truncate-1) :-
 	1 is truncate(1.9),
 	-1 is truncate(-1.1),
 	-1 is truncate(-1.9).
+:- if(current_prolog_flag(bounded, false)). 
+arithmetic(floor-2) :-
+	A is floor(9223372036854775808.000000),
+	A == 9223372036854775808.
+arithmetic(ceil-2) :-
+	A is ceil(9223372036854775808.000000),
+	A == 9223372036854775808.
+:- endif.
+arithmetic(round-2) :-
+	A is round(9223372036854775808.000000),
+	A == 9223372036854775808.
+arithmetic(integer-2) :-
+	A is integer(9223372036854775808.000000),
+	A == 9223372036854775808.
 
 
 		 /*******************************
@@ -643,6 +659,13 @@ gmp(fmtf-1) :-
 gmp(idiv-1) :-
 	Qi is idiv(3 rdiv 2,2 rdiv 5),
 	Qi == 3.
+gmp(random) :-
+	A is random((1<<200)-((1<<200)-20)),
+	A < 20.
+gmp(length) :-
+	N is 1<<66,
+	catch(length(_L, N), Error, true),
+	Error = error(resource_error(stack), global).
 
 :- endif.
 
@@ -2010,6 +2033,25 @@ timeout(pipe-1) :-
 	prolog_load_context(file, File),
 	assert(testfile(File)).
 
+root(Root) :-
+	(   current_prolog_flag(windows, true)
+	->  atom_concat(L, ':/', Root),
+	    char_type(L, alpha)
+	;   Root == (/)
+	).
+
+file(canonise-1) :-
+	absolute_file_name('/foo/..', X),
+	root(X).
+file(canonise-2) :-
+	absolute_file_name('/foo/../..', X),
+	root(X).
+file(canonise-3) :-
+	absolute_file_name('/foo/../../..', X),
+	root(X).
+file(canonise-4) :-
+	absolute_file_name('/foo/../../../', X),
+	root(X).
 file(exists-1) :-
 	\+ exists_file(foobar26).
 file(exists-2) :-

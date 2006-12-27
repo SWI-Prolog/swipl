@@ -64,6 +64,10 @@ pl_length(term_t list, term_t l)
     fail;			/* both variables: generate in Prolog */
   }
   
+				/* large integer; we cannot represent anyway */
+  if ( PL_is_integer(l) )
+    return outOfStack((Stack)&LD->stacks.global, STACK_OVERFLOW_RAISE);
+
   return PL_error("length", 2, NULL, ERR_TYPE, ATOM_integer, l);
 }  
 
@@ -385,7 +389,7 @@ pl_nat_sort(term_t in, term_t out, int remove_dups, int compare_keys ARG_LD)
 
 
 static
-PRED_IMPL("ok_sort", 2, sort, 0)
+PRED_IMPL("sort", 2, sort, 0)
 { PRED_LD
 
   return pl_nat_sort(A1, A2, TRUE, FALSE PASS_LD);
@@ -393,7 +397,7 @@ PRED_IMPL("ok_sort", 2, sort, 0)
 
 
 static
-PRED_IMPL("ok_msort", 2, msort, 0)
+PRED_IMPL("msort", 2, msort, 0)
 { PRED_LD
 
   return pl_nat_sort(A1, A2, FALSE, FALSE PASS_LD);
@@ -401,7 +405,7 @@ PRED_IMPL("ok_msort", 2, msort, 0)
 
 
 static
-PRED_IMPL("ok_keysort", 2, keysort, 0)
+PRED_IMPL("keysort", 2, keysort, 0)
 { PRED_LD
 
   return pl_nat_sort(A1, A2, FALSE, TRUE PASS_LD);

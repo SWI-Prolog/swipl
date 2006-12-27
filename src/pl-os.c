@@ -301,6 +301,12 @@ double
 WallTime(void)
 { double stime;
 
+#if HAVE_CLOCK_GETTIME
+  struct timespec tp;
+
+  clock_gettime(CLOCK_REALTIME, &tp);
+  stime = (double)tp.tv_sec + (double)tp.tv_nsec/1000000000.0;
+#else
 #ifdef HAVE_GETTIMEOFDAY
   struct timeval tp;
 
@@ -314,6 +320,7 @@ WallTime(void)
   stime = (double)tb.time + (double)tb.millitm/1000.0;
 #else
   stime = (double)time((time_t *)NULL);
+#endif
 #endif
 #endif
 
@@ -486,8 +493,8 @@ TemporaryFile(const char *id)
   char envbuf[MAXPATHLEN];
   char *tmpdir;
 
-  if ( !((tmpdir = getenv3("TEMP", envbuf, sizeof(envbuf))) ||
-	 (tmpdir = getenv3("TMP",  envbuf, sizeof(envbuf)))) )
+  if ( !((tmpdir = Getenv("TEMP", envbuf, sizeof(envbuf))) ||
+	 (tmpdir = Getenv("TMP",  envbuf, sizeof(envbuf)))) )
     tmpdir = DEFTMPDIR;
 
 #ifdef __unix__
@@ -1049,7 +1056,7 @@ initExpand(void)
 #ifdef O_CANONISE_DIRS
 { char envbuf[MAXPATHLEN];
 
-  if ( (cpaths = getenv3("CANONICAL_PATHS", envbuf, sizeof(envbuf))) )
+  if ( (cpaths = Getenv("CANONICAL_PATHS", envbuf, sizeof(envbuf))) )
   { char buf[MAXPATHLEN];
 
     while(*cpaths)
@@ -1069,9 +1076,9 @@ initExpand(void)
     }
   }
 
-  if ( (dir = getenv3("HOME", envbuf, sizeof(envbuf))) ) canoniseDir(dir);
-  if ( (dir = getenv3("PWD",  envbuf, sizeof(envbuf))) ) canoniseDir(dir);
-  if ( (dir = getenv3("CWD",  envbuf, sizeof(envbuf))) ) canoniseDir(dir);
+  if ( (dir = Getenv("HOME", envbuf, sizeof(envbuf))) ) canoniseDir(dir);
+  if ( (dir = Getenv("PWD",  envbuf, sizeof(envbuf))) ) canoniseDir(dir);
+  if ( (dir = Getenv("CWD",  envbuf, sizeof(envbuf))) ) canoniseDir(dir);
 }
 #endif
 }
@@ -1264,9 +1271,29 @@ cleanupExpand(void)
 
 static char *
 canoniseFileName(char *path)
-{ char *out = path, *in = path;
+{ char *out = path, *in = path, *start = path;
   char *osave[100];
   int  osavep = 0;
+
+#ifdef O_HASDRIVES			/* C: */
+  if ( in[1] == ':' && isLetter(in[0]) )
+  { in += 2;
+
+    out = start = in;
+  }
+#endif
+#ifdef O_HASSHARES			/* //host/ */
+  if ( in[0] == '/' && in[1] == '/' && isAlpha(in[2]) )
+  { char *s;
+
+    for(s = in+3; *s && isAlpha(*s); s++)
+      ;
+    if ( *s == '/' )
+    { in = out = s+1;
+      start = in-1; 
+    }
+  }
+#endif
 
   while( in[0] == '/' && in[1] == '.' && in[2] == '.' && in[3] == '/' )
     in += 3;
@@ -1274,12 +1301,6 @@ canoniseFileName(char *path)
     in += 2;
   if ( in[0] == '/' )
     *out++ = '/';
-#ifdef O_HASSHARES
-  if ( in[1] == '/' )
-  { in++;
-    *out++ = '/';
-  }
-#endif
   osave[osavep++] = out;
 
   while(*in)
@@ -1298,15 +1319,19 @@ canoniseFileName(char *path)
 	  { *out = EOS;
 	    return path;
 	  }
-	  if ( in[2] == '.' &&		/* delete /foo/../ */
-	       (in[3] == '/' || in[3] == EOS) && osavep > 0 )
-	  { out = osave[--osavep];
-	    in += 3;
-	    if ( in[0] == EOS && out > path )
-	    { out[-1] = EOS;		/* delete trailing / */
-	      return path;
+	  if ( in[2] == '.' && (in[3] == '/' || in[3] == EOS) )
+	  { if ( osavep > 0 )		/* delete /foo/../ */
+	    { out = osave[--osavep];
+	      in += 3;
+	      if ( in[0] == EOS && out > start+1 )
+	      { out[-1] = EOS;		/* delete trailing / */
+		return path;
+	      }
+	      goto again;
+	    } else if (	start[0] == '/' && out == start+1 )
+	    { in += 3;
+	      goto again;
 	    }
-	    goto again;
 	  }
 	}
       }
@@ -1412,7 +1437,7 @@ expandVars(const char *pattern, char *expanded, int maxlen)
       if ( !(value = GD->os.myhome) )
       { char envbuf[MAXPATHLEN];
 
-	if ( (value = getenv3("HOME", envbuf, sizeof(envbuf))) &&
+	if ( (value = Getenv("HOME", envbuf, sizeof(envbuf))) &&
 	     (value = PrologPath(value, wordbuf, sizeof(wordbuf))) )
 	{ GD->os.myhome = store_string(value);
 	} else
@@ -1481,7 +1506,7 @@ expandVars(const char *pattern, char *expanded, int maxlen)
 	  if ( var[0] == EOS )
 	    goto def;
 	  LOCK();
-	  value = getenv3(var, envbuf, sizeof(envbuf));
+	  value = Getenv(var, envbuf, sizeof(envbuf));
 	  if ( value == (char *) NULL )
 	  { if ( fileerrors )
 	    { term_t name = PL_new_term_ref();
@@ -1579,17 +1604,21 @@ ExpandOneFile(const char *spec, char *file)
 
 #ifdef O_HASDRIVES
 
+#define IS_DIR_SEPARATOR(c) ((c) == '/' || (c) == '\\')
+
 int
-IsAbsolutePath(const char *p)		/* /d:/ or d:/ */
+IsAbsolutePath(const char *p)				/* /d:/ */
 { if ( p[0] == '/' && p[2] == ':' && isLetter(p[1]) &&
        (p[3] == '/' || p[3] == '\0') )
     succeed;
 
-  if ( p[1] == ':' && isLetter(p[0]) && (p[2] == '/' || p[2] == '\0') )
+  if ( p[1] == ':' && isLetter(p[0]) &&			/* d:/ or d:\ */
+       (IS_DIR_SEPARATOR(p[2]) || p[2] == '\0') )
     succeed;
 
 #ifdef O_HASSHARES
-  if ( p[0] == '/' && p[1] == '/' )	/* //host/share */
+  if ( (p[0] == '/' && p[1] == '/') ||	/* //host/share */
+       (p[0] == '\\' && p[1] == '\\') )	/* \\host\share */
     succeed;
 #endif
 
@@ -1599,7 +1628,7 @@ IsAbsolutePath(const char *p)		/* /d:/ or d:/ */
 
 static inline int
 isDriveRelativePath(const char *p)	/* '/...' */
-{ return p[0] == '/' && !IsAbsolutePath(p);
+{ return IS_DIR_SEPARATOR(p[0]) && !IsAbsolutePath(p);
 }
 
 #ifdef __WIN32__
@@ -2175,49 +2204,58 @@ PopTty(IOSTREAM *s, ttybuf *buf)
 		*********************************/
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-Simple  library  to  manipulate  the  Unix  environment.   The  modified
-environment  will  be  passed  to  child  processes  and the can also be
-requested via getenv/2 from Prolog.  Functions
+Simple  library  to  manipulate  the    OS   environment.  The  modified
+environment will be passed to  child  processes   and  the  can  also be
+requested via getenv/2 from Prolog. Functions
 
-    char *Setenv(name, value)
+    int Setenv(name, value)
          char *name, *value;
 	
-    Set the Unix environment variable with name `name'.   If  it  exists
+    Set the OS environment variable with name `name'.   If  it  exists
     its  value  is  changed, otherwise a new entry in the environment is
     created.  The return value is a pointer to the old value, or NULL if
     the variable is new.
 
-    char *Unsetenv(name)
+    int Unsetenv(name)
          char *name;
 
     Delete a variable from the environment.  Return  value  is  the  old
     value, or NULL if the variable did not exist.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-#ifndef __WIN32__
-char *
+int
 getenv3(const char *name, char *buf, unsigned int len)
-{ char *s = getenv(name);
+{
+#if O_XOS
+  return _xos_getenv(name, buf, len);
+#else
+  char *s = getenv(name);
+  int l;
 
-  if ( s && strlen(s) < len )
-  { strcpy(buf, s);
+  if ( s )
+  { if ( (l=strlen(s)) < len )
+      memcpy(buf, s, l+1);
+    else if ( len > 0 )
+      buf[0] = EOS;                     /* empty string if not fit */
 
-    return buf;
+    return l;
   }
+
+  return -1;
+#endif
+}
+
+
+char *
+Getenv(const char *name, char *buf, unsigned int len)
+{ int l = getenv3(name, buf, len);
+
+  if ( l >= 0 && l < (int)len )
+    return buf;
 
   return NULL;
 }
 
-int
-getenvl(const char *name)
-{ char *s;
-
-  if ( (s = getenv(name)) )
-    return strlen(s);
-
-  return -1;
-}
-#endif
 
 #if defined(HAVE_PUTENV) || defined(HAVE_SETENV)
 
@@ -2226,17 +2264,24 @@ Setenv(char *name, char *value)
 { 
 #ifdef HAVE_SETENV
   if ( setenv(name, value, TRUE) != 0 )
-    return PL_error("setenv", 2, NULL, ERR_NOMEM);
+    return PL_error(NULL, 0, MSG_ERRNO, ERR_SYSCALL, "setenv");
 #else
-  char *buf = alloca(strlen(name) + strlen(value) + 2);
+  char *buf;
+
+  if ( *name == '\0' || strchr(name, '=') != NULL )
+  { errno = EINVAL;
+    return PL_error(NULL, 0, MSG_ERRNO, ERR_SYSCALL, "setenv");
+  }
+
+  buf = alloca(strlen(name) + strlen(value) + 2);
 
   if ( buf )
   { Ssprintf(buf, "%s=%s", name, value);
 
     if ( putenv(store_string(buf)) < 0 )
-      return PL_error("setenv", 2, NULL, ERR_NOMEM);
+      return PL_error(NULL, 0, MSG_ERRNO, ERR_SYSCALL, "setenv");
   } else
-    return PL_error("setenv", 2, NULL, ERR_NOMEM);
+    return PL_error(NULL, 0, NULL, ERR_NOMEM);
 #endif
   succeed;
 }
@@ -2245,7 +2290,12 @@ int
 Unsetenv(char *name)
 {
 #ifdef HAVE_UNSETENV
+#ifdef VOID_UNSETENV
   unsetenv(name);
+#else
+  if ( unsetenv(name) < 0 )
+    return PL_error(NULL, 0, MSG_ERRNO, ERR_SYSCALL, "unsetenv");
+#endif
 
   succeed;
 #else
@@ -2881,7 +2931,11 @@ Pause(real t)
 
 int
 Pause(real t)
-{ usleep((unsigned long)(t * 1000000.0));
+{
+  if ( t <= 0.0 )
+    return;
+
+  usleep((unsigned long)(t * 1000000.0));
 
   return TRUE;
 }
@@ -2998,3 +3052,4 @@ Pause(real t)
 { return notImplemented("sleep", 1);
 }
 #endif
+

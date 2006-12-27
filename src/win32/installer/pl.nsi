@@ -88,6 +88,7 @@ Section "Base system (required)"
   File pl\library\ctypes.pl
   File pl\library\gensym.pl
   File pl\library\lists.pl
+  File pl\library\sort.pl
   File pl\library\ugraphs.pl
   File pl\library\occurs.pl
   File pl\library\ordsets.pl
@@ -96,6 +97,9 @@ Section "Base system (required)"
   File pl\library\nb_set.pl
   File pl\library\operators.pl
   File pl\library\heaps.pl
+  File pl\library\broadcast.pl
+  File pl\library\error.pl
+  File pl\library\pairs.pl
 
 ; WINDOWS
   File pl\library\dde.pl
@@ -260,6 +264,7 @@ Section "Package CLIB"
   File pl\bin\memfile.dll
   File pl\bin\mime.dll
   File pl\bin\socket.dll
+  File pl\bin\random.dll
   File pl\bin\time.dll
   File pl\bin\readutil.dll
   SetOutPath $INSTDIR\library
@@ -268,6 +273,7 @@ Section "Package CLIB"
   File pl\library\mime.pl
   File pl\library\socket.pl
   File pl\library\prolog_server.pl
+  File pl\library\random.pl
   File pl\library\time.pl
   SetOutPath $INSTDIR\doc\packages
   File pl\doc\packages\clib.html
@@ -363,6 +369,17 @@ Section "NLP package"
   File pl\doc\packages\nlp.html
 SectionEnd
 
+Section "ZLIB package"
+  SectionIn 1 3
+  SetOutPath $INSTDIR\bin
+  File pl\bin\zlib4pl.dll
+  File pl\bin\zlib1.dll
+  SetOutPath $INSTDIR\library
+  File pl\library\zlib.pl
+  SetOutPath $INSTDIR\doc\packages
+  File pl\doc\packages\zlib.html
+SectionEnd
+
 Section "Unit test package"
   SectionIn 1 3
   SetOutPath $INSTDIR\library
@@ -406,6 +423,7 @@ Section "C Debugging Symbols (.pdb files)"
   File pl\bin\time.pdb
   File pl\bin\readutil.pdb
   File pl\bin\ssl4pl.pdb
+  File pl\bin\zlib4pl.pdb
 SectionEnd
 
 Section "Sources for system predicates"

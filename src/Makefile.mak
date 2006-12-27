@@ -65,15 +65,15 @@ HDR=	config.h parms.h pl-buffer.h pl-ctype.h pl-incl.h pl-itf.h pl-main.h \
 	pl-os.h pl-data.h
 
 PLSRC=	../boot/syspred.pl ../boot/toplevel.pl ../boot/license.pl \
-	../boot/sort.pl ../boot/bags.pl ../boot/apply.pl \
+	../boot/bags.pl ../boot/apply.pl \
 	../boot/writef.pl ../boot/history.pl \
 	../boot/dwim.pl ../boot/rc.pl \
 	../boot/parms.pl ../boot/autoload.pl ../boot/qlf.pl \
 	../boot/topvars.pl ../boot/messages.pl ../boot/load.pl ../boot/menu.pl
 PLWINLIBS=	wise.pl dde.pl progman.pl registry.pl
-PLLIBS= MANUAL helpidx.pl help.pl explain.pl \
+PLLIBS= MANUAL helpidx.pl help.pl explain.pl sort.pl \
 	qsave.pl shlib.pl statistics.pl system.pl \
-	backcomp.pl gensym.pl listing.pl debug.pl \
+	backcomp.pl gensym.pl listing.pl debug.pl error.pl \
 	bim.pl quintus.pl edinburgh.pl ctypes.pl files.pl \
 	edit.pl emacs_interface.pl shell.pl check.pl ugraphs.pl \
 	tty.pl readln.pl readutil.pl make.pl option.pl date.pl \
@@ -81,7 +81,7 @@ PLLIBS= MANUAL helpidx.pl help.pl explain.pl \
 	www_browser.pl url.pl utf8.pl win_menu.pl assoc.pl nb_set.pl \
 	qpforeign.pl dif.pl when.pl prolog_stack.pl prolog_clause.pl \
 	prolog_xref.pl checklast.pl checkselect.pl operators.pl \
-	prolog_source.pl \
+	prolog_source.pl broadcast.pl pairs.pl \
 	$(PLWINLIBS)
 !IF "$(MT)" == "true"
 PLLIBS=$(PLLIBS) threadutil.pl

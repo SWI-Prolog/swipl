@@ -47,25 +47,32 @@ pl_getenv(term_t var, term_t value)
 { char *n;
 
   if ( PL_get_chars_ex(var, &n, CVT_ALL|REP_FN) )
-  { int len = getenvl(n);
+  { char buf[1024];
+    int size;
 
-    if ( len >= 0 )
-    { char *buf	= alloca(len+1);
-      
-      if ( buf )
-      { char *s;
-
-	if ( (s=getenv3(n, buf, len+1)) )
-	  return PL_unify_chars(value, PL_ATOM|REP_FN, -1, s);
+    if ( (size=getenv3(n, buf, sizeof(buf))) >= 0 )
+    { if ( size < sizeof(buf) )
+      { return PL_unify_chars(value, PL_ATOM|REP_FN, size, buf);
       } else
-	return PL_error("getenv", 2, NULL, ERR_NOMEM);
+      { char *buf = PL_malloc(size+1);
+        int rc;
+
+        size = getenv3(n, buf, size+1);
+        if ( size > 0 )
+          rc = PL_unify_chars(value, PL_ATOM|REP_FN, size, buf);
+        else
+          rc = FALSE;
+
+        PL_free(buf);
+        return rc;
+      }
     }
 
     fail;
   }
 
   fail;
-}  
+}
 
 
 word
@@ -74,9 +81,7 @@ pl_setenv(term_t var, term_t value)
 
   if ( PL_get_chars_ex(var, &n, CVT_ALL|REP_FN|BUF_RING) &&
        PL_get_chars_ex(value, &v, CVT_ALL|REP_FN) )
-  { Setenv(n, v);
-    succeed;
-  }
+    return Setenv(n, v);
 
   fail;
 }
@@ -87,10 +92,7 @@ pl_unsetenv(term_t var)
 { char *n;
 
   if ( PL_get_chars_ex(var, &n, CVT_ALL|REP_FN) )
-  { Unsetenv(n);
-
-    succeed;
-  }
+    return Unsetenv(n);
 
   fail;
 }

@@ -496,22 +496,6 @@ PRED_IMPL("win_shell", 3, win_shell3, 0)
 }
 
 
-char *
-getenv3(const char *name, char *buf, unsigned int len)
-{ if ( GetEnvironmentVariable(name, buf, (DWORD)len) )
-    return buf;
-  
-  return NULL;
-}
-
-/* What does this return if the variable is not defined?
-*/
-
-int
-getenvl(const char *name)
-{ return GetEnvironmentVariable(name, NULL, 0);
-}
-
 #if _DEBUG
 void
 initHeapDebug(void)
@@ -578,10 +562,19 @@ interface.
 static char *dlmsg;
 
 void *
-dlopen(const char *file, int flags)
+dlopen(const char *file, int flags)	/* file is in UTF-8 */
 { HINSTANCE h;
+  int len = utf8_strlen(file, strlen(file));
+  wchar_t *wfile = alloca((len+1)*sizeof(wchar_t));
 
-  if ( (h = LoadLibrary(file)) )
+  if ( !wfile )
+  { dlmsg = "No memory";
+    return NULL;
+  }
+
+  utf8towcs(wfile, file);
+
+  if ( (h = LoadLibraryW(wfile)) )
   { dlmsg = "No Error";
     return (void *)h;
   }

@@ -121,6 +121,11 @@ noprofile(Spec)		 :- '$set_pattr'(Spec, (noprofile)).
 	call/4,
 	call/5,
 	call/6,
+	call/7,
+	call/8,
+	call/9,
+	call/10,
+	call/11,
 	(^)/2,
 	(not)/1,
 	(\+)/1,
@@ -868,6 +873,9 @@ load_files(Files, Options) :-
 	->  '$load_file'(Id, Module, Options)
 	;   throw(error(type_error(atom, Id), _))
 	).
+'$load_files'(X, _, _) :-
+	var(X), !,
+	throw(error(instantiation_error, _)).
 '$load_files'([], _, _) :- !.
 '$load_files'([H|T], Module, Options) :- !,
 	'$load_files'(H, Module, Options),

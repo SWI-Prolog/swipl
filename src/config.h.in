@@ -400,6 +400,9 @@
 /* Define to 1 if you have the `strlwr' function. */
 #undef HAVE_STRLWR
 
+/* Define is struct tm has tm_gmtoff */
+#undef HAVE_STRUCT_TIME_TM_GMTOFF
+
 /* Define to 1 if you have the <SupportDefs.h> header file. */
 #undef HAVE_SUPPORTDEFS_H
 
@@ -476,6 +479,9 @@
 
 /* Define to 1 if you have the `usleep' function. */
 #undef HAVE_USLEEP
+
+/* Define if tzset sets timezone variable */
+#undef HAVE_VAR_TIMEZONE
 
 /* Define to 1 if you have the `vfork' function. */
 #undef HAVE_VFORK
@@ -592,7 +598,7 @@
 /* The size of a `long long', as computed by sizeof. */
 #undef SIZEOF_LONG_LONG
 
-/* Define to the extension of shared objects (.so normally) */
+/* Define to the extension of shared objects (often .so) */
 #undef SO_EXT
 
 /* Program to use for linking shared objects */
@@ -600,6 +606,9 @@
 
 /* Flags to use for linking shared objects */
 #undef SO_LDFLAGS
+
+/* Search path for shared objects (often LD_LIBRARY_PATH) */
+#undef SO_PATH
 
 /* Flags for compiling position-independent BIG object */
 #undef SO_PIC
@@ -632,6 +641,9 @@
 
 /* Define if signal handler works compliant to POSIX.1b */
 #undef USE_SIGINFO
+
+/* Define if unsetenv() is void */
+#undef VOID_UNSETENV
 
 /* Define to 1 if your processor stores words with the most significant byte
    first (like Motorola and SPARC, unlike Intel and VAX). */
