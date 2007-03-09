@@ -1,2 +1,0 @@
-V	080226140317Z		A611836B46298A6F	unknown	/C=NL/ST=Noord-Holland/L=Amsterdam/O=Diff Automatisering/OU=Server/CN=J. van der Steen/emailAddress=J.van.der.Steen@diff.nl
-V	080226140535Z		A611836B46298A70	unknown	/C=NL/ST=Noord-Holland/L=Amsterdam/O=Diff Automatisering/OU=Client/CN=J. van der Steen/emailAddress=J.van.der.Steen@diff.nl
