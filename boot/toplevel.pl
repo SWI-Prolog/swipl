@@ -587,7 +587,7 @@ subst_chars([H|T]) -->
 %	=determinism= is considered more adequate and informative.
 
 write_bindings(Bindings, RVars, Det) :-
-	( '$attributed'(Bindings) ; Rvars = [_|_] ),
+	( '$attributed'(Bindings) ; RVars = [_|_] ),
 	copy_term(RVars-Bindings, _-Bindings1, Residuals0),
 	'$module'(TypeIn, TypeIn),
 	omit_qualifiers(Residuals0, TypeIn, Residuals),
