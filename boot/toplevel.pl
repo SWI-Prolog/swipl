@@ -565,11 +565,11 @@ subst_chars([H|T]) -->
 	'$execute_goal2'(TypeIn:Goal, Bindings).
 
 '$execute_goal2'(Goal, Bindings) :-
-	Goal,
+	call_residue_vars(Goal, RVars),
 	flush_output(user_output),
 	deterministic(Det),
 	call_expand_answer(Bindings, NewBindings),
-	(    write_bindings(NewBindings, Det)
+	(    write_bindings(NewBindings, RVars, Det)
 	->   !,
 	     notrace,
 	     fail
@@ -586,15 +586,15 @@ subst_chars([H|T]) -->
 %	for alternatives. =groundness= gives   the  classical behaviour,
 %	=determinism= is considered more adequate and informative.
 
-write_bindings(Bindings, Det) :-
-	'$attributed'(Bindings),
-	copy_term(Bindings, Bindings1, Residuals0),
+write_bindings(Bindings, RVars, Det) :-
+	( '$attributed'(Bindings) ; Rvars = [_|_] ),
+	copy_term(RVars-Bindings, _-Bindings1, Residuals0),
 	'$module'(TypeIn, TypeIn),
 	omit_qualifiers(Residuals0, TypeIn, Residuals),
 	bind_vars(Bindings1),
 	filter_bindings(Bindings1, Bindings2),
 	write_bindings2(Bindings2, Residuals, Det).
-write_bindings(Bindings, Det) :-
+write_bindings(Bindings, _, Det) :-
 	bind_vars(Bindings),
 	filter_bindings(Bindings, Bindings1),
 	write_bindings2(Bindings1, [], Det).
