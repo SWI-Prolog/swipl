@@ -45,7 +45,7 @@ plmandir=$(PLBASE)/man
 
 PLVERSION=@PLVERSION@
 GITCOMMIT=`git log | head -n 1 | cut -d " " -f 2`
-GITSTATUS=`if git status > /dev/null; then echo ""; else echo "MODIFIED"; fi`
+GITSTATUS=`if git status > /dev/null; then echo "MODIFIED"; else echo ""; fi`
 PL=@PL@@RT@
 PLV=@PL@@RT@-@PLVERSION@
 PLBASE=$(prefix)/lib/@PL@@RT@-@PLVERSION@
