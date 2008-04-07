@@ -44,6 +44,8 @@ lmandir=$(mandir)/man$(lmansec)
 plmandir=$(PLBASE)/man
 
 PLVERSION=@PLVERSION@
+GITCOMMIT=`git log | head -n 1 | cut -d " " -f 2`
+GITSTATUS=`if git status > /dev/null; then echo ""; else echo "MODIFIED"; fi`
 PL=@PL@@RT@
 PLV=@PL@@RT@-@PLVERSION@
 PLBASE=$(prefix)/lib/@PL@@RT@-@PLVERSION@
@@ -270,6 +272,8 @@ parms.h:	Makefile
 		@echo "#define DEFSTARTUP   \"$(DEFSTARTUP)\"" >> $@%
 		@echo $(PLVERSION) | \
 		$(AWK) -F. '{ printf("#define PLVERSION %d\n", $$1 * 10000 + $$2 * 100 + $$3); }' >> $@%
+		@echo "#define GITCOMMIT    \"$(GITCOMMIT)\""  >> $@%
+		@echo "#define GITSTATUS    \"$(GITSTATUS)\""  >> $@%
 		@echo "#define ARCH	    \"$(ARCH)\""       >> $@%
 		@echo "#define C_LIBS	    \"$(LNLIBS)\""     >> $@%
 		@echo "#define C_PLLIB	    \"$(USEPLLIB)\""   >> $@%
