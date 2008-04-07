@@ -44,7 +44,7 @@ static void	addUTF8Buffer(Buffer b, int c);
 		 *******************************/
 
 #define CharTypeW(c, t, w) \
-	((unsigned)(c) <= 0xff ? (_PL_char_types[(unsigned char)(c)] t) \
+	((unsigned)(c) <= 0xff ? (_PL_char_types[(unsigned)(c)] t) \
 			       : (uflagsW(c) & w))
 
 #define PlBlankW(c)	CharTypeW(c, <= SP, U_SEPARATOR)
@@ -1122,8 +1122,13 @@ warn_singleton(const char *name)	/* Name in UTF-8 */
     return TRUE;
   if ( name[1] == '_' )			/* __*: never warn */
     return FALSE;
-  if ( name[1] && !PlUpperW(name[1]) )	/* _a: warn */
-    return TRUE;
+  if ( name[1] )			/* _a: warn */
+  { int c;
+
+    utf8_get_char(&name[1], &c);
+    if ( !PlUpperW(c) )
+      return TRUE;
+  }
   return FALSE;
 }
 
@@ -3120,7 +3125,7 @@ atom_to_term(term_t atom, term_t term, term_t bindings)
     stream = Sopen_text(&txt, "r");
 
     init_read_data(&rd, stream PASS_LD);
-    if ( PL_is_variable(bindings) || PL_is_list(bindings) )
+    if ( bindings && (PL_is_variable(bindings) || PL_is_list(bindings)) )
       rd.varnames = bindings;
     else if ( bindings )
       return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_list, bindings);
