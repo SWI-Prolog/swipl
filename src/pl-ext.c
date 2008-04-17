@@ -154,16 +154,7 @@ static const PL_extension foreigns[] = {
   FRG("current_char_conversion",2, pl_current_char_conversion, NDET|ISO),
 
   FRG("!",			0, pl_metacut,		      ISO),
-  FRG("name",			2, pl_name,			0),
-  FRG("atom_chars",		2, pl_atom_chars,	      ISO),
-  FRG("atom_codes",		2, pl_atom_codes,	      ISO),
-  FRG("number_chars",		2, pl_number_chars,	      ISO),
-  FRG("number_codes",		2, pl_number_codes,	      ISO),
-  FRG("char_code",		2, pl_char_code,	      ISO),
   FRG("atom_concat",		3, pl_atom_concat,	 NDET|ISO),
-  FRG("$concat_atom",		2, pl_concat_atom,		0),
-  FRG("concat_atom",		3, pl_concat_atom3,		0),
-  FRG("atom_length",		2, pl_atom_length,	      ISO),
   FRG("$e_free_variables",	2, pl_e_free_variables,		0),
 
   FRG("$open_wic",		1, pl_open_wic,			0),
@@ -295,9 +286,6 @@ static const PL_extension foreigns[] = {
 
 #if O_STRING
   FRG("string_concat",		3, pl_string_concat,	     NDET),
-  FRG("string_length",		2, pl_string_length,		0),
-  FRG("string_to_atom",		2, pl_string_to_atom,		0),
-  FRG("string_to_list",		2, pl_string_to_list,		0),
   FRG("sub_string",		5, pl_sub_string,	     NDET),
 #endif /* O_STRING */
 
@@ -375,9 +363,6 @@ static const PL_extension foreigns[] = {
   FRG("thread_join",		2, pl_thread_join,	      ISO),
   FRG("thread_exit",		1, pl_thread_exit,		0),
   FRG("thread_kill",		2, pl_thread_kill,              0),
-  FRG("thread_send_message",	2, pl_thread_send_message,    ISO),
-  FRG("thread_get_message",	1, pl_thread_get_message,     ISO),
-  FRG("thread_peek_message",	1, pl_thread_peek_message,    ISO),
   FRG("thread_signal",		2, pl_thread_signal,	 META|ISO),
   FRG("thread_at_exit",		1, pl_thread_at_exit,	     META),
   FRG("mutex_destroy",		1, pl_mutex_destroy,	      ISO),

@@ -139,8 +139,9 @@ extern counting_mutex _PL_mutexes[];	/* Prolog mutexes */
 #define L_INIT	       14
 #define L_TERM	       15
 #define L_GC	       16
-#define L_FOREIGN      17
-#define L_OS	       18
+#define L_AGC	       17
+#define L_FOREIGN      18
+#define L_OS	       19
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 The IF_MT(id, g) macro  is  used  to   bypass  mutexes  if  threading  is
@@ -307,9 +308,6 @@ extern word		pl_thread_create(term_t goal, term_t id,
 extern word		pl_thread_join(term_t thread, term_t retcode);
 extern word		pl_thread_exit(term_t retcode);
 extern word		pl_thread_kill(term_t thread, term_t sig);
-extern word		pl_thread_send_message(term_t thread, term_t msg);
-extern word		pl_thread_get_message(term_t msg);
-extern word		pl_thread_peek_message(term_t msg);
 extern foreign_t	pl_thread_signal(term_t thread, term_t goal);
 
 extern foreign_t	pl_thread_at_exit(term_t goal);
@@ -340,6 +338,7 @@ intptr_t			system_thread_id(PL_thread_info_t *info);
 void		forThreadLocalData(void (*func)(struct PL_local_data *),
 				   unsigned flags);
 void		resumeThreads(void);
+void		markAtomsThreads(void);
 
 #define PL_THREAD_SUSPEND_AFTER_WORK	0x1 /* forThreadLocalData() */
 
@@ -438,5 +437,7 @@ extern void		initPrologThreads(void);
 #define PL_is_atom(t)		PL_is_atom__LD(t PASS_LD)
 #define PL_unify_list(l, h, t)	PL_unify_list__LD(l, h, t PASS_LD)
 #define PL_cons_list(l, h, t)	PL_cons_list__LD(l, h, t PASS_LD)
+#define PL_get_text(l, t, f)	PL_get_text__LD(l, t, f PASS_LD)
+#define PL_unify_int64_ex(t, i)	PL_unify_int64_ex__LD(t, i PASS_LD)
 
 #endif /*PL_THREAD_H_DEFINED*/

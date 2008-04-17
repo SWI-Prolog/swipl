@@ -62,7 +62,6 @@ COMMON(word) 		consPtr(void *p, word ts);
 #endif
 COMMON(char *) 		store_string(const char *s);
 COMMON(void) 		remove_string(char *s);
-COMMON(int) 		unboundStringHashValue(const char *t, size_t l);
 #ifndef xmalloc
 COMMON(void *) 		xmalloc(size_t size);
 COMMON(void *) 		xrealloc(void *mem, size_t size);
@@ -132,8 +131,7 @@ COMMON(void)		popArgvArithStack(int n ARG_LD);
 COMMON(int)		ar_sign_i(Number n1);
 
 /* pl-bag.c */
-COMMON(void) 		resetBags(void);
-COMMON(int)  		checkBags(void);
+COMMON(void)		markAtomsFindall(PL_local_data_t *ld);
 
 /* pl-comp.c */
 COMMON(void) 		initWamTable(void);
@@ -375,6 +373,7 @@ COMMON(term_t) 		PL_new_term_ref__LD(ARG1_LD);
 COMMON(term_t) 		PL_new_term_refs__LD(int n ARG_LD);
 COMMON(int) 		PL_unify__LD(term_t t1, term_t t2 ARG_LD);
 COMMON(int) 		PL_unify_integer__LD(term_t t1, intptr_t i ARG_LD);
+COMMON(int)		PL_unify_int64_ex__LD(term_t t1, int64_t ARG_LD);
 COMMON(int) 		PL_get_atom__LD(term_t t1, atom_t *a ARG_LD);
 COMMON(void) 		PL_put_atom__LD(term_t t1, atom_t a ARG_LD);
 COMMON(void) 		PL_put_integer__LD(term_t t1, long i ARG_LD);
@@ -550,25 +549,13 @@ COMMON(intptr_t) 	lengthList(term_t list, int errors);
 COMMON(int) 		numberVars(term_t t, nv_options *opts, int n ARG_LD);
 COMMON(word) 		pl_e_free_variables(term_t t, term_t l);
 COMMON(word) 		stringToList(char *s);
-COMMON(word) 		pl_atom_length(term_t w, term_t n);
-COMMON(word) 		pl_name(term_t atom, term_t string);
-COMMON(word) 		pl_atom_chars(term_t atom, term_t string);
-COMMON(word) 		pl_atom_codes(term_t atom, term_t string);
-COMMON(word) 		pl_number_chars(term_t number, term_t string);
-COMMON(word) 		pl_number_codes(term_t number, term_t string);
-COMMON(word) 		pl_char_code(term_t atom, term_t chr);
 COMMON(word) 		pl_atom_concat(term_t a1, term_t a2, term_t a3,
 				       control_t ctx);
-COMMON(word) 		pl_concat_atom(term_t list, term_t atom);
-COMMON(word) 		pl_concat_atom3(term_t list, term_t sep, term_t atom);
 COMMON(word) 		pl_apropos_match(term_t a1, term_t a2);
 COMMON(foreign_t) 	pl_sub_atom(term_t atom,
 				    term_t before, term_t len, term_t after,
 				    term_t sub, control_t h);
-COMMON(word) 		pl_string_length(term_t str, term_t l);
 COMMON(word) 		pl_string_concat(term_t a1, term_t a2, term_t a3, control_t h);
-COMMON(word) 		pl_string_to_atom(term_t str, term_t a);
-COMMON(word) 		pl_string_to_list(term_t str, term_t list);
 COMMON(word) 		pl_sub_string(term_t str,
 			      term_t offset, term_t length, term_t after,
 			      term_t sub, control_t h);
@@ -706,6 +693,7 @@ COMMON(word) 		pl_recorded(term_t key, term_t term, term_t ref, control_t h);
 COMMON(word) 		pl_erase(term_t ref);
 COMMON(word) 		pl_term_complexity(term_t t, term_t mx, term_t count);
 COMMON(void) 		undo_while_saving_term(mark *m, Word term);
+COMMON(void)		markAtomsRecord(Record record);
 
 /* pl-rl.c */
 COMMON(void) 		install_rl(void);

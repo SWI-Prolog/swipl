@@ -986,12 +986,8 @@ PRED_IMPL("deterministic", 1, deterministic, 0)
 		 *	    HASH-TERM		*
 		 *******************************/
 
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-Should this be int64_t for compatibility?
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
 static bool
-termHashValue(word term, intptr_t *hval ARG_LD)
+termHashValue(word term, unsigned int *hval ARG_LD)
 { for(;;)
   { switch(tag(term))
     { case TAG_VAR:
@@ -1005,33 +1001,25 @@ termHashValue(word term, intptr_t *hval ARG_LD)
 	char *s;
 
 	s = getCharsString(term, &len);
-	*hval += unboundStringHashValue(s, len);
+	*hval += MurmurHashAligned2(s, len, MURMUR_SEED);
 
         succeed;
       }
       case TAG_INTEGER:
 	if ( storage(term) == STG_INLINE )
-	{ *hval += valInt(term);
-	} else
-	{ Word p = valIndirectP(term);
-#if SIZEOF_VOIDP == 4
-	  *hval += p[0]^p[1];
-#else
-	  *hval += p[0];
-#endif
-	}
-        succeed;
+	{ int64_t v = valInt(term);
+	  
+	  *hval += MurmurHashAligned2(&v, sizeof(v), MURMUR_SEED);
+	  succeed;
+	} 
+      /*FALLTHROUGH*/
       case TAG_FLOAT:
-      { int i;
-	intptr_t *p = (intptr_t *)valIndirectP(term);
-	intptr_t h = *p;
-
-	for(p++, i=WORDS_PER_DOUBLE-1; --i >= 0; )
-	  h ^= *p++;
-	*hval += h;
-
-	succeed;
-      }
+	{ Word p = addressIndirect(term);
+	  size_t n = wsizeofInd(*p);
+	  
+	  *hval += MurmurHashAligned2(p+1, n*sizeof(word), MURMUR_SEED);
+	  succeed;
+	}
       case TAG_COMPOUND:
       { Functor t = valueTerm(term);
 	functor_t f = t->definition;
@@ -1041,7 +1029,7 @@ termHashValue(word term, intptr_t *hval ARG_LD)
 	int rc = TRUE;
 
 	if ( visited(t PASS_LD) )
-	{ *hval = -(*hval);
+	{ *hval = ~(*hval);
 	  succeed;
 	}
 
@@ -1064,7 +1052,7 @@ termHashValue(word term, intptr_t *hval ARG_LD)
         return rc;
       }
       case TAG_REFERENCE:
-	term += *unRef(term);
+	term = *unRef(term);
         continue;
       default:
 	assert(0);
@@ -1073,13 +1061,13 @@ termHashValue(word term, intptr_t *hval ARG_LD)
 }
 
 
-/* hash_term(+Term, -HashKey */
+/* hash_term(+Term, -HashKey) */
 
 static
 PRED_IMPL("hash_term", 2, hash_term, 0)
 { PRED_LD
   Word p = valTermRef(A1);
-  intptr_t hraw = 0L;
+  unsigned int hraw = 0L;
   int rc;
 
   deRef(p);
@@ -1088,7 +1076,7 @@ PRED_IMPL("hash_term", 2, hash_term, 0)
   assert(empty_visited(PASS_LD1));
 
   if ( rc )
-  { hraw = hraw & PLMAXTAGGEDINT;	/* ensure tagged */
+  { hraw = hraw & PLMAXTAGGEDINT32;	/* ensure tagged (portable) */
 
     return PL_unify_integer(A2, hraw);
   }
@@ -2941,16 +2929,14 @@ PRED_IMPL("copy_term_nat", 2, copy_term_nat, 0)
   fail;
 }
 
-#undef LD
-#define LD GLOBAL_LD
-
 		 /*******************************
 		 *	       ATOMS		*
 		 *******************************/
 
-word
-pl_atom_length(term_t w, term_t n)
-{ int flags;
+static
+PRED_IMPL("atom_length", 2, atom_length, PL_FA_ISO)
+{ PRED_LD
+  int flags;
   PL_chars_t txt;
 
   if ( trueFeature(ISO_FEATURE) )
@@ -2958,16 +2944,8 @@ pl_atom_length(term_t w, term_t n)
   else
     flags = CVT_ALL|CVT_EXCEPTION;
 
-  if ( PL_get_text(w, &txt, flags) )
-  { int nval;
-
-    if ( PL_is_variable(n) )
-      return PL_unify_integer(n, txt.length);
-    else if ( PL_get_integer(n, &nval) )
-      return nval == (int)txt.length ? TRUE	: FALSE;
-    else
-      return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_integer, n);
-  }
+  if ( PL_get_text(A1, &txt, flags) )
+    return PL_unify_int64_ex(A2, txt.length);
 
   fail;
 }
@@ -2980,7 +2958,7 @@ pl_atom_length(term_t w, term_t n)
 #define X_CHARS  0x10
 
 static word
-x_chars(const char *pred, term_t atom, term_t string, int how)
+x_chars(const char *pred, term_t atom, term_t string, int how ARG_LD)
 { char *s;
   pl_wchar_t *ws;
   size_t len;
@@ -3051,40 +3029,48 @@ x_chars(const char *pred, term_t atom, term_t string, int how)
 }
 
 
-word
-pl_name(term_t atom, term_t string)
-{ return x_chars("name", atom, string, X_AUTO);
+static
+PRED_IMPL("name", 2, name, 0)
+{ PRED_LD
+  return x_chars("name", A1, A2, X_AUTO PASS_LD);
 }
 
 
-word
-pl_atom_chars(term_t atom, term_t string)
-{ return x_chars("atom_chars", atom, string, X_ATOM|X_CHARS);
+static
+PRED_IMPL("atom_chars", 2, atom_chars, PL_FA_ISO)
+{ PRED_LD
+  return x_chars("atom_chars", A1, A2, X_ATOM|X_CHARS PASS_LD);
 }
 
 
-word
-pl_atom_codes(term_t atom, term_t string)
-{ return x_chars("atom_codes", atom, string, X_ATOM);
+static
+PRED_IMPL("atom_codes", 2, atom_codes, PL_FA_ISO)
+{ PRED_LD
+  return x_chars("atom_codes", A1, A2, X_ATOM PASS_LD);
 }
 
 
-word
-pl_number_chars(term_t atom, term_t string)
-{ return x_chars("number_chars", atom, string, X_NUMBER|X_CHARS);
+static
+PRED_IMPL("number_chars", 2, number_chars, PL_FA_ISO)
+{ PRED_LD
+  return x_chars("number_chars", A1, A2, X_NUMBER|X_CHARS PASS_LD);
 }
 
 
-word
-pl_number_codes(term_t atom, term_t string)
-{ return x_chars("number_chars", atom, string, X_NUMBER);
+static
+PRED_IMPL("number_codes", 2, number_codes, PL_FA_ISO)
+{ PRED_LD
+  return x_chars("number_chars", A1, A2, X_NUMBER PASS_LD);
 }
 
 
-word
-pl_char_code(term_t atom, term_t chr)
-{ PL_chars_t txt;
+static
+PRED_IMPL("char_code", 2, char_code, PL_FA_ISO)
+{ PRED_LD
+  PL_chars_t txt;
   int n;
+  term_t atom = A1;
+  term_t chr  = A2;
   int vatom = PL_is_variable(atom);
   int vchr  = PL_is_variable(chr);
   int achr = -1;
@@ -3125,7 +3111,8 @@ pl_char_code(term_t atom, term_t chr)
 
 static
 PRED_IMPL("atom_number", 2, atom_number, 0)
-{ char *s;
+{ PRED_LD
+  char *s;
   size_t len;
 
   if ( PL_get_nchars(A1, &len, &s, CVT_ATOM|CVT_STRING) )
@@ -3137,8 +3124,10 @@ PRED_IMPL("atom_number", 2, atom_number, 0)
     else
       return PL_error(NULL, 0, NULL, ERR_SYNTAX, "illegal_number");
   } else if ( PL_get_nchars(A2, &len, &s, CVT_NUMBER) )
-    return PL_unify_atom_nchars(A1, len, s);
-  else if ( !PL_is_variable(A2) )
+  { return PL_unify_atom_nchars(A1, len, s);
+  }
+
+  if ( !PL_is_variable(A2) )
     return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_number, A2);
   else
     return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_atom, A1);
@@ -3177,13 +3166,13 @@ PRED_IMPL("collation_key", 2, collation_key, 0)
 #endif
 }
 
-
 static word
 concat(const char *pred,
        term_t a1, term_t a2, term_t a3, 
        control_t ctx,
        int otype)			/* PL_ATOM or PL_STRING */
-{ PL_chars_t t1, t2, t3;
+{ GET_LD
+  PL_chars_t t1, t2, t3;
   int rc;
 
 #define L1 t1.length
@@ -3286,7 +3275,7 @@ pl_atom_concat(term_t a1, term_t a2, term_t a3, control_t ctx)
 
 
 static int
-split_atom(term_t list, term_t sep, term_t atom)
+split_atom(term_t list, term_t sep, term_t atom ARG_LD)
 { PL_chars_t st, at;
   size_t i, last;
   term_t tail = PL_copy_term_ref(list);
@@ -3358,8 +3347,8 @@ append_text_to_buffer(Buffer b, PL_chars_t *txt, IOENC *enc)
 }
 
 
-word
-pl_concat_atom3(term_t list, term_t sep, term_t atom)
+static foreign_t
+concat_atom(term_t list, term_t sep, term_t atom ARG_LD)
 { term_t l = PL_copy_term_ref(list);
   term_t head = PL_new_term_ref();
   IOENC enc = ENC_ISO_LATIN_1;
@@ -3376,7 +3365,7 @@ pl_concat_atom3(term_t list, term_t sep, term_t atom)
 
     if ( !PL_get_text(head, &txt, CVT_ATOMIC) )
     { discardBuffer(&b);
-      switch(split_atom(list, sep, atom))
+      switch(split_atom(list, sep, atom PASS_LD))
       { case -1:
 	  return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_text, head);
 	case 0:
@@ -3417,7 +3406,7 @@ pl_concat_atom3(term_t list, term_t sep, term_t atom)
   }
 
   discardBuffer(&b);
-  switch(split_atom(list, sep, atom))
+  switch(split_atom(list, sep, atom PASS_LD))
   { case -1:
       return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_list, l);
     case 0:
@@ -3428,9 +3417,17 @@ pl_concat_atom3(term_t list, term_t sep, term_t atom)
 }
 
 
-word
-pl_concat_atom(term_t list, term_t atom)
-{ return pl_concat_atom3(list, 0, atom);
+static
+PRED_IMPL("concat_atom", 3, concat_atom3, 0)
+{ PRED_LD
+  return concat_atom(A1, A2, A3 PASS_LD);
+}
+
+
+static
+PRED_IMPL("$concat_atom", 2, concat_atom2, 0)
+{  PRED_LD
+  return concat_atom(A1, 0, A2 PASS_LD);
 }
 
 
@@ -3516,7 +3513,7 @@ typedef struct
 
 
 static int
-get_positive_integer_or_unbound(term_t t, ssize_t *v)
+get_positive_integer_or_unbound(term_t t, ssize_t *v ARG_LD)
 { long i;
 
   if ( PL_get_long(t, &i) )		/* TBD: should be ssize_t */
@@ -3541,7 +3538,8 @@ sub_text(term_t atom,
 	 term_t before, term_t len, term_t after,
 	 term_t sub,
 	 control_t h,
-	 int type)			/* PL_ATOM or PL_STRING */
+	 int type			/* PL_ATOM or PL_STRING */
+	 ARG_LD)
 { PL_chars_t ta, ts;			/* the strings */
   ssize_t b = -1, l = -1, a = -1;	/* the integers */
   sub_state *state;			/* non-deterministic state */
@@ -3557,9 +3555,9 @@ sub_text(term_t atom,
     { if ( !PL_get_text(atom, &ta, CVT_ATOMIC) )
 	return PL_error(NULL, 0, NULL, ERR_TYPE, expected, atom);
 
-      if ( !get_positive_integer_or_unbound(before, &b) ||
-	   !get_positive_integer_or_unbound(len, &l) ||
-	   !get_positive_integer_or_unbound(after, &a) )
+      if ( !get_positive_integer_or_unbound(before, &b PASS_LD) ||
+	   !get_positive_integer_or_unbound(len, &l PASS_LD) ||
+	   !get_positive_integer_or_unbound(after, &a PASS_LD) )
 	fail;
 
       if ( !PL_get_text(sub, &ts, CVT_ATOMIC) )
@@ -3786,7 +3784,8 @@ pl_sub_atom(term_t atom,
 	    term_t before, term_t len, term_t after,
 	    term_t sub,
 	    control_t h)
-{ return sub_text(atom, before, len, after, sub, h, PL_ATOM);
+{ GET_LD
+  return sub_text(atom, before, len, after, sub, h, PL_ATOM PASS_LD);
 }
 
 
@@ -3795,14 +3794,15 @@ pl_sub_atom(term_t atom,
 Provisional String manipulation functions.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-word
-pl_string_length(term_t str, term_t l)
-{ PL_chars_t t;
+static
+PRED_IMPL("string_length", 2, string_length, 0)
+{ PRED_LD
+  PL_chars_t t;
 
-  if ( PL_get_text(str, &t, CVT_ALL) )
-    return PL_unify_integer(l, t.length);
+  if ( PL_get_text(A1, &t, CVT_ALL|CVT_EXCEPTION) )
+    return PL_unify_int64_ex(A2, t.length);
 
-  return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_string, str);
+  fail;
 }
 
 
@@ -3812,9 +3812,12 @@ pl_string_concat(term_t a1, term_t a2, term_t a3, control_t h)
 }
 
 
-word
-pl_string_to_atom(term_t str, term_t a)
-{ PL_chars_t t;
+static
+PRED_IMPL("string_to_atom", 2, string_to_atom, 0)
+{ PRED_LD
+  term_t str = A1;
+  term_t a = A2;
+  PL_chars_t t;
 
   if ( PL_get_text(str, &t, CVT_ALL) )
     return PL_unify_text(a, 0, &t, PL_ATOM);
@@ -3825,9 +3828,12 @@ pl_string_to_atom(term_t str, term_t a)
 }
 
 
-word
-pl_string_to_list(term_t str, term_t list)
-{ PL_chars_t t;
+static
+PRED_IMPL("string_to_list", 2, string_to_list, 0)
+{ PRED_LD
+  term_t str = A1;
+  term_t list = A2;
+  PL_chars_t t;
 
   if ( PL_get_text(str, &t, CVT_ALL) )
     return PL_unify_text(list, 0, &t, PL_CODE_LIST);
@@ -3845,11 +3851,11 @@ pl_sub_string(term_t atom,
 	      term_t before, term_t len, term_t after,
 	      term_t sub,
 	      control_t h)
-{ return sub_text(atom, before, len, after, sub, h, PL_STRING);
+{ GET_LD
+  return sub_text(atom, before, len, after, sub, h, PL_STRING PASS_LD);
 }
 
 #endif /* O_STRING */
-
 
 
 		/********************************
@@ -3884,7 +3890,8 @@ pl_halt(term_t code)
 
 #ifdef O_PLMT
   if ( PL_thread_self() != 1 )
-  { term_t t = PL_new_term_ref();
+  { GET_LD
+    term_t t = PL_new_term_ref();
 
     pl_thread_self(t);
     return PL_error("halt", 1, "Only from thread `main'",
@@ -3939,7 +3946,8 @@ query.
 
 word
 pl_depth_limit(term_t limit, term_t olimit, term_t oreached)
-{ long levels;
+{ GET_LD
+  long levels;
   long clevel = levelFrame(environment_frame) - 1;
 
   if ( PL_get_long_ex(limit, &levels) )
@@ -3961,7 +3969,8 @@ pl_depth_limit_true(term_t limit, term_t olimit, term_t oreached,
 		    term_t res, term_t cut, control_t b)
 { switch(ForeignControl(b))
   { case FRG_FIRST_CALL:
-    { long l, ol, or;
+    { GET_LD
+      long l, ol, or;
 
       if ( PL_get_long_ex(limit, &l) &&
 	   PL_get_long_ex(olimit, &ol) &&
@@ -4002,7 +4011,8 @@ pl_depth_limit_true(term_t limit, term_t olimit, term_t oreached,
       break;
     }
     case FRG_REDO:
-    { long levels;
+    { GET_LD
+      long levels;
       long clevel = levelFrame(environment_frame) - 1;
 
       PL_get_long_ex(limit, &levels);
@@ -4021,7 +4031,8 @@ pl_depth_limit_true(term_t limit, term_t olimit, term_t oreached,
 
 static
 PRED_IMPL("$depth_limit_false", 3, depth_limit_false, 0)
-{ long ol, or;
+{ PRED_LD
+  long ol, or;
 
   if ( PL_get_long_ex(A1, &ol) &&
        PL_get_long_ex(A2, &or) )
@@ -4040,7 +4051,8 @@ PRED_IMPL("$depth_limit_false", 3, depth_limit_false, 0)
 
 static
 PRED_IMPL("$depth_limit_except", 3, depth_limit_except, 0)
-{ long ol, or;
+{ PRED_LD
+  long ol, or;
 
   if ( PL_get_long_ex(A1, &ol) &&
        PL_get_long_ex(A2, &or) )
@@ -4053,15 +4065,12 @@ PRED_IMPL("$depth_limit_except", 3, depth_limit_except, 0)
   fail;
 }
 
-
 #endif /*O_LIMIT_DEPTH*/
+
 
 		/********************************
 		*          STATISTICS           *
 		*********************************/
-
-#undef LD
-#define LD LOCAL_LD			/* must be an argument! */
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Fetch runtime statistics. There are two standards  here. One is based on
@@ -4591,8 +4600,20 @@ BeginPredDefs(prims)
   PRED_DEF("$depth_limit_except", 3, depth_limit_except, 0)
   PRED_DEF("$depth_limit_false",  3, depth_limit_false, 0)
 #endif
+  PRED_DEF("atom_length", 2, atom_length, PL_FA_ISO)
+  PRED_DEF("name", 2, name, 0)
+  PRED_DEF("atom_chars", 2, atom_chars, PL_FA_ISO)
+  PRED_DEF("atom_codes", 2, atom_codes, PL_FA_ISO)
+  PRED_DEF("number_chars", 2, number_chars, PL_FA_ISO)
+  PRED_DEF("number_codes", 2, number_codes, PL_FA_ISO)
+  PRED_DEF("char_code", 2, char_code, PL_FA_ISO)
   PRED_DEF("atom_number", 2, atom_number, 0)
   PRED_DEF("collation_key", 2, collation_key, 0)
+  PRED_DEF("concat_atom", 3, concat_atom3, 0)
+  PRED_DEF("$concat_atom", 2, concat_atom2, 0)
+  PRED_DEF("string_length", 2, string_length, 0)
+  PRED_DEF("string_to_atom", 2, string_to_atom, 0)
+  PRED_DEF("string_to_list", 2, string_to_list, 0)
   PRED_DEF("statistics", 2, statistics, 0)
   PRED_DEF("$option", 3, option, PL_FA_NONDETERMINISTIC)
   PRED_DEF("$style_check", 2, style_check, 0)

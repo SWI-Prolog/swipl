@@ -407,10 +407,6 @@ typedef struct PL_local_data
   } atoms;
 
   struct
-  { struct assoc* bags;			/* findall/setof bags storage */
-  } bags;
-
-  struct
   { VarDef *	vardefs;		/* compiler variable analysis */
     int		nvardefs;
     int		filledVars;
@@ -449,6 +445,12 @@ typedef struct PL_local_data
   struct
   { FindData	find;			/* /<ports> <goal> in tracer */
   } trace;
+
+#ifdef O_ATOMGC
+  struct
+  { struct findall_bag *bags;		/* Known bags */
+  } bags;
+#endif
 
   struct
   { AbortHandle	_abort_head;		/* PL_abort_hook() */

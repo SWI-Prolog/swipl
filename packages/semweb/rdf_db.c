@@ -59,6 +59,7 @@
 #include "atom.h"
 #include "debug.h"
 #include "hash.h"
+#include "murmur.h"
 
 #undef UNLOCK
 
@@ -258,6 +259,7 @@ static void	record_md5_transaction(rdf_db *db,
 static void	create_reachability_matrix(rdf_db *db, predicate_cloud *cloud);
 static int	get_predicate(rdf_db *db, term_t t, predicate **p);
 static predicate_cloud *new_predicate_cloud(rdf_db *db, predicate **p, size_t count);
+static int	unify_literal(term_t lit, literal *l);
 
 
 		 /*******************************
@@ -1500,6 +1502,28 @@ rdf_set_graph_source(term_t graph_name, term_t source)
 		 *	     LITERALS		*
 		 *******************************/
 
+#define LITERAL_EX_MAGIC 0x2b97e881
+
+typedef struct literal_ex
+{ literal  *literal;
+  atom_info atom;
+#ifdef O_SECURE
+  long	    magic;
+#endif
+} literal_ex;
+
+
+static inline void
+prepare_literal_ex(literal_ex *lex)
+{ SECURE(lex->magic = 0x2b97e881);
+
+  if ( lex->literal->objtype == OBJ_STRING )
+  { lex->atom.handle = lex->literal->value.string;
+    lex->atom.resolved = FALSE;
+  }
+}
+
+
 static literal *
 new_literal(rdf_db *db)
 { literal *lit = rdf_malloc(db, sizeof(*lit));
@@ -1516,13 +1540,19 @@ free_literal(rdf_db *db, literal *lit)
   { unlock_atoms_literal(lit);
 
     if ( lit->shared && !db->resetting )
-    { lit->shared = FALSE;
+    { literal_ex lex;
+
+      lit->shared = FALSE;
       broadcast(EV_OLD_LITERAL, lit, NULL);
       DEBUG(2,
 	    Sdprintf("Delete %p from literal table: ", lit);
 	    print_literal(lit);
 	    Sdprintf("\n"));
-      if ( !avldel(&db->literals, &lit) )
+
+      lex.literal = lit;
+      prepare_literal_ex(&lex);
+
+      if ( !avldel(&db->literals, &lex) )
       { Sdprintf("Failed to delete %p (size=%ld): ", lit, db->literals.count);
 	print_literal(lit);
 	Sdprintf("\n");
@@ -1608,8 +1638,11 @@ compare_literals() sorts literals.  Ordering is defined as:
 
 static int
 compare_literals(void *p1, void *p2, NODE type)
-{ literal *l1 = *(literal**)p1;
+{ literal_ex *lex = p1;
+  literal *l1 = lex->literal;
   literal *l2 = *(literal**)p2;
+
+  SECURE(assert(lex->magic == LITERAL_EX_MAGIC));
 
   if ( l1->objtype == l2->objtype )
   { switch(l1->objtype)
@@ -1624,7 +1657,7 @@ compare_literals(void *p1, void *p2, NODE type)
 	return v1 < v2 ? -1 : v1 > v2 ? 1 : 0;
       }
       case OBJ_STRING:
-      { int rc = cmp_atoms(l1->value.string, l2->value.string);
+      { int rc = cmp_atom_info(&lex->atom, l2->value.string);
 	
 	if ( rc == 0 )
 	{ if ( l1->qualifier == l2->qualifier )
@@ -1639,7 +1672,7 @@ compare_literals(void *p1, void *p2, NODE type)
 	term_t t2 = PL_new_term_ref();
 	int rc;
 
-	PL_recorded_external(l1->value.term.record, t1);
+	PL_recorded_external(l1->value.term.record, t1); /* can also be handled in literal_ex */
 	PL_recorded_external(l2->value.term.record, t2);
 	rc = PL_compare(t1, t2);
 
@@ -1703,8 +1736,12 @@ returns it.
 static literal *
 share_literal(rdf_db *db, literal *from)
 { literal **data;
+  literal_ex lex;
 
-  if ( (data = avlfind(&db->literals, &from)) )
+  lex.literal = from;
+  prepare_literal_ex(&lex);
+
+  if ( (data = avlins(&db->literals, &lex)) )
   { literal *l2 = *data;
 
     DEBUG(2,
@@ -1718,9 +1755,7 @@ share_literal(rdf_db *db, literal *from)
 
     return l2;
   } else
-  { avlins(&db->literals, &from);
-
-    DEBUG(2,
+  { DEBUG(2,
 	  Sdprintf("Insert %p into literal table: ", from);
 	  print_literal(from);
 	  Sdprintf("\n"));
@@ -1767,7 +1802,12 @@ check_transitivity()
       end = db->literals.count;
 
     for(j=i+1; j<end; j++)
-    { if ( compare_literals(&array[i], &array[j], IS_NULL) >= 0 )
+    { literal_ex lex;
+
+      lex.literal = &array[i];
+      prepare_literal_ex(&lex);
+
+      if ( compare_literals(&lex, &array[j], IS_NULL) >= 0 )
       { Sdprintf("\nERROR: i,j=%d,%d: ", i, j);
 	print_literal(array[i]);
 	Sdprintf(" >= ");
@@ -1804,6 +1844,7 @@ dump_literals()
   return TRUE;
 }
 #endif
+
 
 
 		 /*******************************
@@ -1872,85 +1913,37 @@ free_triple(rdf_db *db, triple *t)
 }
 
 
-static unsigned long
-string_hashA(const char *t, size_t len)
-{ unsigned int value = 0;
-  unsigned int shift = 5;
+#define HASHED 0x80000000
 
-  while(len-- != 0)
-  { unsigned int c = *t++;
-    
-    c = tolower(c);			/* case insensitive */
-    c -= 'a';
-    value ^= c << (shift & 0xf);
-    shift ^= c;
-  }
-
-  return value ^ (value >> 16);
-}
-
-
-static unsigned long
-string_hashW(const wchar_t *t, size_t len)
-{ unsigned int value = 0;
-  unsigned int shift = 5;
-
-  while(len-- != 0)
-  { wint_t c = *t++;
-    
-    c = towlower(c);			/* case insensitive */
-    c -= 'a';
-    value ^= c << (shift & 0xf);
-    shift ^= c;
-  }
-
-  return value ^ (value >> 16);
-}
-
-
-static unsigned long
-case_insensitive_atom_hash(atom_t a)
-{ const char *s;
-  const wchar_t *w;
-  size_t len;
-
-  if ( (s = PL_atom_nchars(a, &len)) )
-    return string_hashA(s, len);
-  else if ( (w = PL_atom_wchars(a, &len)) )
-    return string_hashW(w, len);
-  else
-  { assert(0);
-    return 0;
-  }
-}
-
-
-static unsigned long
+static unsigned int
 literal_hash(literal *lit)
-{ switch(lit->objtype)
-  { case OBJ_STRING:
-      return case_insensitive_atom_hash(lit->value.string);
-#if SIZEOF_LONG == 4
-    case OBJ_INTEGER:
-    { long *p = (long *)&lit->value.integer;
-      return p[0] ^ p[1];
+{ if ( lit->hash & HASHED )
+  { return lit->hash;
+  } else
+  { unsigned int hash;
+
+    switch(lit->objtype)
+    { case OBJ_STRING:
+	hash = atom_hash_case(lit->value.string);
+        break;
+      case OBJ_INTEGER:
+      case OBJ_DOUBLE:
+	hash = rdf_murmer_hash(&lit->value.integer,
+			       sizeof(lit->value.integer),
+			       MURMUR_SEED);
+        break;
+      case OBJ_TERM:
+	hash = rdf_murmer_hash(lit->value.term.record,
+			       lit->value.term.len,
+			       MURMUR_SEED);
+	break;
+      default:
+	assert(0);
+	return 0;
     }
-    case OBJ_DOUBLE:
-    { long *p = (long *)&lit->value.real;
-      return p[0] ^ p[1];
-    }
-#else
-    case OBJ_INTEGER:
-      return lit->value.integer;
-    case OBJ_DOUBLE:
-      return lit->value.integer;	/* assume union allocation */
-#endif
-    case OBJ_TERM:
-      return string_hashA((const char*)lit->value.term.record,
-			  lit->value.term.len);
-    default:
-      assert(0);
-      return 0;
+
+    lit->hash = (hash | HASHED);
+    return lit->hash;
   }
 }
 
@@ -3055,7 +3048,6 @@ load_db(rdf_db *db, IOSTREAM *in, ld_context *ctx)
 static int
 link_loaded_triples(rdf_db *db, triple *t, ld_context *ctx)
 { long created0 = db->created;
-  int graph_md5 = FALSE;
   graph *graph;
 
   if ( ctx->graph )			/* lookup named graph */
@@ -4418,6 +4410,7 @@ typedef struct search_state
   atom_t	prefix;			/* prefix and like search */
   avl_enum     *literal_state;		/* Literal search state */
   literal      *literal_cursor;		/* pointer in current literal */
+  literal_ex    lit_ex;			/* extended literal for fast compare */
   triple       *cursor;			/* Pointer in triple DB */
   triple	pattern;		/* Pattern triple */
 } search_state;
@@ -4489,13 +4482,15 @@ init_search_state(search_state *state)
        p->indexed != BY_SP &&
        (state->prefix = first_atom(p->object.literal->value.string, p->match)))
   { literal lit;
-    literal **rlitp, *slitp = &lit;
+    literal **rlitp;
     
     lit = *p->object.literal;
     lit.value.string = state->prefix;
     state->literal_state = rdf_malloc(state->db,
 				      sizeof(*state->literal_state));
-    rlitp = avlfindfirst(&state->db->literals, &slitp, state->literal_state);
+    state->lit_ex.literal = &lit;
+    prepare_literal_ex(&state->lit_ex);
+    rlitp = avlfindfirst(&state->db->literals, &state->lit_ex, state->literal_state);
     if ( rlitp )
     { init_cursor_from_literal(state, *rlitp);
     } else
@@ -4767,6 +4762,61 @@ rdf_estimate_complexity(term_t subject, term_t predicate, term_t object,
   free_triple(db, &t);
 
   return rc;
+}
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+current_literal(?Literals)
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+static foreign_t
+rdf_current_literal(term_t t, control_t h)
+{ rdf_db *db = DB;
+  literal **data;
+  avl_enum *state;
+  int rc;
+
+  switch(PL_foreign_control(h))
+  { case PL_FIRST_CALL:
+      if ( PL_is_variable(t) )
+      { state = rdf_malloc(db, sizeof(*state));
+
+	RDLOCK(db);
+	inc_active_queries(db);
+	data = avlfindfirst(&db->literals, NULL, state);
+	goto next;
+      } else
+      { return FALSE;			/* TBD */
+      }
+    case PL_REDO:
+      state = PL_foreign_context_address(h);
+      data = avlfindnext(state);
+    next:
+      for(; data; data=avlfindnext(state))
+      { literal *lit = *data;
+
+	if ( unify_literal(t, lit) )
+	{ PL_retry_address(state);
+	}
+      }
+
+      rc = FALSE;
+      goto cleanup;
+    case PL_CUTTED:
+      rc = TRUE;
+
+    cleanup:
+      state = PL_foreign_context_address(h);
+      avlfinddestroy(state);
+      rdf_free(db, state, sizeof(*state));
+      RDUNLOCK(db);
+      dec_active_queries(db);
+
+      return rc;
+    default:
+      assert(0);
+      return FALSE;
+  }
 }
 
 
@@ -6303,6 +6353,8 @@ install_rdf_db()
 					2, rdf_predicate_property, NDET);
   PL_register_foreign("rdf_current_predicates",
 					1, rdf_current_predicates, 0);
+  PL_register_foreign("rdf_current_literal",
+					1, rdf_current_literal, NDET);
   PL_register_foreign("rdf_graphs_",    1, rdf_graphs,      0);
   PL_register_foreign("rdf_set_graph_source", 2, rdf_set_graph_source, 0);
   PL_register_foreign("rdf_graph_source_", 2, rdf_graph_source, 0);

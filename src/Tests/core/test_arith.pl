@@ -32,6 +32,7 @@
 
 test_arith :-
 	run_tests([ rem,
+		    mod,
 		    errors
 		  ]).
 
@@ -39,14 +40,44 @@ test_arith :-
 
 test(small, R == 2) :-
 	R is 5 rem 3.
+test(small_divneg, R == 2) :-
+	R is 5 rem -3.
 test(small_neg, R == -2) :-
 	R is -5 rem 3.
 test(big, [condition(current_prolog_flag(bounded, false)), R == 6]) :-
 	R is (1<<100) rem 10.
 test(big_neg, [condition(current_prolog_flag(bounded, false)), R == -6]) :-
 	R is -(1<<100) rem 10.
-
+test(exhaust,all((N rem D =:= M) == [-3 rem-3=:=0,-3 rem-2=:= -1,-3 rem-1=:=0,-3 rem 1=:=0,-3 rem 2=:= -1,-3 rem 3=:=0,-2 rem-3=:= -2,-2 rem-2=:=0,-2 rem-1=:=0,-2 rem 1=:=0,-2 rem 2=:=0,-2 rem 3=:= -2,-1 rem-3=:= -1,-1 rem-2=:= -1,-1 rem-1=:=0,-1 rem 1=:=0,-1 rem 2=:= -1,-1 rem 3=:= -1,0 rem-3=:=0,0 rem-2=:=0,0 rem-1=:=0,0 rem 1=:=0,0 rem 2=:=0,0 rem 3=:=0,1 rem-3=:=1,1 rem-2=:=1,1 rem-1=:=0,1 rem 1=:=0,1 rem 2=:=1,1 rem 3=:=1,2 rem-3=:=2,2 rem-2=:=0,2 rem-1=:=0,2 rem 1=:=0,2 rem 2=:=0,2 rem 3=:=2,3 rem-3=:=0,3 rem-2=:=1,3 rem-1=:=0,3 rem 1=:=0,3 rem 2=:=1,3 rem 3=:=0])) :-
+	maplist(between(-3,3),[N,D]),
+	D =\= 0,
+	M is N rem D.
+test(big, [condition(current_prolog_flag(bounded, false)), R =:= -3]) :-
+	R is -3 rem (10^50).
 :- end_tests(rem).
+
+:- begin_tests(mod).
+
+% mod(X, Y) = X - (floor(X/Y) * Y)
+
+test(small, R == 2) :-
+	R is 5 mod 3.
+test(small_divneg, R == -1) :-
+	R is 5 mod -3.
+test(small_neg, R == 1) :-
+	R is -5 mod 3.
+test(big, [condition(current_prolog_flag(bounded, false)), R == 6]) :-
+	R is (1<<100) mod 10.
+test(big_neg, [condition(current_prolog_flag(bounded, false)), R == 4]) :-
+	R is -(1<<100) mod 10.
+test(exhaust,all((N mod D =:= M) == [-3 mod-3=:=0,-3 mod-2=:= -1,-3 mod-1=:=0,-3 mod 1=:=0,-3 mod 2=:=1,-3 mod 3=:=0,-2 mod-3=:= -2,-2 mod-2=:=0,-2 mod-1=:=0,-2 mod 1=:=0,-2 mod 2=:=0,-2 mod 3=:=1,-1 mod-3=:= -1,-1 mod-2=:= -1,-1 mod-1=:=0,-1 mod 1=:=0,-1 mod 2=:=1,-1 mod 3=:=2,0 mod-3=:=0,0 mod-2=:=0,0 mod-1=:=0,0 mod 1=:=0,0 mod 2=:=0,0 mod 3=:=0,1 mod-3=:= -2,1 mod-2=:= -1,1 mod-1=:=0,1 mod 1=:=0,1 mod 2=:=1,1 mod 3=:=1,2 mod-3=:= -1,2 mod-2=:=0,2 mod-1=:=0,2 mod 1=:=0,2 mod 2=:=0,2 mod 3=:=2,3 mod-3=:=0,3 mod-2=:= -1,3 mod-1=:=0,3 mod 1=:=0,3 mod 2=:=1,3 mod 3=:=0])) :-
+	maplist(between(-3,3),[N,D]),
+	D =\= 0,
+	M is N mod D.
+test(big, [condition(current_prolog_flag(bounded, false)), R =:= 10^50-3]) :-
+	R is -3 mod (10^50).
+
+:- end_tests(mod).
 
 :- begin_tests(errors).
 

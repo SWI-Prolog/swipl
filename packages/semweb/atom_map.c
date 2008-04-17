@@ -88,6 +88,7 @@ typedef struct atom_set
 
 
 #define ND_MAGIC 0x67b49a23
+#define ND_MAGIC_EX 0x753ab3c
 
 typedef struct node_data
 { datum		key;
@@ -96,6 +97,14 @@ typedef struct node_data
   long		magic;
 #endif
 } node_data;
+
+typedef struct node_data_ex
+{ node_data	data;
+  atom_info	atom;
+#ifdef O_SECURE
+  long		magic;
+#endif
+} node_data_ex;
 
 
 #define RDLOCK(map)			rdlock(&map->lock)
@@ -337,6 +346,30 @@ get_datum(term_t t, datum* d)
 
 
 static int
+get_search_datum(term_t t, node_data_ex *search)
+{ atom_t a;
+  long l;
+
+  SECURE(search->magic = ND_MAGIC_EX);
+
+  if ( PL_get_atom(t, &a) )
+  { search->data.key = atom_to_datum(a);
+    search->atom.handle   = a;
+    search->atom.resolved = FALSE;
+    return TRUE;
+  } else if ( PL_get_long(t, &l) )
+  { if ( l < MAP_MIN_INT || l > MAP_MAX_INT )
+      return representation_error("integer_range");
+
+    search->data.key = long_to_datum(l);
+    return TRUE;
+  }
+
+  return type_error(t, "atom or integer");
+}
+
+
+static int
 unify_datum(term_t t, datum d)
 { unsigned long v = (unsigned long)d;
 
@@ -362,29 +395,6 @@ unlock_datum(datum d)
 
   if ( isAtomDatum(v) )
     PL_unregister_atom(atom_from_datum(d));
-}
-
-
-static inline int
-cmp_datum(void *p1, void *p2)
-{ datum d1 = p1;
-  datum d2 = p2;
-  int d;
-
-  if ( (d=(tag(d1)-tag(d2))) == 0 )
-  { if ( isAtomDatum(d1) )
-    { return cmp_atoms(atom_from_datum(d1), atom_from_datum(d2));
-    } else
-    { long l1 = long_from_datum(d1);
-      long l2 = long_from_datum(d2);
-      
-      DEBUG(2, Sdprintf("cmp_datum(%ld, %ld)\n", l1, l2));
-
-      return l1 > l2 ? 1 : l1 < l2 ? -1 : 0;
-    }
-  }
-
-  return d;
 }
 
 
@@ -560,10 +570,26 @@ free_node_data(void *ptr)
 
 static int
 cmp_node_data(void *l, void *r, NODE type)
-{ node_data *d1 = l;
-  node_data *d2 = r;
+{ node_data_ex *e1 = l;
+  node_data *n2 = r;
+  datum *d1 = e1->data.key;
+  datum *d2 = n2->key;
+  int d;
 
-  return cmp_datum(d1->key, d2->key);
+  SECURE(assert(e1->magic == ND_MAGIC_EX));
+
+  if ( (d=(tag(d1)-tag(d2))) == 0 )
+  { if ( isAtomDatum(d1) )
+    { return cmp_atom_info(&e1->atom, atom_from_datum(d2));
+    } else
+    { long l1 = long_from_datum(d1);
+      long l2 = long_from_datum(d2);
+      
+      return l1 > l2 ? 1 : l1 < l2 ? -1 : 0;
+    }
+  }
+
+  return d;
 }
 
 
@@ -618,21 +644,20 @@ destroy_atom_map(term_t handle)
 
 
 static foreign_t
-insert_atom_map(term_t handle, term_t from, term_t to)
+insert_atom_map4(term_t handle, term_t from, term_t to, term_t keys)
 { atom_map *map;
   datum a2;
-  node_data search, *data;
-
+  node_data_ex search;
+  node_data *data;
 
   if ( !get_atom_map(handle, &map) ||
-       !get_datum(from, &search.key) ||
+       !get_search_datum(from, &search) ||
        !get_datum(to, &a2) )
     return FALSE;
   
   if ( !WRLOCK(map, FALSE) )
     return FALSE;
 
-  search.values = NULL;
   if ( (data=avlfind(&map->tree, &search)) )
   { int rc;
 
@@ -644,9 +669,13 @@ insert_atom_map(term_t handle, term_t from, term_t to)
     if ( rc )
       map->value_count++;
   } else
-  { if ( !(search.values = new_atom_set(a2)) )
+  { if ( keys && !PL_unify_integer(keys, map->tree.count+1) )
+    { WRUNLOCK(map);
+      return FALSE;
+    }
+    if ( !(search.data.values = new_atom_set(a2)) )
       return resource_error("memory");
-    lock_datum(search.key);
+    lock_datum(search.data.key);
     SECURE(search.magic = ND_MAGIC);
 
     data = avlins(&map->tree, &search);
@@ -660,6 +689,12 @@ insert_atom_map(term_t handle, term_t from, term_t to)
 }
 
 
+static foreign_t
+insert_atom_map3(term_t handle, term_t from, term_t to)
+{ return insert_atom_map4(handle, from, to, 0);
+}
+
+
 		 /*******************************
 		 *	       DELETE		*
 		 *******************************/
@@ -667,21 +702,22 @@ insert_atom_map(term_t handle, term_t from, term_t to)
 static foreign_t
 delete_atom_map2(term_t handle, term_t from)
 { atom_map *map;
-  node_data search;
+  node_data_ex search;
   node_data *data;
 
   if ( !get_atom_map(handle, &map) ||
-       !get_datum(from, &search.key) )
+       !get_search_datum(from, &search) )
     return FALSE;
   
   if ( !WRLOCK(map, TRUE) )
     return FALSE;
 
-  search.values = NULL;
+					/* TBD: Single pass? */
   if ( (data = avlfind(&map->tree, &search)) )
   { LOCKOUT_READERS(map);
     map->value_count -= data->values->size;
-    avldel(&map->tree, data);
+    search.data = *data;
+    avldel(&map->tree, &search);
     REALLOW_READERS(map);
   }
 
@@ -694,11 +730,12 @@ delete_atom_map2(term_t handle, term_t from)
 static foreign_t
 delete_atom_map3(term_t handle, term_t from, term_t to)
 { atom_map *map;
-  node_data *data, search;
+  node_data_ex search;
+  node_data *data;
   datum a2;
 
   if ( !get_atom_map(handle, &map) ||
-       !get_datum(from, &search.key) ||
+       !get_search_datum(from, &search) ||
        !get_datum(to, &a2) )
     return FALSE;
   
@@ -713,7 +750,8 @@ delete_atom_map3(term_t handle, term_t from, term_t to)
     if ( delete_atom_set(as, a2) )
     { map->value_count--;
       if ( as->size == 0 )
-      { avldel(&map->tree, data);
+      { search.data = *data;
+	avldel(&map->tree, &search);
       }
     }
     REALLOW_READERS(map);
@@ -768,16 +806,17 @@ find_atom_map(term_t handle, term_t keys, term_t literals)
     return FALSE;
 
   while(PL_get_list(tail, head, tail))
-  { node_data *data, search;
+  { node_data *data;
+    node_data_ex search;
     int neg = FALSE;
 
     if ( PL_is_functor(head, FUNCTOR_not1) )
     { PL_get_arg(1, head, tmp);
-      if ( !get_datum(tmp, &search.key) )
+      if ( !get_search_datum(tmp, &search) )
 	goto failure;
       neg = TRUE;
     } else
-    { if ( !get_datum(head, &search.key) )
+    { if ( !get_search_datum(head, &search) )
 	goto failure;
     }
     
@@ -885,12 +924,14 @@ unify_keys(term_t head, term_t tail, AVLnode *node)
 static int
 between_keys(atom_map *map, long min, long max, term_t head, term_t tail) 
 { avl_enum state;
-  node_data *data, search;
+  node_data *data;
+  node_data_ex search;
 
   DEBUG(2, Sdprintf("between %ld .. %ld\n", min, max));
 
-  search.key = long_to_datum(min);
-  search.values = NULL;
+  search.data.key = long_to_datum(min);
+  SECURE(search.magic = ND_MAGIC_EX);
+
   if ( (data = avlfindfirst(&map->tree, &search, &state)) &&
        isIntDatum(data->key) )
   { for(;;)
@@ -939,13 +980,13 @@ rdf_keys_in_literal_map(term_t handle, term_t spec, term_t keys)
       goto failure;
   } else if ( name == ATOM_key && arity == 1 )
   { term_t a = PL_new_term_ref();
-    node_data *data, search;
+    node_data *data;
+    node_data_ex search;
 
     PL_get_arg(1, spec, a);
-    if ( !get_datum(a, &search.key) )
+    if ( !get_search_datum(a, &search) )
       goto failure;
 
-    search.values = NULL;
     if ( (data = avlfind(&map->tree, &search)) )
     { long size = (long)data->values->size;
 
@@ -959,7 +1000,8 @@ rdf_keys_in_literal_map(term_t handle, term_t spec, term_t keys)
   { term_t a = PL_new_term_ref();
     atom_t prefix, first_a;
     avl_enum state;
-    node_data *data, search;
+    node_data *data;
+    node_data_ex search;
     int match = (name == ATOM_prefix ? STR_MATCH_PREFIX : STR_MATCH_EXACT);
 
     PL_get_arg(1, spec, a);
@@ -967,8 +1009,10 @@ rdf_keys_in_literal_map(term_t handle, term_t spec, term_t keys)
       goto failure;
     first_a = first_atom(prefix, STR_MATCH_PREFIX);
 
-    search.key = atom_to_datum(first_a);
-    search.values = NULL;
+    search.data.key = atom_to_datum(first_a);
+    search.atom.handle = first_a;
+    search.atom.resolved = FALSE;
+    SECURE(search.magic = ND_MAGIC_EX);
 
     for(data = avlfindfirst(&map->tree, &search, &state);
 	data;
@@ -1095,7 +1139,8 @@ install_atom_map()
   PRED("rdf_new_literal_map",	     1,	new_atom_map,		    0);
   PRED("rdf_destroy_literal_map",    1,	destroy_atom_map,	    0);
   PRED("rdf_reset_literal_map",	     1, rdf_reset_literal_map,	    0);
-  PRED("rdf_insert_literal_map",     3,	insert_atom_map,	    0);
+  PRED("rdf_insert_literal_map",     3,	insert_atom_map3,	    0);
+  PRED("rdf_insert_literal_map",     4,	insert_atom_map4,	    0);
   PRED("rdf_delete_literal_map",     3,	delete_atom_map3,	    0);
   PRED("rdf_delete_literal_map",     2,	delete_atom_map2,	    0);
   PRED("rdf_find_literal_map",	     3,	find_atom_map,		    0);

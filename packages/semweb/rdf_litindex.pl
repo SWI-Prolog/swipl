@@ -39,6 +39,7 @@
 :- use_module(rdf_db).
 :- use_module(library(debug)).
 :- use_module(library(lists)).
+:- use_module(library(error)).
 :- use_module(library(porter_stem)).
 :- use_module(library(double_metaphone)).
 
@@ -59,6 +60,8 @@ being flexible to ordering of tokens.
 
 
 setting(verbose(true)).			% print progress messages
+setting(index_threads(1)).		% # threads for creating the index
+setting(index(default)).		% Use a thread for incremental updates
 
 %%	rdf_set_literal_index_option(+Options:list)
 %
@@ -67,19 +70,42 @@ setting(verbose(true)).			% print progress messages
 %		* verbose(Bool)
 %		If =true=, print progress messages while building the
 %		index tables.
+%		
+%		* index_threads(+Count)
+%		Number of threads to use for initial indexing of
+%		literals
+%		
+%		* index(+How)
+%		How to deal with indexing new literals.  How is one of
+%		=self= (execute in the same thread), thread(N) (execute
+%		in N concurrent threads) or =default= (depends on number
+%		of cores).
 
-rdf_set_literal_index_option([]).
-rdf_set_literal_index_option([H|T]) :-
+rdf_set_literal_index_option([]) :- !.
+rdf_set_literal_index_option([H|T]) :- !,
 	set_option(H),
 	rdf_set_literal_index_option(T).
+rdf_set_literal_index_option(Option) :-
+	set_option(Option).
 
 set_option(Term) :-
+	check_option(Term),
 	functor(Term, Name, Arity),
 	functor(General, Name, Arity),
-	(   retract(setting(General))
-	->  assert(setting(Term))
-	;   throw(error(domain_error(Term, rdf_index_option), _))
-	).
+	retractall(setting(General)),
+	assert(setting(Term)).
+
+check_option(X) :-
+	var(X), !,
+	instantiation_error(X).
+check_option(verbose(X)) :- !,
+	must_be(boolean, X).
+check_option(index_threads(Count)) :- !,
+	must_be(nonneg, Count).
+check_option(index(How)) :- !,
+	must_be(oneof([default,thread(_),self]), How).
+check_option(Option) :-
+	domain_error(literal_option, Option).
 
 
 		 /*******************************
@@ -331,17 +357,69 @@ token_index(Map) :-
 token_index(Map) :-
 	rdf_new_literal_map(Map),
 	assert(literal_map(tokens, Map)),
-	(   rdf(_,_,literal(Literal)),
-	    register_literal(Literal),
-	    fail
-	;   true
-	),
+	make_literal_index,
 	verbose('~N', []),
-	rdf_monitor(monitor_literal,
-		    [ reset,
-		      new_literal,
-		      old_literal
-		    ]).
+	Monitor = [ reset,
+		    new_literal,
+		    old_literal
+		  ],
+	(   setting(index(default))
+	->  (   current_prolog_flag(cpu_count, N), N > 1
+	    ->	create_update_literal_thread(1),
+		rdf_monitor(thread_monitor_literal, Monitor)
+	    ;	rdf_monitor(monitor_literal, Monitor)
+	    )
+	;   setting(index(thread(N)))
+	->  create_update_literal_thread(N),
+	    rdf_monitor(thread_monitor_literal, Monitor)
+	;   rdf_monitor(monitor_literal, Monitor)
+	).
+
+
+%%	make_literal_index
+%
+%	Create the initial literal index.
+
+make_literal_index :-
+	setting(index_threads(N)), !,
+	threaded_literal_index(N).
+make_literal_index :-
+	current_prolog_flag(cpu_count, X),
+	threaded_literal_index(X).
+
+threaded_literal_index(N) :-
+	N > 1, !,
+	message_queue_create(Q, [max_size(1000)]),
+	create_index_threads(N, Q, Ids),
+	forall(rdf_current_literal(Literal),
+	       thread_send_message(Q, Literal)),
+	forall(between(1, N, _),
+	       thread_send_message(Q, done(true))),
+	maplist(thread_join, Ids, _).
+threaded_literal_index(_) :-
+	forall(rdf_current_literal(Literal),
+	       register_literal(Literal)).
+
+create_index_threads(N, Q, [Id|T]) :-
+	N > 0, !,
+	thread_create(index_worker(Q), Id,
+		      [ local(1000),
+			global(1000),
+			trail(1000)
+		      ]),
+	N2 is N - 1,
+	create_index_threads(N2, Q, T).
+create_index_threads(_, _, []) :- !.
+	       
+index_worker(Queue) :-
+	repeat,
+	    thread_get_message(Queue, Msg),
+	    work(Msg).
+
+work(done(true)) :- !.
+work(Literal) :-
+	register_literal(Literal),
+	fail.
 
 
 %	clean_token_index
@@ -352,6 +430,52 @@ clean_token_index :-
 	forall(literal_map(_, Map),
 	       rdf_reset_literal_map(Map)).
 
+		 /*******************************
+		 *	  THREADED UPDATE	*
+		 *******************************/
+
+%	create_update_literal_thread(+Threads)
+%	
+%	Setup literal monitoring using threads.  While loading databases
+%	through rdf_attach_db/2 from  rdf_persistency.pl,   most  of the
+%	time is spent updating the literal token database. While loading
+%	the RDF triples, most of the time   is spend in updating the AVL
+%	tree holding the literals. Updating  the   token  index hangs on
+%	updating the AVL trees holding the   tokens.  Both tasks however
+%	can run concurrently.
+
+create_update_literal_thread(Threads) :-
+	message_queue_create(_,
+			     [ alias(rdf_literal_monitor_queue),
+			       max_size(10000)
+			     ]),
+	forall(between(1, Threads, N),
+	       (   atom_concat(rdf_literal_monitor_, N, Alias),
+		   thread_create(monitor_literals, _,
+				 [ alias(Alias),
+				   local(1000),
+				   global(1000),
+				   trail(1000)
+				 ])
+	       )).
+
+monitor_literals :-
+	set_prolog_flag(agc_margin, 0),	% we don't create garbage
+	repeat,
+	    thread_get_message(rdf_literal_monitor_queue, Literal),
+	    register_literal(Literal),
+	fail.
+
+thread_monitor_literal(new_literal(Literal)) :- !,
+	thread_send_message(rdf_literal_monitor_queue, Literal).
+thread_monitor_literal(Action) :- !,
+	monitor_literal(Action).
+
+
+		 /*******************************
+		 *	 MONITORED UPDATE	*
+		 *******************************/
+
 monitor_literal(new_literal(Literal)) :-
 	register_literal(Literal).
 monitor_literal(old_literal(Literal)) :-
@@ -361,7 +485,6 @@ monitor_literal(transaction(begin, reset)) :-
 	clean_token_index.
 monitor_literal(transaction(end, reset)) :-
 	rdf_monitor(monitor_literal, [+old_literal]).
-
 
 %%	register_literal(+Literal)
 %	
@@ -377,12 +500,15 @@ register_literal(Literal) :-
 
 add_tokens([], _, _).
 add_tokens([H|T], Literal, Map) :-
-	(   rdf_keys_in_literal_map(Map, key(H), _)
+	rdf_insert_literal_map(Map, H, Literal, Keys),
+	(   var(Keys)
 	->  true
-	;   forall(new_token(H), true)
+	;   forall(new_token(H), true),
+	    (	Keys mod 1000 =:= 0
+	    ->	progress(Map, 'Tokens')
+	    ;	true
+	    )
 	),
-	rdf_insert_literal_map(Map, H, Literal),
-	progress(Map, 'Tokens'),
 	add_tokens(T, Literal, Map).
 
 
@@ -422,10 +548,22 @@ rdf_tokenize_literal(Literal, Tokens) :-
 
 select_tokens([], []).
 select_tokens([H|T0], T) :-
-	no_index_token(H), !,
-	select_tokens(T0, T).
-select_tokens([H|T0], [H|T]) :-
-	select_tokens(T0, T).
+	(   exclude_from_index(token, H)
+	->  select_tokens(T0, T)
+	;   number(H)
+	->  (   integer(H),
+	        between(-1073741824, 1073741823, H)
+	    ->	T = [H|T1],
+		select_tokens(T0, T1)
+	    ;   select_tokens(T0, T)
+	    )
+	;   atom_length(H, 1)
+	->  select_tokens(T0, T)
+	;   no_index_token(H)
+	->  select_tokens(T0, T)
+	;   T = [H|T1],
+	    select_tokens(T0, T1)
+	).
 
 
 %	no_index_token/1
@@ -435,15 +573,6 @@ select_tokens([H|T0], [H|T]) :-
 %	describe this? Experience shows that simply  word count is not a
 %	good criterium as it often rules out popular domain terms.
 
-no_index_token(X) :-
-	exclude_from_index(token, X), !.
-no_index_token(X) :-			% TBD: only small integers can
-	integer(X),			% be indexed
-	\+ between(-1073741824, 1073741823, X), !.
-no_index_token(X) :-
-	atom_length(X, 1), !.
-no_index_token(X) :-
-	float(X), !.
 no_index_token(and).
 no_index_token(an).
 no_index_token(or).
@@ -487,8 +616,12 @@ stem([], _).
 stem([Token|T], Map) :-
 	(   atom(Token)
 	->  porter_stem(Token, Stem),
-	    rdf_insert_literal_map(Map, Stem, Token),
-	    progress(Map, 'Porter')
+	    rdf_insert_literal_map(Map, Stem, Token, Keys),
+	    (	integer(Keys),
+		Keys mod 1000 =:= 0
+	    ->  progress(Map, 'Porter')
+	    ;	true
+	    )
 	;   true
 	),
 	stem(T, Map).
@@ -496,7 +629,7 @@ stem([Token|T], Map) :-
 
 add_stem(Token, Map) :-
 	porter_stem(Token, Stem),
-	rdf_insert_literal_map(Map, Stem, Token).
+	rdf_insert_literal_map(Map, Stem, Token, _).
 
 
 		 /*******************************
@@ -521,8 +654,12 @@ metaphone([], _).
 metaphone([Token|T], Map) :-
 	(   atom(Token)
 	->  double_metaphone(Token, SoundEx),
-	    rdf_insert_literal_map(Map, SoundEx, Token),
-	    progress(Map, 'Metaphone')
+	    rdf_insert_literal_map(Map, SoundEx, Token, Keys),
+	    (	integer(Keys),
+		Keys mod 1000 =:= 0
+	    ->	progress(Map, 'Metaphone')
+	    ;	true
+	    )
 	;   true
 	),
 	metaphone(T, Map).
@@ -545,10 +682,7 @@ verbose(_, _).
 progress(Map, Which) :-
 	setting(verbose(true)), !,
 	rdf_statistics_literal_map(Map, size(Keys, Values)),
-	(   Keys mod 1000 =:= 0
-	->  format(user_error,
-		   '\r~t~w: ~12|Keys: ~t~D~15+; Values: ~t~D~20+',
-		   [Which, Keys, Values])
-	;   true
-	).
+	format(user_error,
+	       '\r~t~w: ~12|Keys: ~t~D~15+; Values: ~t~D~20+',
+	       [Which, Keys, Values]).
 progress(_,_).

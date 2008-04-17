@@ -347,7 +347,7 @@ treat the signal as bogus if agc has already been performed.
 word
 lookupBlob(const char *s, size_t length, PL_blob_t *type, int *new)
 { GET_LD
-  int v0, v;
+  unsigned int v0, v;
   uintptr_t oldheap;
   Atom a;
 
@@ -356,7 +356,7 @@ lookupBlob(const char *s, size_t length, PL_blob_t *type, int *new)
 
   startCritical;
   LOCK();
-  v0 = unboundStringHashValue(s, length);
+  v0 = MurmurHashAligned2(s, length, MURMUR_SEED);
   v  = v0 & (atom_buckets-1);
   DEBUG(0, lookups++);
 
@@ -719,11 +719,13 @@ pl_garbage_collect_atoms()
   }
 
   PL_LOCK(L_THREAD);
+  PL_LOCK(L_AGC);
   LOCK();
   blockSignals(&set);
   t = CpuTime(CPU_USER);
   markAtomsOnStacks(LD);
 #ifdef O_PLMT
+  markAtomsThreads();
   forThreadLocalData(markAtomsOnStacks, 0);
 #endif
   oldcollected = GD->atoms.collected;
@@ -738,6 +740,7 @@ pl_garbage_collect_atoms()
   GD->statistics.atomspace -= freed;
   unblockSignals(&set);
   UNLOCK();
+  PL_UNLOCK(L_AGC);
   PL_UNLOCK(L_THREAD);
   gc_status.blocked--;
   PL_UNLOCK(L_GC);
@@ -877,8 +880,8 @@ registerBuiltinAtoms()
 
   for(s = atoms; *s; s++, a++)
   { size_t len = strlen(*s);
-    int v0 = unboundStringHashValue(*s, len);
-    int v = v0 & (atom_buckets-1);
+    unsigned int v0 = MurmurHashAligned2(*s, len, MURMUR_SEED);
+    unsigned int v = v0 & (atom_buckets-1);
 
     a->name       = (char *)*s;
     a->length     = len;

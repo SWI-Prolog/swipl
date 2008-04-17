@@ -50,6 +50,7 @@
 	    rdf_set_predicate/2,	% +Predicate, +Property
 	    rdf_predicate_property/2,	% +Predicate, ?Property
 	    rdf_current_predicate/1,	% -Predicate
+	    rdf_current_literal/1,	% -Literal
 	    rdf_transaction/1,		% :Goal
 	    rdf_transaction/2,		% :Goal, +Id
 	    rdf_active_transaction/1,	% ?Id
@@ -107,6 +108,7 @@
 	    rdf_destroy_literal_map/1,	% +Handle
 	    rdf_reset_literal_map/1,	% +Handle
 	    rdf_insert_literal_map/3,	% +Handle, +Key, +Literal
+	    rdf_insert_literal_map/4,	% +Handle, +Key, +Literal, -NewKeys
 	    rdf_delete_literal_map/3,	% +Handle, +Key, +Literal
 	    rdf_delete_literal_map/2,	% +Handle, +Key
 	    rdf_find_literal_map/3,	% +Handle, +KeyList, -Literals
