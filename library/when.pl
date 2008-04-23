@@ -71,11 +71,17 @@
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 when(Condition, Goal) :-
-	must_be(nonvar, Condition),
+	when_condition(Condition),
 	strip_module(Goal, M, G),
-	(   trigger(Condition, M:G) -> true
-	;   domain_error(when_condition, Condition)
-	).
+	trigger(Condition, M:G).
+
+when_condition(C)	  :- var(C), !, instantiation_error(C).
+when_condition(?=(_,_))	  :- !.
+when_condition(nonvar(_)) :- !.
+when_condition(ground(_)) :- !.
+when_condition((C1,C2))	  :- !, when_condition(C1), when_condition(C2).
+when_condition((C1;C2))	  :- !, when_condition(C1), when_condition(C2).
+when_condition(C)	  :- domain_error(when_condition, C).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 trigger(nonvar(X),Goal) :-
@@ -102,8 +108,11 @@ trigger_nonvar(X,Goal) :-
 
 trigger_ground(X,Goal) :-
 	term_variables(X,Vs),
-	( Vs = [H|_] ->
-		suspend(H,trigger_ground(Vs,Goal))
+	( Vs = [H] ->
+		suspend(H,trigger_ground(H,Goal))
+	; Vs = [H|_] ->
+		T =.. [f|Vs],
+		suspend(H,trigger_ground(T,Goal))
 	;
 		call(Goal)
 	).
@@ -134,11 +143,11 @@ wake_det(Det) :-
 	).
 
 trigger_conj(G1,G2,Goal) :-
-	trigger(G1,trigger(G2,Goal)).
+	trigger(G1,when:trigger(G2,Goal)).
 
 trigger_disj(G1,G2,Goal) :-
-	trigger(G1,check_disj(Disj,Goal)),
-	trigger(G2,check_disj(Disj,Goal)).
+	trigger(G1,when:check_disj(Disj,Goal)),
+	trigger(G2,when:check_disj(Disj,Goal)).
 
 check_disj(Disj,Goal) :-
 	( var(Disj) ->
@@ -169,19 +178,24 @@ attr_unify_hook(List,Other) :-
 		call_list(List2)
 	;
 		call_list(List) 
-	).	
-
-attribute_goals(V) -->
-        { get_attr(V, when, Attr) },
-        (   { is_list(Attr) } ->
-            when_goals(Attr)
-        ;   [put_attr(V, when, Attr)]
-        ).
-
-when_goals([])     --> [].
-when_goals([G|Gs]) --> [when:G], when_goals(Gs).
+	).
 
 call_list([]).
 call_list([G|Gs]) :-
 	call(G),
 	call_list(Gs).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+attribute_goals(V) -->
+	{ get_attr(V, when, Attr) },
+	(   { Attr = det(trigger_determined(X, Y, G)) } ->
+	    [when(?=(X,Y), G)]
+	;   when_goals(Attr)
+	).
+
+when_goals([])	   --> [].
+when_goals([G|Gs]) --> when_goal(G), when_goals(Gs).
+
+when_goal(trigger_ground(X, G)) --> [when(ground(X), G)].
+when_goal(trigger_nonvar(X, G)) --> [when(nonvar(X), G)].
+when_goal(wake_det(_))		--> []. % ignore

@@ -30,14 +30,17 @@
 */
 
 :- module(ordsets,
-	  [ list_to_ord_set/2,		% +List, -OrdSet
+	  [ is_ordset/1,		% @Term
+	    list_to_ord_set/2,		% +List, -OrdSet
 	    ord_add_element/3,		% +Set, +Element, -NewSet
 	    ord_del_element/3,		% +Set, +Element, -NewSet
 	    ord_intersect/2,		% +Set1, +Set2 (test non-empty)
 	    ord_intersect/3,		% +Set1, +Set2, -Intersection
 	    ord_intersection/3,		% +Set1, +Set2, -Intersection
+	    ord_intersection/4,		% +Set1, +Set2, -Intersection, -Diff
 	    ord_disjoint/2,		% +Set1, +Set2
 	    ord_subtract/3,		% +Set, +Delete, -Remaining
+	    ord_union/2,		% +SetOfOrdSets, -Set
 	    ord_union/3,		% +Set1, +Set2, -Union
 	    ord_union/4,		% +Set1, +Set2, -Union, -New
 	    ord_subset/2,		% +Sub, +Super (test Sub is in Super)
@@ -61,6 +64,28 @@ extended to satisfy requirements by CHR.
 @compat	De-facto standard.
 @bug	Incomplete
 */
+
+%%	is_ordset(@Term) is semidet.
+%
+%	True if Term is an ordered set.   All predicates in this library
+%	expect ordered sets as input arguments.  Failing to fullfil this
+%	assumption results in undefined   behaviour.  Typically, ordered
+%	sets are created by predicates  from   this  library,  sort/2 or
+%	setof/3.
+
+is_ordset(Term) :-
+	is_list(Term),
+	is_ordset2(Term).
+
+is_ordset2([]).
+is_ordset2([H|T]) :-
+	is_ordset3(T, H).
+
+is_ordset3([], _).
+is_ordset3([H2|T], H) :-
+	H2 @> H,
+	is_ordset3(T, H2).
+
 
 %%	ord_empty(List)
 %	
@@ -122,6 +147,28 @@ ord_intersection(Set1, Set2, Intersection) :-
 	oset_int(Set1, Set2, Intersection).
 
 
+%%	ord_intersection(+Set1, +Set2, ?Intersection, ?Difference) is det.
+%
+%	Intersection  and  difference   between    two   ordered   sets.
+%	Intersection is the intersection between   Set1  and Set2, while
+%	Difference is Set2\Set1.
+%	
+%	@see ord_intersection/3 and ord_subtract/3.
+
+ord_intersection([], L, [], L) :- !.
+ord_intersection([_|_], [], [], []) :- !.
+ord_intersection([H1|T1], [H2|T2], Intersection, Difference) :-
+	compare(Diff, H1, H2),
+	ord_intersection2(Diff, H1, T1, H2, T2, Intersection, Difference).
+
+ord_intersection2(=, H1, T1, _H2, T2, [H1|T], Difference) :-
+	ord_intersection(T1, T2, T, Difference).
+ord_intersection2(<, _, T1, H2, T2, Intersection, Difference) :-
+	ord_intersection(T1, [H2|T2], Intersection, Difference).
+ord_intersection2(>, H1, T1, H2, T2, Intersection, [H2|HDiff]) :-
+	ord_intersection([H1|T1], T2, Intersection, HDiff).
+
+
 %%	ord_add_element(+Set1, +Element, ?Set2)
 %
 %	Insert an element into the set
@@ -172,6 +219,33 @@ ord_subset_(=, _, T1, T2) :-
 
 ord_subtract(InOSet, NotInOSet, Diff) :-
 	oset_diff(InOSet, NotInOSet, Diff).
+
+
+%%	ord_union(+SetOfSets, -Union) is det.
+%
+%	True if Union is the  union  of   all  elements  in the superset
+%	SetOfSets. Each member of SetOfSets must  be an ordered set, the
+%	sets need not be ordered in any way.
+%	
+%	@author Copied from YAP, probably originally by Richard O'Keefe.
+
+ord_union([], []).
+ord_union([Set|Sets], Union) :-
+	length([Set|Sets], NumberOfSets),
+	ord_union_all(NumberOfSets, [Set|Sets], Union, []).
+
+ord_union_all(N, Sets0, Union, Sets) :-
+	(   N =:= 1
+	->  Sets0 = [Union|Sets]
+	;   N =:= 2  
+	->  Sets0 = [Set1,Set2|Sets], 
+	    ord_union(Set1,Set2,Union)
+	;   A is N>>1,
+	    Z is N-A,
+	    ord_union_all(A, Sets0, X, Sets1),
+	    ord_union_all(Z, Sets1, Y, Sets),
+	    ord_union(X, Y, Union)
+	).
 
 
 %%	ord_union(+Set1, +Set2, ?Union)

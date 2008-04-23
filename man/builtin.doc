@@ -2032,11 +2032,10 @@ that encloses the generation of the current goal are considered visible.
 By default, SWI-Prolog, as most other implementations, indexes
 predicates on their first argument.  SWI-Prolog allows indexing
 on other and multiple arguments using the declaration index/1.
-
-For advanced database indexing, it defines hash_term/2:
+Dedicated index schemas can be build using term_hash/2 or term_hash/4.
 
 \begin{description}
-    \predicate{hash_term}{2}{+Term, -HashKey}
+    \predicate[det]{term_hash}{2}{+Term, -HashKey}
 If \arg{Term} is a ground term (see ground/1), \arg{HashKey} is unified
 with a positive integer value that may be used as a hash-key to the
 value. If \arg{Term} is not ground, the predicate leaves \arg{HashKey}
@@ -2050,7 +2049,20 @@ argument-indexing to find complex terms more quickly.
 The hash-key does not rely on temporary information like addresses of
 atoms and may be assumed constant over different invocations and
 versions of SWI-Prolog.\footnote{Last change: version 5.6.53} The
-hash_term/2 predicate is cycle-safe.
+term_hash/2 predicate is cycle-safe.  Hashes for numbers differ
+between bit and little endian machines.
+
+    \predicate[det]{term_hash}{2}{+Term, +Depth, +Range, -HashKey}
+As term_hash/2, but only considers \arg{Term} to the specified
+\arg{Depth}.   The toplevel term has depth 1, its arguments have
+depth 2, etc.  I.e. $\arg{Depth} = 0$ hashes nothing; $\arg{Depth} = 1$
+hashes atomic values or the functor and arity of a compound term,
+not its arguments; $\arg{Depth} = 2$ also indexes the immediate
+arguments, etc.  Using $\arg{Depth} = -1$ makes term_hash/4 behave
+as term_hash/2, hashing ground terms to the full depth.
+
+\arg{HashKey} is in the range $[0 \ldots \arg{Range}-1]$.  \arg{Range}
+must be in the range $[1 \ldots 2147483647]$
 \end{description}
 
 
@@ -2151,7 +2163,7 @@ sub_type(horse, animal).
 Note that this type of indexing makes selecting clauses much faster but
 remains \emph{linear} with respect to the number of clauses, while
 hashing as described with hash/1 provides constant access time.
-See also hash/1 and hash_term/2.
+See also hash/1 and term_hash/2.
 
     \predicate{hash}{1}{+Head}
 Index the given predicate by hashing on the first argument. This is done
@@ -2160,7 +2172,7 @@ argument that can be indexed and at most two that can not be indexed. On
 dynamic predicates the hash-table is resized as the number of clauses
 grows, providing roughly constant-time access regardless of the number
 of clauses predicates that can be indexed on the first argument.
-See also index/1, hash_term/2 and predicate_property/2.
+See also index/1, term_hash/2 and predicate_property/2.
 
 \end{description}
 
