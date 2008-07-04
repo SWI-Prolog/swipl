@@ -217,19 +217,22 @@ call_det(Goal, Det) :-
 copy_term(Term, Copy, Gs) :-
 	% encapsulated in findall/3 such that attributes can be removed etc.
 	findall(Term-GsC,
-                phrase((clpqr_residuals(Term),term_residuals(Term)), GsC),
-                [Copy-Gs]).
+		phrase((clpqr_residuals(Term),term_residuals(Term)), GsC),
+		[Copy-Gs]).
 
 clpqr_residuals(Term) -->
-        { term_variables(Term, Vs) },
-        (   { current_predicate(clpq:dump/3), clpq:dump(Vs, Vs, Qs) }
-        ->  dlist(Qs)
-        ;   []
-        ),
-        (   { current_predicate(clpr:dump/3), clpr:dump(Vs, Vs, Rs) }
-        ->  dlist(Rs)
-        ;   []
-        ).
+	{ term_variables(Term, Vs) },
+	(   { current_predicate(clpq:dump/3), clpq:dump(Vs, Vs, Qs) }
+	->  dlist(Qs, clpq)
+	;   []
+	),
+	(   { current_predicate(clpr:dump/3), clpr:dump(Vs, Vs, Rs) }
+	->  dlist(Rs, clpr)
+	;   []
+	).
+
+dlist([], _).
+dlist([C|Cs], M) --> [M:{C}], dlist(Cs).
 
 term_residuals(Term) -->
 	(   { '$attributed'(Term) }
