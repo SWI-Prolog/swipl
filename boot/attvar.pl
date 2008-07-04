@@ -231,8 +231,8 @@ clpqr_residuals(Term) -->
 	;   []
 	).
 
-dlist([], _).
-dlist([C|Cs], M) --> [M:{C}], dlist(Cs).
+dlist([], _)     --> [].
+dlist([C|Cs], M) --> [M:{C}], dlist(Cs, M).
 
 term_residuals(Term) -->
 	(   { '$attributed'(Term) }
