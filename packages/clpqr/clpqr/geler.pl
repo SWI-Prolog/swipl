@@ -190,3 +190,5 @@ attach([V|Vs],CLP,Goal) :-
 	;   put_attr(V,geler,g(CLP,goals(Goal),n))
 	),	
 	attach(Vs,CLP,Goal).
+
+attribute_goals(_) --> [].
