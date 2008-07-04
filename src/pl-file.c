@@ -1767,6 +1767,47 @@ skip_cr(IOSTREAM *s)
   return FALSE;
 }
 
+static intptr_t
+put_partial_codes(IOSTREAM *s, Word l, Word *tailp ARG_LD)
+{
+  intptr_t length = 0;
+
+  for (;;)
+  { Word head;
+    intptr_t i;
+    deRef(l);
+    if( !isList(*l)) break;
+    head = HeadList(l);
+    deRef(head);
+    if (!isTaggedInt(*head)) break;
+    i = valInt(*head);
+    if (i < 0) break;
+    length++;
+    l=TailList(l);
+    Sputcode(i, s);
+  }
+  *tailp = l;
+
+  return length;
+}
+
+/* put_partial_codes(+Stream, -length, +Xs0, -Xs) */
+
+static
+PRED_IMPL("put_partial_codes",4, put_partial_codes4, 0)
+{ PRED_LD
+  IOSTREAM *s;
+  Word l = valTermRef(A3), tail;
+
+  if ( !getOutputStream(A1, &s) )
+    fail;
+
+  if (!PL_unify_integer(A2, put_partial_codes(s, l, &tail PASS_LD)))
+    fail;
+  return unify_ptrs(valTermRef(A4), tail PASS_LD);
+}
+
+
 
 static 
 PRED_IMPL("read_pending_input", 3, read_pending_input, 0)
@@ -4650,6 +4691,7 @@ pl_copy_stream_data2(term_t in, term_t out)
 BeginPredDefs(file)
   PRED_DEF("set_prolog_IO", 3, set_prolog_IO, 0)
   PRED_DEF("read_pending_input", 3, read_pending_input, 0)
+  PRED_DEF("put_partial_codes", 4, put_partial_codes4, 0)
   PRED_DEF("get_code", 2, get_code2, PL_FA_ISO)
   PRED_DEF("get_code", 1, get_code1, PL_FA_ISO)
   PRED_DEF("get_char", 2, get_char2, PL_FA_ISO)
