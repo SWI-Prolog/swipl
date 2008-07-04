@@ -121,3 +121,5 @@ do_checks(clpq,Y,Ty,St,Li,Or,Cl,No,Later) :-
 	itf_q:do_checks(Y,Ty,St,Li,Or,Cl,No,Later).
 do_checks(clpr,Y,Ty,St,Li,Or,Cl,No,Later) :-
 	itf_r:do_checks(Y,Ty,St,Li,Or,Cl,No,Later).
+
+attribute_goals(_) --> [].
