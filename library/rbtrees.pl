@@ -19,6 +19,7 @@
 	    rb_apply/4,			% +T, +Key, :G, -TN
 	    rb_lookupall/3,		% +Key, -Value, +T
 	    rb_insert/4,		% +T0, +Key, ?Value, -TN
+	    rb_insert_new/4,		% +T0, +Key, ?Value, -TN
 	    rb_delete/3,		% +T, +Key, -TN
 	    rb_delete/4,		% +T, +Key, -Val, -TN
 	    rb_visit/2,			% +T, -Pairs
@@ -338,13 +339,6 @@ insert(Tree0,Key,Val,Nil,Tree) :-
 	fix_root(TreeI,Tree).
 
 %
-% make sure the root is always black.
-%
-fix_root(black(L,K,V,R),black(L,K,V,R)).
-fix_root(red(L,K,V,R),black(L,K,V,R)).
-
-
-%
 % Cormen et al present the algorithm as 
 % (1) standard tree insertion;
 % (2) from the viewpoint of the newly inserted node:
@@ -384,6 +378,51 @@ insert2(black(L,K0,V0,R), K, V, Nil, NT, Flag) :-
 	;   insert2(R, K, V, Nil, IR, Flag0),
 	    fix_right(Flag0, black(L,K0,V0,IR), NT, Flag)
 	).
+
+%%	rb_insert_new(+T0, +Key, ?Value, -TN)
+%
+%	Add a new element with key Key and Value  to the tree T0 creating a
+%	new red-black tree TN. Fails if Key is already in T0.
+
+rb_insert_new(t(Nil,Tree0),Key,Val,t(Nil,Tree)) :-
+	insert_new(Tree0,Key,Val,Nil,Tree).
+
+
+insert_new(Tree0,Key,Val,Nil,Tree) :-
+	insert_new_2(Tree0,Key,Val,Nil,TreeI,_),
+	fix_root(TreeI,Tree).
+
+%
+% actual insertion, copied from insert2 
+%
+insert_new_2(black([],[],[],[]), K, V, Nil, T, Status) :- !,
+	T = red(Nil,K,V,Nil),
+	Status = not_done.
+insert_new_2(red(L,K0,V0,R), K, V, Nil, NT, Flag) :-
+	(   K @< K0
+	->  NR = R,
+	    NT = red(NL,K0,V0,R),
+	    insert_new_2(L, K, V, Nil, NL, Flag)
+	;   K == K0
+	->  fail
+	;   NT = red(L,K0,V0,NR),
+	    insert_new_2(R, K, V, Nil, NR, Flag)
+	).
+insert_new_2(black(L,K0,V0,R), K, V, Nil, NT, Flag) :-
+	(   K @< K0
+	->  insert_new_2(L, K, V, Nil, IL, Flag0),
+	    fix_left(Flag0, black(IL,K0,V0,R), NT, Flag)
+	;   K == K0
+	->  fail
+	;   insert_new_2(R, K, V, Nil, IR, Flag0),
+	    fix_right(Flag0, black(L,K0,V0,IR), NT, Flag)
+	).
+
+%
+% make sure the root is always black.
+%
+fix_root(black(L,K,V,R),black(L,K,V,R)).
+fix_root(red(L,K,V,R),black(L,K,V,R)).
 
 %
 % How to fix if we have inserted on the left
@@ -802,39 +841,42 @@ keys(black(L,K,_,R),L0,Lf) :-
 %
 %	T is the red-black tree corresponding to the mapping in list L.
 
-list_to_rbtree(List, t(Nil,Tree)) :-
-	Nil = black([], [], [], []),
-	sort(List,Sorted),
-	Ar =.. [seq|Sorted],
-	functor(Ar,_,L),
-	construct_rbtree(1, L, Ar, black, Nil, Tree).
+list_to_rbtree(List, T) :-
+	sort(List, Sorted),
+	ord_list_to_rbtree(Sorted, T).
 
 %%	ord_list_to_rbtree(+L, -T) is det.
 %
 %	T is the red-black tree corresponding  to the mapping in ordered
 %	list L.
 
+ord_list_to_rbtree([], t(Nil,Nil)) :- !,
+	Nil = black([], [], [], []).
+ord_list_to_rbtree([K-V], t(Nil,black(Nil,K,V,Nil))) :- !,
+	Nil = black([], [], [], []).
 ord_list_to_rbtree(List, t(Nil,Tree)) :-
 	Nil = black([], [], [], []),
 	Ar =.. [seq|List],
 	functor(Ar,_,L),
-	construct_rbtree(1, L, Ar, black, Nil, Tree).
+	Height is integer(log(L)/log(2)),
+	construct_rbtree(1, L, Ar, Height, Nil, Tree).
 
 construct_rbtree(L, M, _, _, Nil, Nil) :- M < L, !.
-construct_rbtree(L, L, Ar, Color, Nil, Node) :- !,
+construct_rbtree(L, L, Ar, Depth, Nil, Node) :- !,
 	arg(L, Ar, K-Val),
-	build_node(Color, Nil, K, Val, Nil, Node, _).
-construct_rbtree(I0, Max, Ar, Color, Nil, Node) :-
+	build_node(Depth, Nil, K, Val, Nil, Node).
+construct_rbtree(I0, Max, Ar, Depth, Nil, Node) :-
 	I is (I0+Max)//2,
 	arg(I, Ar, K-Val),
-	build_node(Color, Left, K, Val, Right, Node, NewColor),
+	build_node(Depth, Left, K, Val, Right, Node),
 	I1 is I-1,
-	construct_rbtree(I0, I1, Ar, NewColor, Nil, Left),
+	NewDepth is Depth-1,
+	construct_rbtree(I0, I1, Ar, NewDepth, Nil, Left),
 	I2 is I+1,
-	construct_rbtree(I2, Max, Ar, NewColor, Nil, Right).
+	construct_rbtree(I2, Max, Ar, NewDepth, Nil, Right).
 
-build_node(black, Left, K, Val, Right, black(Left, K, Val, Right), red).
-build_node(red, Left, K, Val, Right, red(Left, K, Val, Right), black).
+build_node( 0, Left, K, Val, Right, red(Left, K, Val, Right)) :- !.
+build_node( _, Left, K, Val, Right, black(Left, K, Val, Right)).
 
 %%	rb_size(+T, -Size) is det.
 %

@@ -27,7 +27,9 @@ LIBS=@LIBS@
 LD=@LD@
 LDFLAGS=@LDSOFLAGS@
 
+PUBLICPL=       pl
 DOCTOTEX=$(PCEHOME)/bin/doc2tex
+PLTOTEX=$(PUBLICPL) -q -s pltotex.pl -g pltotex --
 RUNTEX=../../man/runtex
 LATEX=latex
 DOC=http
@@ -48,7 +50,7 @@ LIBPL=		html_write.pl http_client.pl http_header.pl \
 		thread_httpd.pl xpce_httpd.pl inetd_httpd.pl \
 		http_wrapper.pl http_open.pl http_session.pl \
 		http_error.pl http_parameters.pl http_dispatch.pl \
-		http_authenticate.pl http_stream.pl \
+		http_authenticate.pl http_stream.pl http_log.pl \
 		json.pl http_json.pl json_convert.pl
 EXAMPLES=	demo_body.pl demo_client.pl demo_threads.pl demo_xpce.pl \
 		calc.pl
@@ -64,7 +66,7 @@ http_stream.@SO@:	$(STREAMOBJ)
 json.@SO@:	$(JSONOBJ)
 		$(LD) $(LDFLAGS) -o $@ $(JSONOBJ) $(LIBS)
 
-http_stream.o:	http_error.c http_chunked.c stream_range.c
+http_stream.o:	http_error.c http_chunked.c cgi_stream.c stream_range.c
 
 install:	$(LIBPL)
 		mkdir -p $(DESTDIR)$(PLBASE)/lib/$(PLARCH)
@@ -98,6 +100,7 @@ uninstall::
 check::
 		$(PL) -q -f test_http.pl -g true -t run_tests
 		$(PL) -q -f test_json.pl -g true -t test_json
+		$(PL) -q -f test_cgi_stream.pl -g true -t test_cgi_stream
 
 ################################################################
 # Documentation
@@ -107,7 +110,7 @@ doc:		$(PDF) $(HTML)
 pdf:		$(PDF)
 html:		$(HTML)
 
-SUBTEX=		post.tex json.tex
+SUBTEX=		post.tex json.tex httplog.tex
 
 $(HTML):	$(TEX) $(SUBTEX)
 		latex2html $(DOC)
@@ -123,7 +126,10 @@ $(TEX):		$(DOCTOTEX)
 json.tex:	json.pl json_convert.pl http_json.pl
 
 .txt.tex:
-		pl -q -s txttotex.pl -g txttotex,halt -t 'halt(1)' -- $*.txt
+		$(PUBLICPL) -q -s txttotex.pl -g txttotex,halt -t 'halt(1)' -- $*.txt
+
+httplog.tex:	http_log.pl
+		$(PLTOTEX) --subsection $<
 
 .doc.tex:
 		$(DOCTOTEX) $*.doc > $*.tex

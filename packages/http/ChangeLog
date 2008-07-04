@@ -1,3 +1,18 @@
+[Jun 16 2008]
+
+ * ENHANCED: Reduce HTTP header parsing time
+
+ * ENHANCED: Reduce overhead of deleting dead HTTP sessions
+
+[May 21 2008]
+
+ * FIXED: atom_json_term(-,+,+): typo.  Torbjörn Lager
+
+[Apr 28 2008]
+
+ * ENHANCED: Perform a GC at the end of a communication with a client.  Note that
+   at that moment we have little active memory (=cheap GC), while otherwise we may
+   remain idle for a long time with large stacks.
 [Apr 2 2008]
 
  * FIXED: Throw an exception in illegal input wo json_write/3.

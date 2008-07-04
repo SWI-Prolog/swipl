@@ -217,6 +217,9 @@ apply(Pred, Arguments) :-
 _Var^Goal :-					% setof/3, bagof/3
 	Goal.
 
+false :-					% SICStus compatibility
+	fail.
+
 %	block/3, !/1, exit/2, fail/1
 %	`longjmp' like control-structures.  See manual.  The predicate
 %	system:block/3 is used by the VMI's I_CUT_BLOCK and B_EXIT.
@@ -1072,8 +1075,12 @@ load_files(Files, Options) :-
 			     load_file(start(Level,
 					     file(File, Absolute)))),
 	    (   nonvar(FromStream),
-	        '$consult_file'(stream(Absolute, FromStream), Encoding,
-				Module, IsModule, Action, LM)
+		(   '$get_option'(format(qlf), Options, source)
+		->  set_stream(FromStream, file_name(Absolute)),
+		    '$qload_stream'(FromStream, Module, IsModule, Action, LM)
+		;   '$consult_file'(stream(Absolute, FromStream), Encoding,
+				    Module, IsModule, Action, LM)
+		)
 	    ->	true
 	    ;   var(FromStream),
 		'$consult_goal'(Absolute, Goal),

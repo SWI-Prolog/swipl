@@ -63,7 +63,7 @@ before loading this file.  See end of this file.
 /* PLVERSION: 10000 * <Major> + 100 * <Minor> + <Patch> */
 
 #ifndef PLVERSION
-#define PLVERSION 50654
+#define PLVERSION 50657
 #endif
 
 		 /*******************************
@@ -747,6 +747,7 @@ install_t		PL_install_readline(void);
 #endif
 PL_EXPORT(int)		PL_toplevel(void);
 PL_EXPORT(int)		PL_cleanup(int status);
+PL_EXPORT(void)		PL_cleanup_fork();
 PL_EXPORT(void)		PL_halt(int status) NORETURN;
 
 		 /*******************************
@@ -817,6 +818,8 @@ PL_EXPORT(void) (*PL_signal(int sig, void (*func)(int)))(int);
 PL_EXPORT(void) PL_interrupt(int sig);
 PL_EXPORT(int)  PL_raise(int sig);
 PL_EXPORT(int)  PL_handle_signals(void);
+PL_EXPORT(int) 	PL_get_signum_ex(term_t sig, int *n);
+
 
 		/********************************
 		*      PROLOG ACTION/QUERY      *
@@ -875,6 +878,8 @@ typedef struct
 
 
 PL_EXPORT(int)	PL_thread_self(void);	/* Prolog thread id (-1 if none) */
+PL_EXPORT(int)  PL_unify_thread_id(term_t t, int i);
+PL_EXPORT(int)	PL_get_thread_id_ex(term_t t, int *idp);
 PL_EXPORT(int)	PL_thread_attach_engine(PL_thread_attr_t *attr);
 PL_EXPORT(int)	PL_thread_destroy_engine(void);
 PL_EXPORT(int)	PL_thread_at_exit(void (*function)(void *),

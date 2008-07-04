@@ -211,9 +211,10 @@ the returned files.  Default is \const{false}, except for consult/1
 which is intended for interactive use.  Flexible location of files
 is defined by file_search_path/2.
 
-    \termitem{reexport}{Bool}
-If \const{true} re-export the imported predicate.  Used by reexport/1
-and reexport/2.
+    \termitem{format}{+Format}
+Used to specify the file format if data is loaded from a stream using
+the \term{stream}{Stream} option. Default is \const{source}, loading
+Prolog source text.  If \const{qlf}, load QLF data (see qcompile/1).
 
     \termitem{if}{Condition}
 Load the file only if the specified condition is satisfied. The value
@@ -248,6 +249,10 @@ Quick Load Format using qcompile/1 and this flag is \const{true}, the
 contents of the argument files are included in the \fileext{qlf} file
 instead of the loading directive.
 
+    \termitem{reexport}{Bool}
+If \const{true} re-export the imported predicate.  Used by reexport/1
+and reexport/2.
+
     \termitem{silent}{Bool}
 If \const{true}, load the file without printing a message. The
 specified value is the default for all files loaded as a result of
@@ -262,6 +267,8 @@ well as remove all clauses if the data is re-consulted.
 
 This option is added to allow compiling from non-file locations such as
 databases, the web, the \jargon{user} (see consult/1) or other servers.
+It can be combined with \term{format}{qlf} to load QLF data from a
+stream.
 \end{description}
 
 The load_files/2 predicate can be hooked to load other data or data from
@@ -1157,6 +1164,8 @@ one_character_atoms(As) :-
     \predicate[ISO]{fail}{0}{}
 Always fail.  The predicate fail/0 is translated into a single virtual
 machine instruction.
+    \predicate{false}{0}{}
+Same as fail, but the name has a more declarative conotation.
     \predicate[ISO]{true}{0}{}
 Always succeed. The predicate true/0 is translated into a single virtual
 machine instruction.
@@ -1603,7 +1612,7 @@ a list of message elements.  The elements of this list are:
 See also print_message/2 and message_hook/3.
 
     \predicate{message_hook}{3}{+Term, +Kind, +Lines}
-Hook predicate that may be define in the module \const{user} to
+Hook predicate that may be defined in the module \const{user} to
 intercept messages from print_message/2. \arg{Term} and \arg{Kind} are
 the same as passed to print_message/2. \arg{Lines} is a list of format
 statements as described with print_message_lines/3.  See also
@@ -2525,6 +2534,10 @@ SWI-Prolog extension to query the buffering mode of this stream.
 \arg{Buffering} is one of \const{full}, \const{line} or \const{false}.
 See also open/4.
 
+    \termitem{buffer_size}{Integer}
+SWI-Prolog extension to query the size of the I/O buffer associated
+to a stream in bytes.  Fails of the stream is not buffered.
+
     \termitem{bom}{Bool}
 If present and \const{true}, a BOM (\jargon{Byte Order Mark}) was
 detected while opening the file for reading or a BOM was written while
@@ -2590,6 +2603,11 @@ code or \const{xml} (write \verb$&#...;$ XML character entity).
 The initial mode is \const{prolog} for the user streams and
 \const{error} for all other streams. See also \secref{encoding}
 and set_stream/2.
+
+    \termitem{timeout}{-Time}
+\arg{Time} is the timeout currently associated with the stream.  See
+set_stream/2 with the same option. If no timeout is specified,
+\arg{Time} is unified to the atom \const{infinite}.
 
     \termitem{type}{T}
 Unify \arg{Bool} with \const{text} or \const{binary}.
@@ -2671,6 +2689,10 @@ terminal input is read from this stream. See also interactor/0.
     \termitem{buffer}{Buffering}
 Set the buffering mode of an already created stream.  Buffering is one
 of \const{full}, \const{line} or \const{false}.
+
+    \termitem{buffer_size}{+Size}
+Set the size of the I/O buffer of the underlying stream to \arg{Size}
+bytes.
 
     \termitem{close_on_abort}{Bool}
 Determine whether or not the stream is closed by abort/0.  By default
@@ -6318,10 +6340,6 @@ theoretical 4-port model.
 
 \section{Memory Management}		\label{sec:memory}
 
-Note: limit_stack/2 and trim_stacks/0 have no effect on machines that do
-not offer dynamic stack expansion.  On these machines these predicates
-simply succeed to improve portability.
-
 \begin{description}
     \predicate{garbage_collect}{0}{}
 Invoke the global- and trail stack garbage collector.  Normally the
@@ -6337,17 +6355,6 @@ actual collection is delayed until there there are no threads performing
 normal garbage collection. In this case garbage_collect_atoms/0 returns
 immediately. Note this implies there is no guarantee it will \emph{ever}
 happen as there may always be threads performing garbage collection.
-
-    \predicate{limit_stack}{2}{+Key, +Kbytes}
-Limit one of the stack areas to the specified value. \arg{Key} is one of
-\const{local}, \const{global} or \const{trail}. The limit is an integer,
-expressing the desired stack limit in K bytes. If the desired limit is
-smaller than the currently used value, the limit is set to the nearest
-legal value above the currently used value. If the desired value is
-larger than the maximum, the maximum is taken. Finally, if the desired
-value is either 0 or the atom \const{unlimited} the limit is set to its
-maximum. The maximum and initial limit is determined by the command line
-options \cmdlineoption{-L}, \cmdlineoption{-G} and \cmdlineoption{-T}.
 
     \predicate{trim_stacks}{0}{}
 Release stack memory resources that are not in use at this moment,

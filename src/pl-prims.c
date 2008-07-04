@@ -204,6 +204,11 @@ right_recursion:
     w2 = *t2;
   }
 
+#ifdef LIFE_GC
+  SECURE(assert(w1 != ATOM_garbage_collected);
+	 assert(w2 != ATOM_garbage_collected));
+#endif
+
   if ( isVar(w1) )
   { if ( isVar(w2) )
     { if ( t1 < t2 )			/* always point downwards */
@@ -1894,10 +1899,10 @@ skip_list(Word l, Word *tailp ARG_LD)
   if ( isList(*l) )
   { for(;;)
     { length++; l = TailList(l); deRef(l);
-      if ( l == s ) break;
+      if ( *l == *s ) break;
       if ( !isList(*l) ) break;
       length++; l = TailList(l); deRef(l);
-      if ( l == s ) break;
+      if ( *l == *s ) break;
       if ( !isList(*l) ) break;
       s = TailList(s); deRef(s);
     }
@@ -2600,9 +2605,12 @@ unifiable(term_t t1, term_t t2, term_t subst ARG_LD)
 
 	  tt--;				/* restore tail of wakeup list */
 	  p = tt->address;
-	  assert(isTrailVal(p));
-	  tt--;
-	  *tt->address = trailVal(p);
+	  if ( isTrailVal(p) )
+	  { tt--;
+	    *tt->address = trailVal(p);
+	  } else
+	  { setVar(*p);
+	  }
 
 	  tt--;				/* restore head of wakeup list */
 	  p = tt->address;
@@ -4203,10 +4211,13 @@ qp_statistics__LD(atom_t key, int64_t v[], PL_local_data_t *ld)
     v[1] = 0;
     vn = 2;
   } else if ( key == ATOM_garbage_collection )
-  { v[0] = gc_status.collections;
-    v[1] = gc_status.trail_gained + gc_status.global_gained;
-    v[2] = (int64_t)(gc_status.time * 1000.0);
-    vn = 3;
+  { vn=0;
+
+    v[vn++] = gc_status.collections;
+    v[vn++] = gc_status.trail_gained + gc_status.global_gained;
+    v[vn++] = (int64_t)(gc_status.time * 1000.0);
+    v[vn++] = gc_status.trail_left + gc_status.global_left;
+
   } else if ( key == ATOM_stack_shifts )
   {
 #ifdef O_SHIFT_STACKS
@@ -4343,7 +4354,7 @@ pl_statistics_ld(term_t k, term_t value, PL_local_data_t *ld ARG_LD)
   atom_t key;
   int rc;
 #ifdef QP_STATISTICS
-  int64_t v[3];
+  int64_t v[4];
 #endif
 
   if ( !PL_get_atom_ex(k, &key) )
@@ -4367,8 +4378,12 @@ pl_statistics_ld(term_t k, term_t value, PL_local_data_t *ld ARG_LD)
     term_t head = PL_new_term_ref();
 
     for(p = v; rc-- > 0; p++)
-    { if ( !PL_unify_list(tail, head, tail) ||
-	   !PL_unify_int64(head, *p) )
+    { if ( !PL_unify_list(tail, head, tail) )
+      { if ( PL_unify_nil(tail) )
+	  succeed;
+	fail;
+      }
+      if ( !PL_unify_int64(head, *p) )
 	fail;
     }
 

@@ -130,12 +130,19 @@ show_help(_, Ranges) :-
 	show_ranges(Ranges, Manual, user_output).
 
 show_ranges([], _, _) :- !.
-show_ranges([From-To|Rest], Manual, Pager) :-
+show_ranges([FromLine-ToLine|Rest], Manual, Pager) :-
+	line_start(FromLine, From),
+	line_start(ToLine, To),
 	seek(Manual, From, bof, _),
 	Range is To - From,
 	copy_chars(Range, Manual, Pager),
 	nl(Pager),
 	show_ranges(Rest, Manual, Pager).
+
+%%	copy_chars(+Count, +FromStream, +ToStream)
+%
+%	Note: stream is binary to deal with byte offsets. As the data is
+%	ISO Latin-1 anyway, this is fine.
 
 copy_chars(N, From, To) :-
 	get0(From, C0),
@@ -148,10 +155,10 @@ copy_chars(N, _, To, _) :-
 	flush_output(To),
 	fail.
 copy_chars(N, From, To, C) :-
-	get0(From, C1),
+	get_byte(From, C1),
 	(   C1 == 8,			% backspace
 	    \+ current_prolog_flag(write_help_with_overstrike, true)
-	->  get0(From, C2),
+	->  get_byte(From, C2),
 	    NN is N - 2,
 	    copy_chars(NN, From, To, C2)
 	;   put_printable(To, C),
@@ -160,13 +167,14 @@ copy_chars(N, From, To, C) :-
 	).
 
 put_printable(_, 12) :- !.
+put_printable(_, 13) :- !.
 put_printable(_, -1) :- !.
 put_printable(To, C) :-
-	put(To, C).
+	put_code(To, C).
 
 online_manual_stream(Stream) :-
 	find_manual(Manual),
-	open(Manual, read, Stream).
+	open(Manual, read, Stream, [type(binary)]).
 
 pager_stream(Stream) :-
 	find_pager(Pager),
@@ -193,8 +201,45 @@ set_overstrike_feature :-
 	
 :- initialization set_overstrike_feature.
 
+%%	line_start(Line, Start) is det.
+%
+%	True if Start is the byte position at which Line starts.
 
-%	APROPOS
+:- dynamic
+	start_of_line/2.
+
+line_start(Line, Start) :-
+	start_of_line(Line, Start), !.
+line_start(Line, Start) :-
+	line_index,
+	start_of_line(Line, Start).
+
+
+%%	line_index
+%
+%	Create index holding the byte positions for the line starts
+
+line_index :-
+	start_of_line(_,_), !.
+line_index :-
+	online_manual_stream(Stream),
+	set_stream(Stream, encoding(octet)),
+	call_cleanup(line_index(Stream, 1), close(Stream)).
+
+line_index(Stream, LineNo) :-
+	byte_count(Stream, ByteNo),
+	assert(start_of_line(LineNo, ByteNo)),
+	(   at_end_of_stream(Stream)
+	->  true
+	;   LineNo2 is LineNo+1,
+	    skip(Stream, 10),
+	    line_index(Stream, LineNo2)
+	).
+
+
+		 /*******************************
+		 *	       APROPOS		*
+		 *******************************/
 
 give_apropos(Atom) :-
 	ignore(predicate_apropos(Atom)),

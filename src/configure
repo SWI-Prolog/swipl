@@ -1281,6 +1281,7 @@ Optional Features:
   --disable-readline	  Do NOT include GNU readline
   --disable-mapped-stacks Do not use mmap for stacks
   --disable-gmp		  Disable Multi-precision arithmetic
+  --disable-life-gc	  Disable lifeliness checking of data
   --disable-largefile     omit support for large files
   --disable-custom-flags  Do not add custom build optimization flags
   --disable-load-foreign  No shared-lib interface
@@ -2997,7 +2998,17 @@ case $host_os in *\ *) host_os=`echo "$host_os" | sed 's/ /-/g'`;; esac
 
 
 if test "x$ARCH" = "x"; then
-  ARCH=`echo $host | sed 's/\([^-]*\)-[^-]*-\([^-]*\)/\1-\2/'`
+  case "$host" in
+    *linux*)
+      ARCH=`echo $host | sed 's/-.*/-linux/'`
+      ;;
+    *-gnu)
+      ARCH=`echo $host | sed 's/\([^-]*\)-[^-]*-\([^-]*\)-gnu/\1-\2/'`
+      ;;
+    *)
+      ARCH=`echo $host | sed 's/\([^-]*\)-[^-]*-\([^-]*\)/\1-\2/'`
+      ;;
+  esac
 fi
 
 # Check whether --enable-runtime was given.
@@ -3071,10 +3082,18 @@ else
 fi
 
 
+# Check whether --enable-life-gc was given.
+if test "${enable_life_gc+set}" = set; then
+  enableval=$enable_life_gc; lifegc="$enableval"
+else
+  lifegc=yes
+fi
+
+
 
 
 test "x$prefix" = xNONE && prefix=$ac_default_prefix
-PLBASE=$prefix/lib/$PL-$PLVERSION
+PLBASE=$libdir/$PL-$PLVERSION
 
 
 for ac_prog in gmake make
@@ -4592,6 +4611,14 @@ if test "x$custom_flags" = "xyes" ; then
 	fi
 else
 	COFLAGS=$CFLAGS
+fi
+
+if test "$lifegc" = yes; then
+
+cat >>confdefs.h <<\_ACEOF
+#define LIFE_GC 1
+_ACEOF
+
 fi
 
 PROGLDFLAGS="$LDFLAGS"
@@ -6422,7 +6449,7 @@ case "$ARCH" in
 	    SO_PIC="-KPIC"
 	fi
 	;;
-  *hppa*|*hpux*)
+  *hpux*)
 	SO_EXT="sl"
 	LDFLAGS="$LDFLAGS -Wl,-E"
 	if test "$GCC" != "yes"; then
@@ -6528,7 +6555,7 @@ fi
 	    SO_LDFLAGS="-bI:$PLBASE/include/SWI-Exports"
 	fi
 	;;
-  *x86_64*linux)
+  *x86_64*linux|*hppa*linux)
 	if test "x$MKSHARED" = "x"; then
 	    MKSHARED=yes
 	fi
@@ -8400,8 +8427,7 @@ _ACEOF
       CFLAGS="-I$RLPREFIX/include $CFLAGS"
 
 
-
-for ac_func in rl_completion_matches rl_insert_close rl_readline_state
+for ac_func in rl_completion_matches rl_insert_close
 do
 as_ac_var=`echo "ac_cv_func_$ac_func" | $as_tr_sh`
 { echo "$as_me:$LINENO: checking for $ac_func" >&5
@@ -8512,8 +8538,7 @@ done
 
 
 
-
-for ac_func in rl_set_prompt rl_clear_pending_input rl_done
+for ac_func in rl_set_prompt rl_clear_pending_input
 do
 as_ac_var=`echo "ac_cv_func_$ac_func" | $as_tr_sh`
 { echo "$as_me:$LINENO: checking for $ac_func" >&5
@@ -8842,6 +8867,92 @@ _ACEOF
 
 fi
 done
+
+      { echo "$as_me:$LINENO: checking whether rl_done is declared" >&5
+echo $ECHO_N "checking whether rl_done is declared... $ECHO_C" >&6; }
+if test "${ac_cv_have_decl_rl_done+set}" = set; then
+  echo $ECHO_N "(cached) $ECHO_C" >&6
+else
+  cat >conftest.$ac_ext <<_ACEOF
+/* confdefs.h.  */
+_ACEOF
+cat confdefs.h >>conftest.$ac_ext
+cat >>conftest.$ac_ext <<_ACEOF
+/* end confdefs.h.  */
+$ac_includes_default
+int
+main ()
+{
+#ifndef rl_done
+  char *p = (char *) rl_done;
+  return !p;
+#endif
+
+  ;
+  return 0;
+}
+_ACEOF
+rm -f conftest.$ac_objext
+if { (ac_try="$ac_compile"
+case "(($ac_try" in
+  *\"* | *\`* | *\\*) ac_try_echo=\$ac_try;;
+  *) ac_try_echo=$ac_try;;
+esac
+eval "echo \"\$as_me:$LINENO: $ac_try_echo\"") >&5
+  (eval "$ac_compile") 2>conftest.er1
+  ac_status=$?
+  grep -v '^ *+' conftest.er1 >conftest.err
+  rm -f conftest.er1
+  cat conftest.err >&5
+  echo "$as_me:$LINENO: \$? = $ac_status" >&5
+  (exit $ac_status); } &&
+	 { ac_try='test -z "$ac_c_werror_flag" || test ! -s conftest.err'
+  { (case "(($ac_try" in
+  *\"* | *\`* | *\\*) ac_try_echo=\$ac_try;;
+  *) ac_try_echo=$ac_try;;
+esac
+eval "echo \"\$as_me:$LINENO: $ac_try_echo\"") >&5
+  (eval "$ac_try") 2>&5
+  ac_status=$?
+  echo "$as_me:$LINENO: \$? = $ac_status" >&5
+  (exit $ac_status); }; } &&
+	 { ac_try='test -s conftest.$ac_objext'
+  { (case "(($ac_try" in
+  *\"* | *\`* | *\\*) ac_try_echo=\$ac_try;;
+  *) ac_try_echo=$ac_try;;
+esac
+eval "echo \"\$as_me:$LINENO: $ac_try_echo\"") >&5
+  (eval "$ac_try") 2>&5
+  ac_status=$?
+  echo "$as_me:$LINENO: \$? = $ac_status" >&5
+  (exit $ac_status); }; }; then
+  ac_cv_have_decl_rl_done=yes
+else
+  echo "$as_me: failed program was:" >&5
+sed 's/^/| /' conftest.$ac_ext >&5
+
+	ac_cv_have_decl_rl_done=no
+fi
+
+rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
+fi
+{ echo "$as_me:$LINENO: result: $ac_cv_have_decl_rl_done" >&5
+echo "${ECHO_T}$ac_cv_have_decl_rl_done" >&6; }
+if test $ac_cv_have_decl_rl_done = yes; then
+
+cat >>confdefs.h <<_ACEOF
+#define HAVE_DECL_RL_DONE 1
+_ACEOF
+
+
+else
+  cat >>confdefs.h <<_ACEOF
+#define HAVE_DECL_RL_DONE 0
+_ACEOF
+
+
+fi
+
 
       FreeBSD="$ocflags"
       readline_ok=yes
@@ -11962,7 +12073,8 @@ done
 
 
 
-for ac_func in setenv posix_openpt wcsxfrm sysctlbyname
+
+for ac_func in setenv posix_openpt wcsxfrm sysctlbyname mbsnrtowcs
 do
 as_ac_var=`echo "ac_cv_func_$ac_func" | $as_tr_sh`
 { echo "$as_me:$LINENO: checking for $ac_func" >&5
@@ -12070,6 +12182,92 @@ _ACEOF
 
 fi
 done
+
+{ echo "$as_me:$LINENO: checking whether mbsnrtowcs is declared" >&5
+echo $ECHO_N "checking whether mbsnrtowcs is declared... $ECHO_C" >&6; }
+if test "${ac_cv_have_decl_mbsnrtowcs+set}" = set; then
+  echo $ECHO_N "(cached) $ECHO_C" >&6
+else
+  cat >conftest.$ac_ext <<_ACEOF
+/* confdefs.h.  */
+_ACEOF
+cat confdefs.h >>conftest.$ac_ext
+cat >>conftest.$ac_ext <<_ACEOF
+/* end confdefs.h.  */
+$ac_includes_default
+int
+main ()
+{
+#ifndef mbsnrtowcs
+  char *p = (char *) mbsnrtowcs;
+  return !p;
+#endif
+
+  ;
+  return 0;
+}
+_ACEOF
+rm -f conftest.$ac_objext
+if { (ac_try="$ac_compile"
+case "(($ac_try" in
+  *\"* | *\`* | *\\*) ac_try_echo=\$ac_try;;
+  *) ac_try_echo=$ac_try;;
+esac
+eval "echo \"\$as_me:$LINENO: $ac_try_echo\"") >&5
+  (eval "$ac_compile") 2>conftest.er1
+  ac_status=$?
+  grep -v '^ *+' conftest.er1 >conftest.err
+  rm -f conftest.er1
+  cat conftest.err >&5
+  echo "$as_me:$LINENO: \$? = $ac_status" >&5
+  (exit $ac_status); } &&
+	 { ac_try='test -z "$ac_c_werror_flag" || test ! -s conftest.err'
+  { (case "(($ac_try" in
+  *\"* | *\`* | *\\*) ac_try_echo=\$ac_try;;
+  *) ac_try_echo=$ac_try;;
+esac
+eval "echo \"\$as_me:$LINENO: $ac_try_echo\"") >&5
+  (eval "$ac_try") 2>&5
+  ac_status=$?
+  echo "$as_me:$LINENO: \$? = $ac_status" >&5
+  (exit $ac_status); }; } &&
+	 { ac_try='test -s conftest.$ac_objext'
+  { (case "(($ac_try" in
+  *\"* | *\`* | *\\*) ac_try_echo=\$ac_try;;
+  *) ac_try_echo=$ac_try;;
+esac
+eval "echo \"\$as_me:$LINENO: $ac_try_echo\"") >&5
+  (eval "$ac_try") 2>&5
+  ac_status=$?
+  echo "$as_me:$LINENO: \$? = $ac_status" >&5
+  (exit $ac_status); }; }; then
+  ac_cv_have_decl_mbsnrtowcs=yes
+else
+  echo "$as_me: failed program was:" >&5
+sed 's/^/| /' conftest.$ac_ext >&5
+
+	ac_cv_have_decl_mbsnrtowcs=no
+fi
+
+rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
+fi
+{ echo "$as_me:$LINENO: result: $ac_cv_have_decl_mbsnrtowcs" >&5
+echo "${ECHO_T}$ac_cv_have_decl_mbsnrtowcs" >&6; }
+if test $ac_cv_have_decl_mbsnrtowcs = yes; then
+
+cat >>confdefs.h <<_ACEOF
+#define HAVE_DECL_MBSNRTOWCS 1
+_ACEOF
+
+
+else
+  cat >>confdefs.h <<_ACEOF
+#define HAVE_DECL_MBSNRTOWCS 0
+_ACEOF
+
+
+fi
+
 
 { echo "$as_me:$LINENO: checking whether time.h and sys/time.h may both be included" >&5
 echo $ECHO_N "checking whether time.h and sys/time.h may both be included... $ECHO_C" >&6; }

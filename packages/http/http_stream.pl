@@ -31,7 +31,12 @@
 
 :- module(http_stream,
 	  [ http_chunked_open/3,	% +Stream, -DataStream, +Options
-	    stream_range_open/3		% +Stream, -DataStream, +Options
+	    stream_range_open/3,	% +Stream, -DataStream, +Options
+					% CGI Stream interaction
+	    cgi_open/4,			% +Stream, -DataStream, :Hook, +Options
+	    cgi_property/2,		% +Stream, -Property
+	    cgi_set/2,			% +Stream, -Property
+	    cgi_discard/1		% +Stream
 	  ]).
 
 :- initialization
@@ -120,6 +125,99 @@ bytes, dispite the fact that the underlying stream may be longer.
 %	DataStream is a stream  whose  size   is  defined  by the option
 %	size(ContentLength).   Closing   DataStream   does   not   close
 %	RawStream.
+
+%%	cgi_open(+OutStream, -CGIStream, :Hook, +Options) is det.
+%
+%	Process CGI output. OutStream is   normally the socket returning
+%	data to the HTTP client. CGIStream   is  the stream the (Prolog)
+%	code writes to. The CGIStream provides the following functions:
+%	
+%	    * At the end of the header, it calls Hook using
+%	    call(Hook, header, Stream), where Stream is a stream holding
+%	    the buffered header.
+%	    
+%	    * If the stream is closed, it calls Hook using
+%	    call(Hook, data, Stream), where Stream holds the buffered
+%	    data.
+%	    
+%	The stream calls Hook, adding  the   event  and CGIStream to the
+%	closure. Defined events are:
+%	
+%	    * header
+%	    Called  if  the  header  is   complete.  Typically  it  uses
+%	    cgi_property/2 to extract the collected  header and combines
+%	    these with the request and policies   to decide on encoding,
+%	    transfer-encoding, connection parameters and   the  complete
+%	    header (as a Prolog term). Typically   it  uses cgi_set/2 to
+%	    associate these with the stream.
+%	    
+%	    * send_header
+%	    Called if the HTTP header must  be sent. This is immediately
+%	    after setting the transfer encoding to =chunked= or when the
+%	    CGI stream is closed.  Typically   it  requests  the current
+%	    header, optionally the content-length and   sends the header
+%	    to the original (client) stream.
+%	    
+%	    * close
+%	    Called from close/1 on the CGI   stream  after everything is
+%	    complete.
+%	    
+%	The predicates cgi_property/2  and  cgi_set/2   can  be  used to
+%	control the stream and store status   info.  Terms are stored as
+%	Prolog records and can thus be transferred between threads.
+
+%%	cgi_property(+CGIStream, ?Property) is det.
+%
+%	Inquire the status of the CGI stream.  Defined properties are:
+%	
+%	    * request(-Term)
+%	    The original request
+%	    * header(-Term)
+%	    Term is the header term as registered using cgi_set/2
+%	    * client(-Stream)
+%	    Stream is the original output stream used to create
+%	    this stream.
+%	    * thread(-ThreadID)
+%	    ThreadID is the identifier of the `owning thread'
+%	    * transfer_encoding(-Tranfer)
+%	    One of =chunked= or =none=.
+%	    * connection(-Connection)
+%	    One of =Keep-Alife= or =close=
+%	    * content_length(-ContentLength)
+%	    Total byte-size of the content.  Available in the close
+%	    handler if the transfer_encoding is =none=.
+%	    * header_codes(-Codes)
+%	    Codes represents the header collected.  Available in the
+%	    header handler.
+%	    * state(-State)
+%	    One of =header=, =data= or =discarded=
+
+%%	cgi_set(+CGIStream, ?Property) is det.
+%
+%	Change one of the properies.  Supported properties are:
+%	
+%	    * request(+Term)
+%	    Associate a request to the stream.
+%	    * header(+Term)
+%	    Register a reply header.  This header is normally retrieved
+%	    from the =send_header= hook to send the reply header to the
+%	    client.
+%	    * connection(-Connection)
+%	    One of =Keep-Alife= or =close=.
+%	    * transfer_encoding(-Tranfer)
+%	    One of =chunked= or =none=.  Initially set to =none=.  When
+%	    switching to =chunked= from the =header= hook, it calls the
+%	    =send_header= hook and if there is data queed this is send
+%	    as first chunk.  Each subsequent write to the CGI stream 
+%	    emits a chunk.
+
+%%	cgi_discard(+CGIStream) is det.
+%
+%	Discard content produced sofar. It sets   the  state property to
+%	=discarded=, causing close to omit the   writing  the data. This
+%	must be to use an alternate output   (e.g. an error page) if the
+%	page generator fails.
+
 
 :- multifile
 	http:encoding_filter/3.		% +Encoding, +In0,  -In

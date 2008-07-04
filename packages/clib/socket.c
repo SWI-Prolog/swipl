@@ -61,6 +61,10 @@ static atom_t ATOM_broadcast;		/* "broadcast" */
 static atom_t ATOM_dispatch;		/* "dispatch" */
 static atom_t ATOM_nonblock;		/* "nonblock" */
 static atom_t ATOM_infinite;		/* "infinite" */
+static atom_t ATOM_as;			/* "as" */
+static atom_t ATOM_atom;		/* "atom" */
+static atom_t ATOM_string;		/* "string" */
+static atom_t ATOM_codes;		/* "codes" */
 
 static functor_t FUNCTOR_socket1;	/* $socket(Id) */
 
@@ -284,14 +288,14 @@ pl_open_socket(term_t Socket, term_t Read, term_t Write)
     return FALSE;
   handle = (void *)(long)socket;
   
-  in  = Snew(handle, SIO_INPUT|SIO_RECORDPOS,  &readFunctions);
+  in  = Snew(handle, SIO_INPUT|SIO_RECORDPOS|SIO_FBUF,  &readFunctions);
   in->encoding = ENC_OCTET;
   if ( !PL_open_stream(Read, in) )
     return FALSE;
   nbio_setopt(socket, TCP_INSTREAM, in);
 
   if ( !(nbio_get_flags(socket) & SOCK_LISTEN) )
-  { out = Snew(handle, SIO_OUTPUT|SIO_RECORDPOS, &writeFunctions);
+  { out = Snew(handle, SIO_OUTPUT|SIO_RECORDPOS|SIO_FBUF, &writeFunctions);
     out->encoding = ENC_OCTET;
     if ( !PL_open_stream(Write, out) )
       return FALSE;
@@ -330,7 +334,7 @@ unify_address(term_t t, struct sockaddr_in *addr)
 
 
 static foreign_t
-udp_receive(term_t Socket, term_t Data, term_t From, term_t Options)
+udp_receive(term_t Socket, term_t Data, term_t From, term_t options)
 { struct sockaddr_in sockaddr;
 #ifdef __WINDOWS__
   int alen = sizeof(sockaddr);
@@ -338,23 +342,55 @@ udp_receive(term_t Socket, term_t Data, term_t From, term_t Options)
   socklen_t alen = sizeof(sockaddr);
 #endif
   int socket;
-  SOCKET fd;
   int flags = 0;
   char buf[UDP_MAXDATA];
   ssize_t n;
+  int as = PL_STRING;
+
+  if ( !PL_get_nil(options) )
+  { term_t tail = PL_copy_term_ref(options);
+    term_t head = PL_new_term_ref();
+    term_t arg  = PL_new_term_ref();
+
+    while(PL_get_list(tail, head, tail))
+    { atom_t name;
+      int arity;
+
+      if ( PL_get_name_arity(head, &name, &arity) && arity == 1 )
+      { PL_get_arg(1, head, arg);
+
+	if ( name == ATOM_as )
+	{ atom_t a;
+
+	  if ( !PL_get_atom(arg, &a) )
+	    return pl_error(NULL, 0, NULL, ERR_TYPE, head, "atom");
+	  if ( a == ATOM_atom )
+	    as = PL_ATOM;
+	  else if ( a == ATOM_codes )
+	    as = PL_CODE_LIST;
+	  else if ( a == ATOM_string )
+	    as = PL_STRING;
+	  else
+	    return pl_error(NULL, 0, NULL, ERR_DOMAIN, arg, "as_option");
+	}
+
+      } else
+	return pl_error(NULL, 0, NULL, ERR_TYPE, head, "option");
+    }
+    if ( !PL_get_nil(tail) )
+      return pl_error(NULL, 0, NULL, ERR_TYPE, tail, "list");
+  }
+
 
   if ( !tcp_get_socket(Socket, &socket) ||
        !nbio_get_sockaddr(From, &sockaddr) )
     return FALSE;
   
-  if ( (fd=nbio_fd(socket)) < 0 )
+  if ( (n=nbio_recvfrom(socket, buf, sizeof(buf), flags,
+			(struct sockaddr*)&sockaddr, &alen)) == -1 )
     return nbio_error(errno, TCP_ERRNO);
 
-  if ( (n=recvfrom(fd, buf, sizeof(buf), flags,
-		   (struct sockaddr*)&sockaddr, &alen)) == -1 )
-    return nbio_error(errno, TCP_ERRNO);
-
-  if ( !PL_unify_string_nchars(Data, n, buf) )
+  if ( !PL_unify_chars(Data, as, n, buf) )
     return FALSE;
 
   return unify_address(From, &sockaddr);
@@ -370,7 +406,6 @@ udp_send(term_t Socket, term_t Data, term_t To, term_t Options)
   int alen = sizeof(sockaddr);
 #endif
   int socket;
-  SOCKET fd;
   int flags = 0L;
   char *data;
   size_t dlen;
@@ -383,17 +418,10 @@ udp_send(term_t Socket, term_t Data, term_t To, term_t Options)
        !nbio_get_sockaddr(To, &sockaddr) )
     return FALSE;
 
-  if ( (fd=nbio_fd(socket)) < 0 )
-    return nbio_error(errno, TCP_ERRNO);
-
-  if ( (n=sendto(fd, data,
-#ifdef __WINDOWS__
-		 (int)dlen,
-#else
-		 dlen,
-#endif
-		 flags,
-		 (struct sockaddr*)&sockaddr, alen)) == -1 )
+  if ( (n=nbio_sendto(socket, data,
+		      (int)dlen,
+		      flags,
+		      (struct sockaddr*)&sockaddr, alen)) == -1 )
     return nbio_error(errno, TCP_ERRNO);
 
   return TRUE;
@@ -705,6 +733,10 @@ install_socket()
   ATOM_dispatch   = PL_new_atom("dispatch");
   ATOM_nonblock   = PL_new_atom("nonblock");
   ATOM_infinite   = PL_new_atom("infinite");
+  ATOM_as         = PL_new_atom("as");
+  ATOM_atom       = PL_new_atom("atom");
+  ATOM_string     = PL_new_atom("string");
+  ATOM_codes      = PL_new_atom("codes");
 
   FUNCTOR_socket1 = PL_new_functor(PL_new_atom("$socket"), 1);
   

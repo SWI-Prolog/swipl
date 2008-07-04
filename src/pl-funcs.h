@@ -249,6 +249,7 @@ COMMON(int) 		openFileDescriptors(unsigned char *buf, int size);
 COMMON(void) 		protocol(const char *s, size_t n);
 COMMON(bool) 		getInputStream__LD(term_t t, IOSTREAM **s ARG_LD);
 COMMON(bool) 		getOutputStream(term_t t, IOSTREAM **s);
+COMMON(bool)	        reportStreamError(IOSTREAM *s);
 COMMON(bool) 		streamStatus(IOSTREAM *s);
 COMMON(atom_t) 		fileNameStream(IOSTREAM *s);
 COMMON(int) 		getSingleChar(IOSTREAM *s, int signals);
@@ -723,10 +724,8 @@ COMMON(void) 		emptyStacks(void);
 COMMON(void) 		freeStacks(ARG1_LD);
 COMMON(void) 		freeLocalData(PL_local_data_t *ld);
 COMMON(word) 		pl_trim_stacks(void);
-COMMON(word) 		pl_limit_stack(term_t s, term_t l);
 COMMON(word) 		pl_stack_parameter(term_t s, term_t k, term_t o, term_t n);
 COMMON(void) 		ensureRoomStack(Stack s, size_t n);
-COMMON(int) 		_PL_get_signum(term_t sig, int *n);
 
 /* pl-sys.c */
 COMMON(word) 		pl_shell(term_t command, term_t status);
@@ -817,7 +816,6 @@ COMMON(word) 		pl_qlf_start_file(term_t name);
 COMMON(word) 		pl_qlf_end_part(void);
 COMMON(word) 		pl_qlf_open(term_t file);
 COMMON(word) 		pl_qlf_close(void);
-COMMON(word) 		pl_qlf_load(term_t file, term_t module);
 COMMON(word) 		pl_qlf_assert_clause(term_t ref, term_t saveclass);
 
 COMMON(void)		wicPutNum(int64_t n, IOSTREAM *fd);
@@ -937,3 +935,5 @@ COMMON(void)    promoteNumber(Number n1, numtype type);
 COMMON(int)	cmpNumbers(Number n1, Number n2);
 COMMON(void)	cpNumber(Number to, Number from);
 
+/* pl-version.h */
+COMMON(void)	setGITVersion(void);

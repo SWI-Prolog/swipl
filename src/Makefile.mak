@@ -57,7 +57,7 @@ OBJ=	pl-atom.obj pl-wam.obj pl-stream.obj pl-error.obj pl-arith.obj \
 	pl-xterm.obj pl-feature.obj pl-ctype.obj pl-main.obj \
 	pl-dde.obj pl-nt.obj pl-attvar.obj pl-gvar.obj pl-btree.obj \
 	pl-utf8.obj pl-text.obj pl-mswchar.obj pl-gmp.obj pl-tai.obj \
-	pl-segstack.obj pl-hash.obj
+	pl-segstack.obj pl-hash.obj pl-version.obj
 
 PLINIT=	$(PB)/init.pl
 
@@ -85,10 +85,10 @@ PLLIBS= MANUAL helpidx.pl help.pl explain.pl sort.pl \
 	prolog_xref.pl checklast.pl checkselect.pl operators.pl \
 	prolog_source.pl broadcast.pl pairs.pl base64.pl record.pl \
 	rbtrees.pl settings.pl dialect.pl apply_macros.pl apply.pl \
-	nb_rbtrees.pl aggregate.pl \
+	nb_rbtrees.pl aggregate.pl pure_input.pl pio.pl \
 	$(PLWINLIBS)
 !IF "$(MT)" == "true"
-PLLIBS=$(PLLIBS) threadutil.pl thread.pl
+PLLIBS=$(PLLIBS) threadutil.pl thread.pl thread_pool.pl
 !ENDIF
 CLP=	bounds.pl clp_events.pl clp_distinct.pl simplex.pl clpfd.pl
 DIALECT=yap.pl

@@ -226,9 +226,19 @@ processing options. Defined options are:
 <DL>
 <DT><STRONG>blocked</STRONG>(<VAR>+Reason:atom</VAR>)</DT>
 <DD class="defbody">
-The test is currently disabled. Tests are flagged as blocked if they are 
-known not to work, but this is accepted as something that must be fixed 
-in the future.</DD>
+The test is currently disabled. Tests are flagged as blocked if they 
+cannot be run for some reason. E.g. they crash Prolog, they rely on some 
+service that is not available, they take too much resources, etc. Tests 
+that fail but do not crash, etc. should be flagged using
+<CODE>fixme(Fixme)</CODE>.</DD>
+<DT><STRONG>fixme</STRONG>(<VAR>+Reason:atom</VAR>)</DT>
+<DD class="defbody">
+Similar to <CODE>blocked(Reason)</CODE>, but the test it executed 
+anyway. If it fails, a <CODE>-</CODE> is printed instead of the <CODE>.</CODE> 
+character. If it passes a <CODE>+</CODE> and if it passes with a 
+choicepoint, <CODE>!</CODE>. A summary is printed at the end of the test 
+run and the goal
+<CODE>test_report(fixme)</CODE> can be used to get details.</DD>
 <DT><STRONG>condition</STRONG>(<VAR>:Goal</VAR>)</DT>
 <DD class="defbody">
 Pre-condition for running the test. If the condition fails the test is 
@@ -236,11 +246,6 @@ skipped. The condition can be used as an alternative to the <CODE>setup</CODE>
 option. The only difference is that failure of a condition skips the 
 test and is considered an error when using the <CODE>setup</CODE> 
 option.</DD>
-<DT><STRONG>setup</STRONG>(<VAR>:Goal</VAR>)</DT>
-<DD class="defbody">
-<VAR>Goal</VAR> is run before the test-body. Typically used together 
-with the <CODE>cleanup</CODE> option to create and destroy the required 
-execution environment.</DD>
 <DT><STRONG>cleanup</STRONG>(<VAR>:Goal</VAR>)</DT>
 <DD class="defbody">
 <VAR>Goal</VAR> is always called after completion of the test-body, 
@@ -265,6 +270,19 @@ test(read, [ setup(create_file(Tmp)),
 </PRE>
 
 </DD>
+<DT><STRONG>setup</STRONG>(<VAR>:Goal</VAR>)</DT>
+<DD class="defbody">
+<VAR>Goal</VAR> is run before the test-body. Typically used together 
+with the <CODE>cleanup</CODE> option to create and destroy the required 
+execution environment.</DD>
+<DT><STRONG>forall</STRONG>(<VAR>:Generator</VAR>)</DT>
+<DD class="defbody">
+Run the same test for each solution of <VAR>Generator</VAR>. Each run 
+invokes the setup and cleanup handlers. This can be used to run the same 
+test with different inputs. If an error occurs, the test is reported as
+<TT>name (forall bindings =</TT> &lt;<VAR>vars</VAR>&gt; <TT>)</TT>, 
+where
+&lt;<VAR>vars</VAR>&gt; indicates the bindings of variables in <VAR>Generator</VAR>.</DD>
 <DT><STRONG>true</STRONG>(<VAR>AnswerTerm Cmp Value</VAR>)</DT>
 <DD class="defbody">
 Body must succeed deterministically. AnswerTerm is compared to Value 
@@ -390,7 +408,11 @@ the test of this unit is skipped.</DD>
 Executed before executing any of the tests.</DD>
 <DT><STRONG>cleanup</STRONG>(<VAR>:Goal</VAR>)</DT>
 <DD class="defbody">
-Executed after completion of all tests in the unit.
+Executed after completion of all tests in the unit.</DD>
+<DT><STRONG>sto</STRONG>(<VAR>+Terms</VAR>)</DT>
+<DD class="defbody">
+Specify default for subject-to-occurs-check mode. See <A class="sec" href="#sec:2">section 
+2</A> for details on the sto option.
 </DD>
 </DL>
 
@@ -553,6 +575,9 @@ traced. The called user-code can be traced normally though.</SPAN></SUP>
 <P></DD>
 </DL>
 
+<P>To identify nonterminating tests, interrupt the looping process with
+<EM>Control-C</EM>. The test name and location will be displayed.
+
 <H2><A NAME="sec:5"><SPAN class="sec-nr">5</SPAN> <SPAN class="sec-title">Tests 
 and production systems</SPAN></A></H2>
 
@@ -601,7 +626,12 @@ reloaded.</DD>
 <DD class="defbody">
 When <CODE>true</CODE> (default is <CODE>false</CODE>), send 
 informational messages using the `silent' level. In practice this means 
-there is no output except for errors.
+there is no output except for errors.</DD>
+<DT><STRONG>sto</STRONG>(<VAR>+Bool</VAR>)</DT>
+<DD class="defbody">
+When <CODE>true</CODE> (default <CODE>false</CODE>), assume tests are 
+not subject to occurs check (non-STO) and verify this if the Prolog 
+implementation supports testing this.
 </DD>
 </DL>
 
@@ -609,7 +639,17 @@ there is no output except for errors.
 <DT class="pubdef"><A NAME="load_test_files/1"><STRONG>load_test_files</STRONG>(<VAR>+Options</VAR>)</A></DT>
 <DD class="defbody">
 Load <CODE>.plt</CODE> test-files that belong to the currently loaded 
-sources.
+sources.</DD>
+<DT class="pubdef"><A NAME="running_tests/0"><STRONG>running_tests</STRONG></A></DT>
+<DD class="defbody">
+Print all currrently running tests to the terminal. It can be used to 
+find running thread in multi-threaded test operation or find the 
+currently running test if a test appears to be blocking.</DD>
+<DT class="pubdef"><A NAME="test_report/1"><STRONG>test_report</STRONG>(<VAR>+What</VAR>)</A></DT>
+<DD class="defbody">
+Print report on the executed tests. <VAR>What</VAR> defines the type of 
+report. Currently this only supports <CODE>fixme</CODE>, providing 
+details on how the fixme-flagged tests proceeded.
 </DD>
 </DL>
 
@@ -870,6 +910,9 @@ be marked as non-called in environments that perform cross-referencing.
 <DT><STRONG>R</STRONG></DT>
 <DD>
 </DD>
+<DT><A class="idx" href="#running_tests/0">running_tests/0</A></DT>
+<DD>
+</DD>
 <DT><A class="idx" href="#run_tests/0">run_tests/0</A></DT>
 <DD>
 <A class="idx" href="#idx:runtests0:12">4</A> <A class="idx" href="#idx:runtests0:15">6</A></DD>
@@ -900,6 +943,9 @@ be marked as non-called in environments that perform cross-referencing.
 <DT>test/2</DT>
 <DD>
 <A class="idx" href="#idx:test2:6">2.1</A> <A class="idx" href="#idx:test2:22">10</A></DD>
+<DT><A class="idx" href="#test_report/1">test_report/1</A></DT>
+<DD>
+</DD>
 <DT><STRONG>V</STRONG></DT>
 <DD>
 </DD>

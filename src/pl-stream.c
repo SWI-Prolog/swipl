@@ -140,11 +140,18 @@ STRYLOCK(IOSTREAM *s)
 #endif
 
 #include "pl-error.h"
+typedef void *record_t;
+typedef intptr_t term_t;
+
 extern int 			fatalError(const char *fm, ...);
 extern int 			PL_error(const char *pred, int arity,
 					 const char *msg, int id, ...);
 extern int			PL_handle_signals();
 extern IOENC			initEncoding(void);
+extern int			reportStreamError(IOSTREAM *s);
+extern record_t			PL_record(term_t t);
+extern int			PL_thread_self(void);
+
 
 		 /*******************************
 		 *	      BUFFER		*
@@ -160,26 +167,69 @@ not needed.
 
 static int
 S__setbuf(IOSTREAM *s, char *buffer, int size)
-{ if ( size == 0 )
+{ char *newbuf, *newunbuf;
+  int newflags = s->flags;
+
+  if ( size == 0 )
     size = SIO_BUFSIZE;
 
-  S__removebuf(s);
-  s->bufsize = size;
+  if ( (s->flags & SIO_OUTPUT) )
+  { if ( S__removebuf(s) < 0 )
+      return -1;
+  }
 
   if ( buffer )
-  { s->unbuffer = s->buffer = buffer;
-    s->flags |= SIO_USERBUF;
+  { newunbuf = newbuf = buffer;
+    newflags |= SIO_USERBUF;
   } else
-  { if ( !(s->unbuffer = malloc(s->bufsize+UNDO_SIZE)) )
+  { if ( !(newunbuf = malloc(size+UNDO_SIZE)) )
     { errno = ENOMEM;
       return -1;
     }
-    s->flags &= ~SIO_USERBUF;
-    s->buffer = s->unbuffer + UNDO_SIZE;
+    newflags &= ~SIO_USERBUF;
+    newbuf = newunbuf + UNDO_SIZE;
   }
 
-  s->limitp = &s->buffer[s->bufsize];
-  s->bufp   = s->buffer;
+  if ( (s->flags & SIO_INPUT) )
+  { int buffered = s->limitp - s->bufp;
+    int copy = (buffered < size ? buffered : size);
+
+    if ( size < buffered )
+    { int offset = size - buffered;
+      int64_t newpos;
+
+      if ( s->functions->seek64 )
+      { newpos = (*s->functions->seek64)(s->handle, offset, SIO_SEEK_CUR);
+      } else if ( s->functions->seek )
+      { newpos = (*s->functions->seek)(s->handle, offset, SIO_SEEK_CUR);
+      } else
+      { newpos = -1;
+	errno = ESPIPE;
+      }
+
+      if ( newpos == -1 )
+      { if ( !(newflags & SIO_USERBUF) )
+	{ int oldeno = errno;
+
+	  free(newunbuf);
+	  errno = oldeno;
+	  return -1;
+	}
+      }
+    }
+
+    memcpy(newbuf, s->bufp, copy);
+    S__removebuf(s);
+    s->unbuffer = newunbuf;
+    s->bufp = s->buffer = newbuf;
+    s->limitp = s->buffer+copy;
+  } else
+  { s->unbuffer = newunbuf;
+    s->bufp = s->buffer = newbuf;
+    s->limitp = &s->buffer[size];
+  }
+  s->bufsize = size;
+  s->flags = newflags;
 
   return size;
 }
@@ -227,7 +277,7 @@ Sname(IOSTREAM *s)
 
 static void
 print_trace(void)
-{ void *array[3];
+{ void *array[7];
   size_t size;
   char **strings;
   size_t i;
@@ -237,7 +287,7 @@ print_trace(void)
      
   printf(" Stack:");
   for(i = 1; i < size; i++)
-  { printf(" [%d] %s", i, strings[i]);
+  { printf("\n\t[%ld] %s", (long)i, strings[i]);
   }
   printf("\n");
        
@@ -251,8 +301,10 @@ Slock(IOSTREAM *s)
 { SLOCK(s);
 
 #ifdef DEBUG_IO_LOCKS
-  printf("  Lock: %d: %s: %d locks", PL_thread_self(), Sname(s), s->locks+1);
-  print_trace();
+  if ( s->locks > 2 )
+  { printf("  Lock [%d]: %s: %d locks", PL_thread_self(), Sname(s), s->locks+1);
+    print_trace();
+  }
 #endif
 
   if ( !s->locks++ )
@@ -278,13 +330,15 @@ StryLock(IOSTREAM *s)
 }
 
 
-int
-Sunlock(IOSTREAM *s)
+static int
+S__unlock(IOSTREAM *s)
 { int rval = 0;
 
 #ifdef DEBUG_IO_LOCKS
-  printf("Unlock: %d: %s: %d locks", PL_thread_self(), Sname(s), s->locks-1);
-  print_trace();
+  if ( s->locks > 3 )
+  { printf("Unlock [%d]: %s: %d locks", PL_thread_self(), Sname(s), s->locks-1);
+    print_trace();
+  }
 #endif
 
   if ( s->locks )
@@ -296,6 +350,13 @@ Sunlock(IOSTREAM *s)
   { assert(0);
   }
 
+  return rval;
+}
+
+
+int
+Sunlock(IOSTREAM *s)
+{ int rval = S__unlock(s);
   SUNLOCK(s);
 
   return rval;
@@ -537,6 +598,14 @@ update_linepos(IOSTREAM *s, int c)
 
 
 int
+S__fcheckpasteeof(IOSTREAM *s, int c)
+{ S__checkpasteeof(s, c);
+
+  return c;
+}
+
+
+int
 S__fupdatefilepos_getc(IOSTREAM *s, int c)
 { IOPOS *p = s->position;
 
@@ -556,6 +625,7 @@ S__updatefilepos(IOSTREAM *s, int c)
   { update_linepos(s, c);
     p->charno++;
   }
+  S__checkpasteeof(s,c);
 
   return c;
 }
@@ -857,8 +927,8 @@ retry:
       for(;;)
       { if ( (c = get_byte(s)) == EOF )
 	{ if ( n == 0 )
-	    return EOF;
-	  else
+	  { goto out;
+	  } else
 	  { Sseterr(s, SIO_WARN, "EOF in multibyte Sequence");
 	    goto mberr;
 	  }
@@ -915,7 +985,9 @@ retry:
 
       c1 = get_byte(s);
       if ( c1 == EOF )
-	return EOF;
+      { c = -1;
+	goto out;
+      }
       c2 = get_byte(s);
 
       if ( c2 == EOF )
@@ -940,7 +1012,8 @@ retry:
 
 	if ( c1 == EOF )
 	{ if ( n == 0 )
-	  { return EOF;
+	  { c = -1;
+	    goto out;
 	  } else
 	  { Sseterr(s, SIO_WARN, "EOF in UCS character");
 	    c = UTF8_MALFORMED_REPLACEMENT; 
@@ -1207,7 +1280,10 @@ Sread_pending(IOSTREAM *s, char *buf, size_t limit, int flags)
   { int c = S__fillbuf(s);
 
     if ( c < 0 )
+    { if ( (s->flags & SIO_FEOF) )
+	return 0;
       return c;
+    }
 
     buf[0] = c;
     limit--;
@@ -1373,6 +1449,13 @@ Sseterr(IOSTREAM *s, int flag, const char *message)
   } else
   { s->flags &= ~flag;
   }
+}
+
+
+void
+Sset_exception(IOSTREAM *s, term_t ex)
+{ s->exception = PL_record(ex);
+  s->flags |= SIO_FERR;
 }
 
 
@@ -1545,7 +1628,7 @@ Sseek64(IOSTREAM *s, int64_t pos, int whence)
   }
 
 update:
-  s->flags &= ~SIO_FEOF;		/* not on eof of file anymore */
+  s->flags &= ~(SIO_FEOF|SIO_FEOF2);	/* not on eof of file anymore */
 
   if ( s->position )
   { s->flags |= (SIO_NOLINENO|SIO_NOLINEPOS); /* no update this */
@@ -1633,7 +1716,8 @@ Sclose(IOSTREAM *s)
     return rval;
 
   if ( s->upstream )
-  { errno = EPERM;
+  { Sseterr(s, SIO_FERR, "Locked by upstream filter");
+    reportStreamError(s);
     return -1;
   }
 
@@ -1654,10 +1738,18 @@ Sclose(IOSTREAM *s)
   }
 #endif
   if ( s->functions->close && (*s->functions->close)(s->handle) < 0 )
+  { s->flags |= SIO_FERR;
     rval = -1;
-  run_close_hooks(s);
+  }
   while(s->locks > 0)			/* remove buffer-locks */
-    rval = Sunlock(s);
+  { int rc = S__unlock(s);
+
+    if ( rval == 0 )
+      rval = rc;
+  }
+  if ( rval < 0 )
+    reportStreamError(s);
+  run_close_hooks(s);			/* deletes Prolog registration */
 
   SUNLOCK(s);
 

@@ -5,7 +5,7 @@
     Author:        Jan Wielemaker
     E-mail:        wielemak@science.uva.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (C): 1985-2007, University of Amsterdam
+    Copyright (C): 1985-2008, University of Amsterdam
 
     This program is free software; you can redistribute it and/or
     modify it under the terms of the GNU General Public License
@@ -34,41 +34,55 @@
 	    http_read_reply_header/2,	% +Stream, -Reply
 	    http_reply/2,		% +What, +Stream
 	    http_reply/3,		% +What, +Stream, +HdrExtra
+	    http_reply_header/3,	% +Stream, +What, +HdrExtra
 
 	    http_timestamp/2,		% +Time, -HTTP string
 
 	    http_post_data/3,		% +Stream, +Data, +HdrExtra
 
 	    http_read_header/2,		% +Fd, -Header
+	    http_parse_header/2,	% +Codes, -Header
 	    http_join_headers/3,	% +Default, +InHdr, -OutHdr
-	    http_update_encoding/3	% +HeaderIn, -Encoding, -HeaderOut
+	    http_update_encoding/3,	% +HeaderIn, -Encoding, -HeaderOut
+	    http_update_connection/4,	% +HeaderIn, +Request, -Connection, -HeaderOut
+	    http_update_transfer/4	% +HeaderIn, +Request, -Transfer, -HeaderOut
 	  ]).
 :- use_module(library(readutil)).
 :- use_module(library(debug)).
 :- use_module(library(lists)).
 :- use_module(library(url)).
 :- use_module(library(memfile)).
+:- use_module(library(settings)).
 :- use_module(dcg_basics).
 :- use_module(html_write).
 :- use_module(mimetype).
 :- use_module(mimepack).
 
 
+% see http_update_transfer/4.
+
+:- setting(http:chunked_transfer, oneof([never,on_request,if_possible]),
+	   on_request, 'When to use Transfer-Encoding: Chunked').
+
+
 		 /*******************************
 		 *	    READ REQUEST	*
 		 *******************************/
 
-%%	http_read_request(+FdIn, -Request)
+%%	http_read_request(+FdIn:stream, -Request) is det.
 %
 %	Read an HTTP request-header from FdIn and return the broken-down
-%	request fields as +Name(+Value) pairs in a list.
+%	request fields as +Name(+Value) pairs  in   a  list.  Request is
+%	unified to =end_of_file= if FdIn is at the end of input.
 
-http_read_request(In, [input(In)|Request]) :-
+http_read_request(In, Request) :-
 	read_line_to_codes(In, Codes),
 	(   Codes == end_of_file
-	->  debug(http(header), 'end-of-file', [])
+	->  debug(http(header), 'end-of-file', []),
+	    Request = end_of_file
 	;   debug(http(header), 'First line: ~s~n', [Codes]),
-	    phrase(request(In, Request), Codes)
+	    Request =  [input(In)|Request1],
+	    phrase(request(In, Request1), Codes)
 	).
 
 
@@ -263,6 +277,30 @@ http_status_reply(server_error(ErrorTerm), Out, HrdExtra) :-
 	phrase(reply_header(status(server_error, HTML), HrdExtra), Header),
 	format(Out, '~s', [Header]),
 	print_html(Out, HTML).
+http_status_reply(resource_error(ErrorTerm), Out, HrdExtra) :- !,
+	'$messages':translate_message(ErrorTerm, Lines, []),
+	phrase(page([ title('503 Service Unavailable')
+		    ],
+		    [ h1('Service Unavailable'),
+		      p(['The server is temporarily out of resources, please try again later']),
+		      p(\html_message_lines(Lines)),
+		      address(httpd)
+		    ]),
+	       HTML),
+	phrase(reply_header(status(service_unavailable, HTML), HrdExtra), Header),
+	format(Out, '~s', [Header]),
+	print_html(Out, HTML).
+http_status_reply(busy, Out, HrdExtra) :- !,
+	phrase(page([ title('503 Service Unavailable')
+		    ],
+		    [ h1('Service Unavailable'),
+		      p(['The server is temporarily out of resources, please try again later']),
+		      address(httpd)
+		    ]),
+	       HTML),
+	phrase(reply_header(status(service_unavailable, HTML), HrdExtra), Header),
+	format(Out, '~s', [Header]),
+	print_html(Out, HTML).
 
 
 html_message_lines([]) -->
@@ -331,6 +369,94 @@ http_update_encoding(Header, octet, Header).
 
 mime_type_encoding('application/json', utf8).
 mime_type_encoding('application/jsonrequest', utf8).
+
+
+%%	http_update_connection(+CGIHeader, +Request, -Connection, -Header)
+%
+%	Merge keep-alive information from  Request   and  CGIHeader into
+%	Header.
+
+http_update_connection(CgiHeader, Request, Connect, [connection(Connect)|Rest]) :-
+	select(connection(CgiConn), CgiHeader, Rest), !,
+	connection(Request, ReqConnection),
+	join_connection(ReqConnection, CgiConn, Connect).
+http_update_connection(CgiHeader, Request, Connect, [connection(Connect)|CgiHeader]) :-
+	connection(Request, Connect).
+
+join_connection(Keep1, Keep2, Connection) :-
+	(   downcase_atom(Keep1, 'keep-alive'),
+	    downcase_atom(Keep2, 'keep-alive')
+	->  Connection = 'Keep-Alive'
+	;   Connection = close
+	).
+
+
+%%	connection(+Header, -Connection)
+%	
+%	Extract the desired connection from a header.
+
+connection(Header, Close) :-
+	(   memberchk(connection(Connection), Header)
+	->  Close = Connection
+	;   memberchk(http_version(1-X), Header),
+	    X >= 1
+	->  Close = 'Keep-Alive'
+	;   Close = close
+	).
+
+
+%%	http_update_transfer(+Request, +CGIHeader, -Transfer, -Header)
+%
+%	Decide on the transfer encoding  from   the  Request and the CGI
+%	header.    The    behaviour    depends      on    the    setting
+%	http:chunked_transfer. If =never=, even   explitic  requests are
+%	ignored. If =on_request=, chunked encoding  is used if requested
+%	through  the  CGI  header  and  allowed    by   the  client.  If
+%	=if_possible=, chunked encoding is  used   whenever  the  client
+%	allows for it, which is  interpreted   as  the client supporting
+%	HTTP 1.1 or higher.
+%	
+%	Chunked encoding is more space efficient   and allows the client
+%	to start processing partial results. The drawback is that errors
+%	lead to incomplete pages instead of  a nicely formatted complete
+%	page.
+
+http_update_transfer(Request, CgiHeader, Transfer, Header) :-
+	setting(http:chunked_transfer, When),
+	http_update_transfer(When, Request, CgiHeader, Transfer, Header).
+
+http_update_transfer(never, _, CgiHeader, none, Header) :- !,
+	delete(transfer_encoding(_), CgiHeader, Header).
+http_update_transfer(_, Request, CgiHeader, Transfer, Header) :-
+	select(transfer_encoding(CgiTransfer), CgiHeader, Rest), !,
+	transfer(Request, ReqConnection),
+	join_transfer(ReqConnection, CgiTransfer, Transfer),
+	(   Transfer == none
+	->  Header = Rest
+	;   Header = [transfer_encoding(Transfer)|Rest]
+	).
+http_update_transfer(if_possible, Request, CgiHeader, Transfer, Header) :-
+	transfer(Request, Transfer),
+	Transfer \== none, !,
+	Header = [transfer_encoding(Transfer)|CgiHeader].
+http_update_transfer(_, _, CgiHeader, none, CgiHeader).
+
+join_transfer(chunked, chunked, chunked) :- !.
+join_transfer(_, _, none).
+
+
+%%	transfer(+Header, -Connection)
+%	
+%	Extract the desired connection from a header.
+
+transfer(Header, Transfer) :-
+	(   memberchk(transfer_encoding(Transfer0), Header)
+	->  Transfer = Transfer0
+	;   memberchk(http_version(1-X), Header),
+	    X >= 1
+	->  Transfer = chunked
+	;   Transfer = none
+	).
 
 
 %%	content_length_in_encoding(+Encoding, +In, -Bytes)
@@ -435,7 +561,7 @@ http_post_data(cgi_stream(In), Out, HdrExtra) :- !,
 	http_update_encoding(Header0, Encoding, Header),
 	content_length_in_encoding(Encoding, In, Size),
 	http_join_headers(HdrExtra, Header, Hdr2),
-	phrase(reply_header(cgi_data(Size), Hdr2), HeaderText),
+	phrase(post_header(cgi_data(Size), Hdr2), HeaderText),
 	format(Out, '~s', [HeaderText]),
 	set_stream(Out, encoding(Encoding)),
 	call_cleanup(copy_stream_data(In, Out),
@@ -515,6 +641,16 @@ post_header(codes(Type, Codes), HdrExtra) -->
 		 *       OUTPUT HEADER DCG	*
 		 *******************************/
 
+%%	http_reply_header(+Out:stream, +What, +HdrExtra) is det.
+%
+%	Create a reply header  using  reply_header//2   and  send  it to
+%	Stream.
+
+http_reply_header(Out, What, HdrExtra) :-
+	phrase(reply_header(What, HdrExtra), String), !,
+	format(Out, '~s', [String]).
+	
+
 reply_header(string(String), HdrExtra) -->
 	reply_header(string(text/plain, String), HdrExtra).
 reply_header(string(Type, String), HdrExtra) -->
@@ -551,6 +687,15 @@ reply_header(cgi_data(Size), HdrExtra) -->
 	date(now),
 	header_fields(HdrExtra),
 	content_length(Size),
+	"\r\n".
+reply_header(chunked_data, HdrExtra) -->
+	vstatus(ok),
+	date(now),
+	header_fields(HdrExtra),
+	(   {memberchk(transfer_encoding(_), HdrExtra)}
+	->  ""
+	;   transfer_encoding(chunked)
+	),
 	"\r\n".
 reply_header(moved(To, Tokens), HdrExtra) -->
 	vstatus(moved),
@@ -599,16 +744,21 @@ vstatus(Status) -->
 	status_comment(Status),
 	"\r\n".
 
-status_number(continue)	       --> "100".
-status_number(ok)	       --> "200".
-status_number(moved)	       --> "301".
-status_number(moved_temporary) --> "302".
-status_number(see_other)       --> "303".
-status_number(not_modified)    --> "304". 
-status_number(not_found)       --> "404".
-status_number(forbidden)       --> "403".
-status_number(authorise)       --> "401".
-status_number(server_error)    --> "500".
+%%	status_number(-Code)//
+%
+%	Parse the HTTP status numbers and return them as a code (atom).
+
+status_number(continue)		   --> "100".
+status_number(ok)		   --> "200".
+status_number(moved)		   --> "301".
+status_number(moved_temporary)	   --> "302".
+status_number(see_other)	   --> "303".
+status_number(not_modified)	   --> "304". 
+status_number(not_found)	   --> "404".
+status_number(forbidden)	   --> "403".
+status_number(authorise)	   --> "401".
+status_number(server_error)	   --> "500".
+status_number(service_unavailable) --> "503".
 
 status_comment(continue) -->
 	"Continue".
@@ -630,6 +780,8 @@ status_comment(authorise) -->
 	"Authorization Required".
 status_comment(server_error) -->
 	"Internal Server Error".
+status_comment(service_unavailable) -->
+	"Service Unavailable".
 
 authenticate(Method, '') --> !,
 	"WWW-Authenticate: ",
@@ -676,6 +828,9 @@ content_length(Len) -->
 	"Content-Length: ", string(LenChars),
 	"\r\n".
 
+transfer_encoding(Encoding) -->
+	"Transfer-Encoding: ", atom(Encoding), "\r\n".
+
 content_type(Type) -->
 	content_type(Type, _).
 
@@ -702,20 +857,33 @@ charset(CharSet) -->
 	atom(CharSet).
 
 header_field(Name, Value) -->
-	{ var(Name)
-	}, !,
+	{ var(Name) }, !,
 	field_name(Name),
 	":",
 	whites,
-	string(ValueChars),
+	read_field_value(ValueChars),
 	blanks_to_nl, !,
-	{ field_to_prolog(Name, ValueChars, Value)
-	}.
+	{ field_to_prolog(Name, ValueChars, Value) }.
 header_field(Name, Value) -->
 	field_name(Name),
 	": ",
 	field_value(Value),
 	"\r\n".
+
+%%	read_field_value(-Codes)//
+%
+%	Read a field eagerly upto the next whitespace
+
+read_field_value([H|T]) -->
+	[H],
+	{ \+ code_type(H, space) }, !,
+	read_field_value(T).
+read_field_value([]) -->
+	"".
+read_field_value([H|T]) -->
+	[H],
+	read_field_value(T).
+
 
 field_to_prolog(content_length, ValueChars, ContentLength) :- !,
 	number_codes(ContentLength, ValueChars).
@@ -761,6 +929,7 @@ header_fields([H|T]) -->
 	{ H =.. [Name, Value]
 	},
 	field_name(Name),
+	whites,
 	": ",
 	field_value(Value),
 	"\r\n",
@@ -771,34 +940,38 @@ header_fields([H|T]) -->
 %	Convert between prolog_name and HttpName
 
 field_name(Name) -->
-	{ var(Name)
-	}, !,
-	rd_field_chars(0':, Chars),
-	{ atom_codes(Name, Chars)
-	}.
+	{ var(Name) }, !,
+	rd_field_chars(Chars),
+	{ atom_codes(Name, Chars) }.
 field_name(mime_version) --> !,
 	"MIME-Version".
 field_name(Name) -->
-	{ atom_codes(Name, Chars)
-	},
+	{ atom_codes(Name, Chars) },
 	wr_field_chars(Chars).
 
-rd_field_chars(End, [C0|T]) -->
+rd_field_chars([C0|T]) -->
 	[C],
-	{ C \== End, !,
-	  (   C == 0'-
-	  ->  C0 = 0'_
-	  ;   code_type(C, to_upper(C0))
-	  )
-	},
-	rd_field_chars(End, T).
-rd_field_chars(_, []) -->
+	{ rd_field_char(C, C0) }, !,
+	rd_field_chars(T).
+rd_field_chars([]) -->
 	[].
+
+term_expansion(rd_field_char(_,_), Clauses) :-
+	Clauses = [ rd_field_char(0'-, 0'_)
+		  | Cls
+		  ],
+	findall(rd_field_char(In, Out),
+		(   between(1, 127, In),
+		    code_type(In, csymf),
+		    code_type(Out, to_lower(In))),
+		Cls).
+
+rd_field_char(_, _).
+
 
 wr_field_chars([C|T]) -->
 	[C2], !,
-	{ to_lower(C2, C)
-	},
+	{ to_lower(C2, C) },
 	wr_field_chars2(T).
 wr_field_chars([]) -->
 	[].
@@ -915,11 +1088,9 @@ cookie(Name, Value) -->
 	cookie_value(Value).
 
 cookie_name(Name) -->
-	{ var(Name)
-	}, !,
-	rd_field_chars(0'=, Chars),
-	{ atom_codes(Name, Chars)
-	}.
+	{ var(Name) }, !,
+	rd_field_chars(Chars),
+	{ atom_codes(Name, Chars) }.
 
 cookie_value(Value) -->
 	chars_to_semicolon_or_blank(Chars),
@@ -957,7 +1128,7 @@ cookie_options([]) -->
 cookie_option(secure=true) -->
 	"secure", !.
 cookie_option(Name=Value) -->
-	rd_field_chars(0'=, NameChars),
+	rd_field_chars(NameChars), whites,
 	"=", blanks,
 	chars_to_semicolon(ValueChars),
 	{ atom_codes(Name, NameChars),
@@ -978,9 +1149,17 @@ chars_to_semicolon([]) -->
 		 *	     REPLY DCG		*
 		 *******************************/
 
-%	Typical reply:
+%%	reply(+In, -Reply:list)// is semidet.
 %
-%	HTTP/1.1 200 OK
+%	Process the first line of an HTTP   reply.  After that, read the
+%	remainder  of  the  header  and    parse  it.  After  successful
+%	completion, Reply contains the following fields, followed by the
+%	fields produced by http_read_header/2.
+%	
+%	    * http_version(Major-Minor)
+%	    * status(StatusCode, Comment)
+%	    
+%	StatusCode is one of the values provided by status_number//1.
 
 reply(Fd, [http_version(HttpVersion), status(Status, Comment)|Header]) -->
 	http_version(HttpVersion),
@@ -989,10 +1168,12 @@ reply(Fd, [http_version(HttpVersion), status(Status, Comment)|Header]) -->
 	->  []
 	;   integer(Status)
 	),
-	string(Comment),
-	blanks_to_nl,
 	blanks,
-	{ http_read_header(Fd, Header)
+	string(CommentCodes),
+	blanks_to_nl, !,
+	blanks,
+	{ atom_codes(Comment, CommentCodes),
+	  http_read_header(Fd, Header)
 	}.
 
 
@@ -1000,7 +1181,7 @@ reply(Fd, [http_version(HttpVersion), status(Status, Comment)|Header]) -->
 		 *	      READ HEADER	*
 		 *******************************/
 
-%%	http_read_header(+Fd, -Header)
+%%	http_read_header(+Fd, -Header) is det.
 %
 %	Read Name: Value lines from FD until an empty line is encountered.
 %	Field-name are converted to Prolog conventions (all lower, _ instead
@@ -1008,7 +1189,7 @@ reply(Fd, [http_version(HttpVersion), status(Status, Comment)|Header]) -->
 
 http_read_header(Fd, Header) :-
 	read_header_data(Fd, Text),
-	parse_header(Text, Header).
+	http_parse_header(Text, Header).
 
 read_header_data(Fd, Header) :-
 	read_line_to_codes(Fd, Header, Tail),
@@ -1022,7 +1203,7 @@ read_header_data(_, Fd, Tail) :-
 	read_line_to_codes(Fd, Tail, NewTail),
 	read_header_data(Tail, Fd, NewTail).
 
-parse_header(Text, Header) :-
+http_parse_header(Text, Header) :-
 	phrase(header(Header), Text),
 	debug(http(header), 'Fields: ~w~n', [Header]).
 

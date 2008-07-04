@@ -5,7 +5,7 @@
     Author:        Jan Wielemaker and Anjo Anjewierden
     E-mail:        jan@swi.psy.uva.nl
     WWW:           http://www.swi.psy.uva.nl/projects/xpce/
-    Copyright (C): 1985-2002, University of Amsterdam
+    Copyright (C): 1985-2008, University of Amsterdam
 
     This program is free software; you can redistribute it and/or
     modify it under the terms of the GNU General Public License
@@ -52,9 +52,11 @@ view_term(Term, Attributes0) :-
 defaults([ view(@view_term),
 	   clear(true),
 	   open(true),
+	   expose(false),
 	   write_options([ quoted(true),
 			   portray(true),
-			   numbervars(true)
+			   numbervars(true),
+			   attributes(portray)
 			 ])
 	 ]).
 
@@ -62,6 +64,7 @@ tv(Term, Attributes) :-
 	attribute(Attributes, view(V)),
 	if(Attributes, clear(true), send(V, clear)),
 	if(Attributes, open(true), send(V, open)),
+	if(Attributes, expose(true), send(V, expose)),
 	if(Attributes, comment(Comment), send(V, label, Comment)),
 	if(Attributes, source_object(Frag), send(V, source_object, Frag)),
 	get(V, text_buffer, TB),

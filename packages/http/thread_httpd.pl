@@ -34,14 +34,21 @@
 	    http_server/2,		% :Goal, +Options
 	    http_workers/2,		% +Port, ?WorkerCount
 	    http_current_worker/2,	% ?Port, ?ThreadID
-	    http_stop_server/2		% +Port, +Options
+	    http_stop_server/2,		% +Port, +Options
+	    http_spawn/2,		% :Goal, +Options
+	    
+	    http_requeue/1,		% +Request
+	    http_close_connection/1	% +Request
 	  ]).
 :- use_module(library(debug)).
 :- use_module(library(error)).
 :- use_module(library(option)).
 :- use_module(library(lists)).
 :- use_module(library(socket)).
+:- use_module(library(thread_pool)).
 :- use_module(http_wrapper).
+:- use_module(http_stream).
+
 
 /** <module> Threaded HTTP server
 
@@ -58,9 +65,11 @@ for details.
 
 :- meta_predicate
 	http_server(:, +),
-	http_current_server(:, ?).
+	http_current_server(:, ?),
+	http_spawn(:, +).
 
 :- dynamic
+	port_option/2,			% Port, Option
 	current_server/4,		% Port, Goal, Thread, Queue
 	queue_worker/2,			% Queue, ThreadID
 	queue_options/2.		% Queue, Options
@@ -83,15 +92,14 @@ for details.
 %	| local(KBytes)	     | <CommandLine> |				    |
 %	| global(KBytes)     | <CommandLine> |				    |
 %	| trail(KBytes)      | <CommandLine> | Stack-sizes of worker threads  |
-%	| after(:Goal)       |		|Run Goal on request after finishing the HTTP reply. |
 
 http_server(Goal, Options) :-
 	strip_module(Goal, Module, G),
 	select_option(port(Port), Options, Options1), !,
-	after_option(Options1, Module, Options2),
-	make_socket(Port, Options2, Options3),
-	create_workers(Options3),
-	create_server(Module:G, Port, Options3).
+	make_socket(Port, Options1, Options2),
+	set_port_options(Port, Options2),
+	create_workers(Options2),
+	create_server(Module:G, Port, Options2).
 http_server(_Goal, _Options) :-
 	throw(error(existence_error(option, port), _)).
 
@@ -114,17 +122,6 @@ make_socket(Port, Options0, Options) :-
 		  | Options0
 		  ].
 
-%%	after_option(+Options0, +Module, -Options)
-%	
-%	Add the module qualifier to the goal for the after(Goal) option
-
-after_option(Options0, Module, Options) :-
-	select_option(after(After), Options0, Options1), !,
-	strip_module(Module:After, MA, A),
-	Options = [after(MA:A) | Options1].
-after_option(Options, _, Options).
-
-
 create_server(Goal, Port, Options) :-
 	memberchk(queue(Queue), Options),
 	atom_concat('http@', Port, Alias),
@@ -135,6 +132,24 @@ create_server(Goal, Port, Options) :-
 			alias(Alias)
 		      ]),
 	assert(current_server(Port, Goal, Alias, Queue)).
+
+
+%%	set_port_options(+Port, +Options) is det.
+%
+%	Register Options for the HTTP server at Port.
+
+set_port_options(Port, Options) :-
+	retractall(port_option(Port, _)),
+	assert_port_options(Options, Port).
+
+assert_port_options([], _).
+assert_port_options([Name=Value|T], Port) :- !,
+	Opt =.. [Name,Value],
+	assert(port_option(Port, Opt)),
+	assert_port_options(T, Port).
+assert_port_options([Opt|T], Port) :- !,
+	assert(port_option(Port, Opt)),
+	assert_port_options(T, Port).
 
 
 %%	http_current_server(:Goal, ?Port) is nondet.
@@ -300,54 +315,61 @@ resize_pool(Queue, Size) :-
 %%	http_worker(+Options)
 %	
 %	Run HTTP worker main loop. Workers   simply  wait until they are
-%	passed an accepted socket to process  a client. After processing
-%	a request they keep processing requests from the same connection
-%	as long as =|Connection:  keep-alive|=   remains  requested from
-%	both parties. Otherwise they close the  connection and return to
-%	the worker pool.  See server_loop/6.
+%	passed an accepted socket to process  a client. 
 %	
 %	If the message quit(Sender) is read   from the queue, the worker
 %	stops.
 
 http_worker(Options) :-
-	option(timeout(Timeout), Options, infinite),
-	option(queue(Queue), Options),
 	thread_at_exit(done_worker),
+	option(queue(Queue), Options),
 	repeat,
+	  garbage_collect,
+	  debug(http(worker), 'Waiting for a job ...', []),
 	  thread_get_message(Queue, Message),
+	  debug(http(worker), 'Got job ~p', [Message]),
 	  (   Message = quit(Sender)
-	  ->  thread_self(Self),
+	  ->  !,
+	      thread_self(Self),
 	      thread_detach(Self),
 	      thread_send_message(Sender, quitted(Self))
-	  ;   open_client(Message, Goal, In, Out, ClientOptions),
-	      set_stream(In, timeout(Timeout)),
-	      debug(http(server), 'Running server goal ~p on ~p -> ~p',
-		    [Goal, In, Out]),
-	      (	  catch(server_loop(Goal, In, Out, ClientOptions, Options), E, true)
-	      ->  (   var(E)
-		  ->  true
-		  ;   (   message_level(E, Level)
-		      ->  true
-		      ;	  Level = error
-		      ),
-		      debug(http(server), 'Caught exception ~q (level ~q)',
-			    [E, Level]),
-		      print_message(Level, E),
-		      memberchk(peer(Peer), ClientOptions),
-		      close_connection(Peer, In, Out)
-		  )
-	      ;	  print_message(error,
-				goal_failed(server_loop(Goal, In, Out,
-							ClientOptions, Options)))
+	  ;   open_client(Message, Queue, Goal, In, Out,
+			  Options, ClientOptions),
+	      (	  catch(http_process(Goal, In, Out, ClientOptions),
+			Error, true)
+	      ->  true
+	      ;	  Error = goal_failed(http_process/4)
 	      ),
-	      fail
-	  ),
-	!.
+	      (	  var(Error)
+	      ->  fail
+	      ;	  current_message_level(Error, Level),
+		  print_message(Level, Error),
+		  memberchk(peer(Peer), ClientOptions),
+		  close_connection(Peer, In, Out),
+		  fail
+	      )
+	  ).
+	
 
-%%	open_client(+Message, -Goal, -In, -Out, -Options) is det.
+%%	open_client(+Message, +Queue, -Goal, -In, -Out,
+%%		    +Options, -ClientOptions) is semidet.
 %
 %	Opens the connection to the client in a worker from the message
 %	sent to the queue by accept_server/2.
+
+open_client(requeue(In, Out, Goal, ClOpts), _, Goal, In, Out, Opts, ClOpts) :- !,
+	memberchk(peer(Peer), ClOpts),
+	option(keep_alive_timeout(KeepAliveTMO), Opts, 5),
+	check_keep_alife_connection(In, KeepAliveTMO, Peer, In, Out).
+open_client(Message, Queue, Goal, In, Out, _Opts,
+	    [ pool(Queue, Goal, In, Out)
+	    | Options
+	    ]) :-
+	catch(open_client(Message, Goal, In, Out, Options),
+	      E, report_error(E)),
+	memberchk(peer(Peer), Options),
+	debug(http(connection), 'Opened connection from ~p', [Peer]).
+
 
 open_client(Message, Goal, In, Out, Options) :-
 	open_client_hook(Message, Goal, In, Out, Options), !.
@@ -356,6 +378,34 @@ open_client(tcp_client(Socket, Goal, Peer), Goal, In, Out,
 	      protocol(http)
 	    ]) :-
 	tcp_open_socket(Socket, In, Out).
+
+report_error(E) :-
+	print_message(error, E),
+	fail.
+
+
+%%	check_keep_alife_connection(+In, +TimeOut, +Peer, +In, +Out) is semidet.
+%
+%	Wait for the client for at most  TimeOut seconds. Succeed if the
+%	client starts a new request within   this  time. Otherwise close
+%	the connection and fail.
+
+check_keep_alife_connection(In, TMO, Peer, In, Out) :-
+	stream_property(In, timeout(Old)),
+	set_stream(In, timeout(TMO)),
+	debug(http(keep_alife), 'Waiting for keep-alife ...', []),
+	catch(peek_code(In, Code), E, true),
+	(   var(E),			% no exception
+	    Code \== -1			% no end-of-file
+	->  set_stream(In, timeout(Old)),
+	    debug(http(keep_alife), '\tre-using keep-alife connection', [])
+	;   (   Code == -1
+	    ->	debug(http(keep_alife), '\tRemote closed keep-alife connection', [])
+	    ;	debug(http(keep_alife), '\tTimeout on keep-alife connection', [])
+	    ),
+	    close_connection(Peer, In, Out),
+	    fail
+	).
 
 
 %%	done_worker
@@ -384,40 +434,65 @@ message_level(error(io_error(read, _), _),	silent).
 message_level(error(timeout_error(read, _), _),	informational).
 message_level(keep_alive_timeout,		silent).
 
-%%	server_loop(:Goal, +In, +Out, +Socket, +ClientOptions, +Options)
-%	
-%	Handle a client on the given stream. It will keep the connection
-%	open as long as the client wants this
+current_message_level(Term, Level) :-
+	(   message_level(Term, Level)
+	->  true
+	;   Level = error
+	).
 
-server_loop(_Goal, In, Out, ClientOptions, _) :-
-	at_end_of_stream(In), !,
-	memberchk(peer(Peer), ClientOptions),
-	close_connection(Peer, In, Out).
-server_loop(Goal, In, Out, ClientOptions, Options) :-
+
+%%	http_requeue(+Header)
+%
+%	Re-queue a connection to  the  worker   pool.  This  deals  with
+%	processing additional requests on keep-alife connections.
+
+http_requeue(Header) :-
+	requeue_header(Header, ClientOptions),
+	memberchk(pool(Queue, Goal, In, Out), ClientOptions),
+	thread_send_message(Queue, requeue(In, Out, Goal, ClientOptions)).
+
+requeue_header([], []).
+requeue_header([H|T0], [H|T]) :-
+	requeue_keep(H), !,
+	requeue_header(T0, T).
+requeue_header([_|T0], T) :-
+	requeue_header(T0, T).
+
+requeue_keep(pool(_,_,_,_)).
+requeue_keep(peer(_)).
+requeue_keep(protocol(_)).
+
+
+%%	http_process(Message, Queue, +Options)
+%	
+%	Handle a single client message on the given stream.
+
+http_process(Goal, In, Out, Options) :-
+	debug(http(server), 'Running server goal ~p on ~p -> ~p',
+	      [Goal, In, Out]),
 	http_wrapper(Goal, In, Out, Connection,
 		     [ request(Request)
-		     | ClientOptions
+		     | Options
 		     ]),
-	(   downcase_atom(Connection, 'keep-alive')
-	->  after(Request, Options),
-	    option(timeout(TimeOut), Options, infinite),
-	    option(keep_alive_timeout(KeepAliveTMO), Options, 5),
-	    set_stream(In, timeout(KeepAliveTMO)),
-	    catch(peek_code(In, _), _, throw(keep_alive_timeout)),
-	    set_stream(In, timeout(TimeOut)),
-	    server_loop(Goal, In, Out, ClientOptions, Options)
-	;   memberchk(peer(Peer), ClientOptions),
-	    close_connection(Peer, In, Out),
-	    after(Request, Options)
-	).
+	next(Connection, Request).
 
-%	run `after' hook each time after processing a request.
+next(spawned, _) :- !,
+	debug(http(spawn), 'Handler spawned', []).
+next(Connection, Request) :-
+	downcase_atom(Connection, 'keep-alive'), !,
+	http_requeue(Request).
+next(_, Request) :-
+	http_close_connection(Request).
 
-after(Request, Options) :-
-	(   option(after(After), Options)
-	->  call(After, Request)
-	;   true
-	).
+
+%%	http_close_connection(+Request)
+%
+%	Close connection associated to Request.  See also http_requeue/1.
+
+http_close_connection(Request) :-
+	memberchk(pool(_Queue, _Goal, In, Out), Request),
+	memberchk(peer(Peer), Request),
+	close_connection(Peer, In, Out).
 
 %%	close_connection(+Peer, +In, +Out)
 %	
@@ -428,6 +503,61 @@ close_connection(Peer, In, Out) :-
 	debug(http(connection), 'Closing connection from ~p', [Peer]),
 	catch(close(In, [force(true)]), _, true),
 	catch(close(Out, [force(true)]), _, true).
+
+%%	http_spawn(:Goal, +Options) is det.
+%
+%	Continue this connection on a  new   thread.  A handler may call
+%	http_spawn/2 to start a new thread that continues processing the
+%	current request using Goal. The original   thread returns to the
+%	worker pool for processing new requests.   Options are passed to
+%	thread_create/3, except for:
+%	
+%	    * pool(+Pool)
+%	    Interfaces to library(thread_pool), starting the thread
+%	    on the given pool.
+%	    * backlog(+MaxBacklog)
+%	    Reply using a 503 (service unavailable) if too many requests
+%	    are waiting in this pool.
+
+http_spawn(Goal, Options) :-
+	strip_module(Goal, M, G),
+	spawn(M:G, Options) .
+
+spawn(Goal, Options) :-
+	select_option(pool(Pool), Options, Options1), !,
+	select_option(backlog(BackLog), Options1, ThreadOptions, infinite),
+	check_backlog(BackLog, Pool),
+	current_output(CGI),
+	thread_create_in_pool(Pool,
+			      wrap_spawned(CGI, Goal), Id,
+			      [ detached(true)
+			      | ThreadOptions
+			      ]),
+	http_spawned(Id).
+spawn(Goal, Options) :-
+	current_output(CGI),
+	thread_create(wrap_spawned(CGI, Goal), Id,
+		      [ detached(true)
+		      | Options
+		      ]),
+	http_spawned(Id).
+
+wrap_spawned(CGI, Goal) :-
+	set_output(CGI),
+	http_wrap_spawned(Goal, Request, Connection),
+	next(Connection, Request).
+
+%%	check_backlog(+MaxBackLog, +Pool)
+%
+%	Check whether the backlog in the pool  has been exceeded. If so,
+%	reply as =busy=, which causes an HTTP 503 response.
+
+check_backlog(BackLog, Pool) :-
+	integer(BackLog),
+	thread_pool_property(Pool, backlog(Waiting)),
+	Waiting > BackLog, !,
+	throw(http_reply(busy)).
+check_backlog(_, _).
 
 
 		 /*******************************

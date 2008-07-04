@@ -43,7 +43,7 @@
 %%	'$dwim_correct_goal'(+Goal, +Bindings, -Corrected)
 %
 %	Correct a goal (normally typed by the   user)  in the `Do What I
-%	Mean' sence. Ask the user to confirm  if the a unique correction
+%	Mean' sense. Ask the user to confirm  if a unique correction
 %	can be found. Otherwise warn that   the predicate does not exist
 %	and fail.
 
@@ -52,14 +52,12 @@
 '$dwim_correct_goal'((A,B), Bindings, (NA,NB)) :- !,
 	'$dwim_correct_goal'(A, Bindings, NA),
 	'$dwim_correct_goal'(B, Bindings, NB).
-'$dwim_correct_goal'((A->B;C), Bindings, (NA->NB;NC)) :- !,
+'$dwim_correct_goal'((A->B), Bindings, (NA->NB)) :- !,
 	'$dwim_correct_goal'(A, Bindings, NA),
-	'$dwim_correct_goal'(B, Bindings, NB),
-	'$dwim_correct_goal'(C, Bindings, NC).
-'$dwim_correct_goal'((A*->B;C), Bindings, (NA*->NB;NC)) :- !,
+	'$dwim_correct_goal'(B, Bindings, NB).
+'$dwim_correct_goal'((A*->B), Bindings, (NA*->NB)) :- !,
 	'$dwim_correct_goal'(A, Bindings, NA),
-	'$dwim_correct_goal'(B, Bindings, NB),
-	'$dwim_correct_goal'(C, Bindings, NC).
+	'$dwim_correct_goal'(B, Bindings, NB).
 '$dwim_correct_goal'((A;B), Bindings, (NA;NB)) :- !,
 	'$dwim_correct_goal'(A, Bindings, NA),
 	'$dwim_correct_goal'(B, Bindings, NB).
@@ -101,9 +99,12 @@ correct_goal(Goal, Bindings, [Dwim], DwimGoal) :-
 	G1 =.. [_|Arguments], 
 	G2 =.. [Name|Arguments], 
 	context_module(Context),
-	'$prefix_module'(DM, Context, G2, DwimGoal),
-	goal_name(DwimGoal, Bindings, String),
-	'$confirm'(dwim_correct(String)).
+	(   '$prefix_module'(DM, Context, G2, DwimGoal),
+	    goal_name(DwimGoal, Bindings, String),
+	    '$confirm'(dwim_correct(String))
+	->  true
+	;   DwimGoal = Goal
+	).
 correct_goal(Goal, Bindings, Dwims, NewGoal) :-
 	strip_module(Goal, _, G1), 
 	functor(G1, _, Arity), 

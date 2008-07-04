@@ -10,6 +10,7 @@
 # awk you can propagate the changes by hand, but be careful!
 
 
+
 A abort			"abort"
 A aborted		"$aborted"
 A abs			"abs"
@@ -57,6 +58,7 @@ A backquoted_string	"backquoted_string"
 A backslash		"\\"
 A backtrace		"backtrace"
 A bar			"|"
+A begin			"begin"
 A binary		"binary"
 A bind			"bind"
 A block			"block"
@@ -67,6 +69,7 @@ A brace_term_position	"brace_term_position"
 A break			"break"
 A btree			"btree"
 A buffer		"buffer"
+A buffer_size		"buffer_size"
 A built_in_procedure	"built_in_procedure"
 A busy			"busy"
 A byte			"byte"
@@ -169,6 +172,7 @@ A dwakeup		"$wakeup"
 A dynamic		"dynamic"
 A e			"e"
 A encoding		"encoding"
+A end			"end"
 A end_of_file		"end_of_file"
 A end_of_line		"end_of_line"
 A end_of_stream		"end_of_stream"
@@ -230,6 +234,7 @@ A functor_name		"functor_name"
 A functors		"functors"
 A fx			"fx"
 A fy			"fy"
+A garbage_collected	"<garbage_collected>"
 A garbage_collection	"garbage_collection"
 A gc			"gc"
 A gctime		"gctime"
@@ -276,6 +281,7 @@ A int			"int"
 A int64_t		"int64_t"
 A int_overflow		"int_overflow"
 A integer		"integer"
+A interrupt		"interrupt"
 A io_error		"io_error"
 A io_mode		"io_mode"
 A ioctl			"ioctl"
@@ -621,6 +627,7 @@ F brace_term_position	3
 F break			1
 F break			3
 F buffer		1
+F buffer_size		1
 F busy			2
 F call			1
 F callpred		2
@@ -694,6 +701,7 @@ F hat			2
 F ifthen		2
 F input			0
 F integer		1
+F interrupt		1
 F io_error		2
 F is			2
 F isovar		1
@@ -702,6 +710,7 @@ F larger_equal		2
 F line_count		1
 F list_position		4
 F listing		1
+F locked		2
 F log			1
 F log10			1
 F lsb			1
@@ -775,6 +784,7 @@ F syntax_error		3
 F tan			1
 F term_expansion	2
 F term_position		5
+F timeout		1
 F timeout_error		2
 F trace			1
 F traceinterc		3
@@ -790,4 +800,3 @@ F wakeup		3
 F warning		3
 F xor			2
 F xpceref		1
-F locked		2

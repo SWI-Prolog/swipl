@@ -192,7 +192,8 @@ typedef struct io_stream
   struct io_stream *	upstream;	/* stream providing our input */
   struct io_stream *	downstream;	/* stream providing our output */
   unsigned		newline : 2;	/* Newline mode */
-  intptr_t		reserved[3];	/* reserved for extension */
+  void *		exception;	/* pending exception (record_t) */
+  intptr_t		reserved[2];	/* reserved for extension */
 } IOSTREAM;
 
 
@@ -251,9 +252,12 @@ PL_EXPORT_DATA(IOSTREAM)    S__iob[3];		/* Libs standard streams */
 #define Sgetchar()	Sgetc(Sinput)
 #define Sputchar(c)	Sputc((c), Soutput)
 
+#define S__checkpasteeof(s,c) \
+	if ( (c)==-1 && (s)->flags & (SIO_FEOF|SIO_FERR) ) \
+	  ((s)->flags |= SIO_FEOF2)
 #define S__updatefilepos_getc(s, c) \
 	((s)->position ? S__fupdatefilepos_getc((s), (c)) \
-		       : (c))
+		       : S__fcheckpasteeof((s), (c)))
 
 #define Snpgetc(s) ((s)->bufp < (s)->limitp ? (int)(*(s)->bufp++)&0xff \
 					    : S__fillbuf(s))
@@ -332,6 +336,7 @@ PL_EXPORT(void)		SinitStreams();
 PL_EXPORT(void)		Scleanup(void);
 PL_EXPORT(void)		Sreset(void);
 PL_EXPORT(int)		S__fupdatefilepos_getc(IOSTREAM *s, int c);
+PL_EXPORT(int)		S__fcheckpasteeof(IOSTREAM *s, int c);
 PL_EXPORT(int)		S__fillbuf(IOSTREAM *s);
 PL_EXPORT(int)		Sunit_size(IOSTREAM *s);
 					/* byte I/O */
@@ -355,6 +360,11 @@ PL_EXPORT(int)		Sfpasteof(IOSTREAM *s);
 PL_EXPORT(int)		Sferror(IOSTREAM *s);
 PL_EXPORT(void)		Sclearerr(IOSTREAM *s);
 PL_EXPORT(void)		Sseterr(IOSTREAM *s, int which, const char *message);
+#ifdef _FLI_H_INCLUDED
+PL_EXPORT(void)		Sset_exception(IOSTREAM *s, term_t ex);
+#else
+PL_EXPORT(void)		Sset_exception(IOSTREAM *s, intptr_t ex);
+#endif
 PL_EXPORT(int)		Ssetenc(IOSTREAM *s, IOENC new_enc, IOENC *old_enc);
 PL_EXPORT(int)		Sflush(IOSTREAM *s);
 PL_EXPORT(long)		Ssize(IOSTREAM *s);

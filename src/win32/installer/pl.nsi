@@ -82,6 +82,7 @@ Section "Base system (required)"
   File pl\library\system.pl
   File pl\library\threadutil.pl
   File pl\library\thread.pl
+  File pl\library\thread_pool.pl
   File pl\library\tty.pl
   File pl\library\dif.pl
   File pl\library\when.pl
@@ -122,6 +123,8 @@ Section "Base system (required)"
   File pl\library\apply_macros.pl
   File pl\library\apply.pl
   File pl\library\aggregate.pl
+  File pl\library\pure_input.pl
+  File pl\library\pio.pl
 
 ; WINDOWS
   File pl\library\dde.pl
@@ -309,6 +312,7 @@ Section "Package CLIB"
   File pl\bin\random.dll
   File pl\bin\time.dll
   File pl\bin\readutil.dll
+  File pl\bin\process.dll
   SetOutPath $INSTDIR\library
   File pl\library\cgi.pl
   File pl\library\crypt.pl
@@ -319,6 +323,7 @@ Section "Package CLIB"
   File pl\library\prolog_server.pl
   File pl\library\random.pl
   File pl\library\time.pl
+  File pl\library\process.pl
   SetOutPath $INSTDIR\doc\packages
   File pl\doc\packages\clib.html
 SectionEnd
@@ -472,6 +477,7 @@ Section "C Debugging Symbols (.pdb files)"
   File pl\bin\socket.pdb
   File pl\bin\time.pdb
   File pl\bin\readutil.pdb
+  File pl\bin\process.pdb
   File pl\bin\ssl4pl.pdb
   File pl\bin\zlib4pl.pdb
   File pl\bin\sha4pl.pdb

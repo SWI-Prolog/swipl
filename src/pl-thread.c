@@ -357,6 +357,7 @@ static void	cleanupLocalDefinitions(PL_local_data_t *ld);
 static pl_mutex *mutexCreate(atom_t name);
 static double   ThreadCPUTime(PL_thread_info_t *info, int which);
 static int	thread_at_exit(term_t goal, PL_local_data_t *ld);
+static int	get_thread(term_t t, PL_thread_info_t **info, int warn);
 static int	is_alive(int status);
 #ifdef O_C_BACKTRACE
 static void	print_trace(int depth);
@@ -493,7 +494,8 @@ free_prolog_thread(void *data)
     info->status = PL_THREAD_EXITED;	/* foreign pthread_exit() */
   acknowledge = (info->status == PL_THREAD_CANCELED);
   UNLOCK();
-  DEBUG(1, Sdprintf("Freeing prolog thread %d\n", info-threads));
+  DEBUG(1, Sdprintf("Freeing prolog thread %d (status = %d)\n", 
+		    info-threads, info->status));
 
 #if O_DEBUGGER
   callEventHook(PL_EV_THREADFINISHED, info);
@@ -769,6 +771,29 @@ PL_thread_self()
 
   return -1;				/* thread has no Prolog thread */
 }
+
+
+int
+PL_unify_thread_id(term_t t, int i)
+{ if ( i < 0 || i >= MAX_THREADS || threads[i].status == PL_THREAD_UNUSED )
+    return -1;				/* error */
+
+  return unify_thread_id(t, &threads[i]);
+}
+
+
+int
+PL_get_thread_id_ex(term_t t, int *idp)
+{ PL_thread_info_t *info;
+
+  if ( !get_thread(t, &info, TRUE) )
+    return FALSE;
+  
+  *idp = info->pl_tid;
+
+  return TRUE;
+}
+
 
 
 #ifdef __WINDOWS__
@@ -1273,32 +1298,6 @@ pl_thread_exit(term_t retcode)
   pthread_exit(NULL);
   assert(0);
   fail;
-}
-
-
-word
-pl_thread_kill(term_t t, term_t sig)
-{
-#ifdef HAVE_PTHREAD_KILL
-  PL_thread_info_t *info;
-  int s, rc;
-
-  
-  if ( !get_thread(t, &info, TRUE) )
-    fail;
-  if ( !_PL_get_signum(sig, &s) )
-    return PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_signal, sig);
-
-  if ( (rc=pthread_kill(info->tid, s)) )
-  { assert(rc == ESRCH);
-
-    return PL_error("thread_kill", 2, NULL, ERR_EXISTENCE, ATOM_thread, t);
-  }
-
-  succeed;
-#else
-  return notImplemented("thread_kill", 2);
-#endif
 }
 
 
@@ -4516,6 +4515,15 @@ int
 PL_thread_self()
 { return -2;
 }
+
+
+int
+PL_unify_thread_id(term_t t, int i)
+{ if ( i == -2 )
+    return PL_unify_atom(t, ATOM_main);
+  return -1;
+}
+
 
 int
 PL_thread_at_exit(void (*function)(void *), void *closure, int global)

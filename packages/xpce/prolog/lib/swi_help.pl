@@ -410,7 +410,7 @@ give_help(V, What:name,
 	    ;	send(V, clear)
 	    ),
 	    manual_file(ManFile),
-	    new(F, file(ManFile)),
+	    new(F, file(ManFile, binary)),
 	    get(V, caret, Start),
 	    send(F, open, read),
 	    append_ranges(V, F, Ranges),
@@ -437,13 +437,23 @@ give_help(V, What:name,
 	),
 	send(V, editable, @off).
 
+%%	append_ranges(+View, +File, +Ranges) is det.
+%
+%	Note that the file is opened in binary mode to allow seeking. We
+%	must delete \r from the input   to  compensate for Windows cr/lf
+%	line ends. This is all ok as long  as the contents of the manual
+%	file is ISO Latin 1.
+
 append_ranges(V, F, [H|T]) :- !,
 	append_ranges(V, F, H),
 	append_ranges(V, F, T).
 append_ranges(_, _, []) :- !.
-append_ranges(V, F, From-To) :-
+append_ranges(V, F, FromLine-ToLine) :-
+	line_start(FromLine, From),
+	line_start(ToLine, To),
 	send(F, seek, From),
 	get(F, read, To-From, Text),
+	send(Text, translate, 13, @nil),
 	send(V, insert, Text),
 	send(V, insert, @pui_ff),
 	send(V, newline).
@@ -600,6 +610,42 @@ manual_file(File) :-
 manual_file(_File) :-
 	send(@nil, report, error, 'Can''t find manual database MANUAL'),
 	fail.
+
+%%	line_start(Line, Start) is det.
+%
+%	True if Start is the byte position at which Line starts.
+
+:- dynamic
+	start_of_line/2.
+
+line_start(Line, Start) :-
+	start_of_line(Line, Start), !.
+line_start(Line, Start) :-
+	line_index,
+	start_of_line(Line, Start).
+
+
+%%	line_index
+%
+%	Create index holding the byte positions for the line starts
+
+line_index :-
+	start_of_line(_,_), !.
+line_index :-
+	manual_file(File),
+	open(File, read, Stream, [type(binary)]),
+	call_cleanup(line_index(Stream, 1), close(Stream)).
+
+line_index(Stream, LineNo) :-
+	byte_count(Stream, ByteNo),
+	assert(start_of_line(LineNo, ByteNo)),
+	(   at_end_of_stream(Stream)
+	->  true
+	;   LineNo2 is LineNo+1,
+	    skip(Stream, 10),
+	    line_index(Stream, LineNo2)
+	).
+
 
 		 /*******************************
 		 *     ATOMIC SPECIFICATIONS	*

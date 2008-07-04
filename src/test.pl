@@ -1542,6 +1542,13 @@ catchme :-
 undef :-
 	'this is not defined'.
 
+tcatch :-
+	catch(ierror, E, throw(ok(E))).
+
+ierror :-
+	garbage_collect,
+	atom_codes(_,_).
+
 exception(call-1) :-
 	catch(do_exception_1, E, true),
 	error(E, instantiation_error).
@@ -1562,6 +1569,9 @@ exception(context-1) :-
 exception(context-2) :-
 	catch(undef, E, true),
 	error_pred(E, undef/0).
+exception(catch-gc) :-
+	catch(tcatch, E, true),
+	subsumes_chk(ok(error(_,_)), E).
 
 
 		 /*******************************
@@ -1578,9 +1588,13 @@ local_overflow :-
 global_overflow(X) :-			% Causes gracefully signalled overflow
 	global_overflow(s(X)).
 
-string_overflow([H|T]) :-		% Causes PL_throw() overflow
+string_overflow(StringList) :-
+	string_overflow2(StringList),
+	is_list(StringList).		% avoid GC of list
+
+string_overflow2([H|T]) :-		% Causes PL_throw() overflow
 	format(string(H), '~txx~1000000|', []),
-	string_overflow(T).
+	string_overflow2(T).
 		
 
 resource(stack-1) :-
@@ -1953,12 +1967,21 @@ copy_term(nat-2) :-			% cyclic term
 term_hash(simple-1) :-
 	term_hash(aap, 8246445).
 term_hash(simple-2) :-			% small int
-	term_hash(42, 12280004).
+	term_hash(42, X),
+	memberchk(X, [ 12280004,	% little endian
+		       9594725		% big endian
+		     ]).
 term_hash(simple-3) :-			% not tagged int
-	term_hash(2000000000, 13691282).
+	term_hash(2000000000, X),
+	memberchk(X, [ 13691282,	% little endian
+		       10072710		% big endian
+		     ]).
 term_hash(simple-4) :-
 	A is pi,
-	term_hash(A, 15717536).
+	term_hash(A, X),
+	memberchk(X, [ 15717536,	% little endian
+		       14888348		% big endian
+		     ]).
 term_hash(simple-5) :-
 	string_to_list(S, "hello world"),
 	term_hash(S, 13985775).

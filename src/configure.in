@@ -85,7 +85,17 @@ AC_PROG_RANLIB
 AC_CANONICAL_HOST
 changequote(,)dnl
 if test "x$ARCH" = "x"; then
-  ARCH=`echo $host | sed 's/\([^-]*\)-[^-]*-\([^-]*\)/\1-\2/'`
+  case "$host" in
+    *linux*)
+      ARCH=`echo $host | sed 's/-.*/-linux/'`
+      ;;
+    *-gnu)
+      ARCH=`echo $host | sed 's/\([^-]*\)-[^-]*-\([^-]*\)-gnu/\1-\2/'`
+      ;;
+    *)
+      ARCH=`echo $host | sed 's/\([^-]*\)-[^-]*-\([^-]*\)/\1-\2/'`
+      ;;
+  esac
 fi
 changequote([,])dnl
 
@@ -132,13 +142,17 @@ AC_ARG_ENABLE(gmp, [  --disable-gmp		  Disable Multi-precision arithmetic],
 	      configgmp="$enableval",
 	      configgmp=yes)
 
+AC_ARG_ENABLE(life-gc, [  --disable-life-gc	  Disable lifeliness checking of data],
+	      lifegc="$enableval",
+	      lifegc=yes)
+
 
 dnl ****************************************************************
 dnl Setup PLBASE.  Need to expand prefix first as this isn't yet set. Yek
 dnl ****************************************************************
 
 test "x$prefix" = xNONE && prefix=$ac_default_prefix
-PLBASE=$prefix/lib/$PL-$PLVERSION
+PLBASE=$libdir/$PL-$PLVERSION
 
 dnl ****************************************************************
 dnl Checking for GNU make vpath construct
@@ -217,6 +231,11 @@ if test "x$custom_flags" = "xyes" ; then
 	fi
 else
 	COFLAGS=$CFLAGS
+fi
+
+if test "$lifegc" = yes; then
+	AC_DEFINE(LIFE_GC, 1,
+		  [Define to enable life-data marking by scanning VM instructions])
 fi
 
 PROGLDFLAGS="$LDFLAGS"
@@ -433,7 +452,7 @@ case "$ARCH" in
 	    SO_PIC="-KPIC"
 	fi
 	;;
-  *hppa*|*hpux*)
+  *hpux*)
 	SO_EXT="sl"
 	LDFLAGS="$LDFLAGS -Wl,-E"
 	if test "$GCC" != "yes"; then
@@ -459,7 +478,7 @@ case "$ARCH" in
 	    SO_LDFLAGS="-bI:$PLBASE/include/SWI-Exports"
 	fi
 	;;
-  *x86_64*linux)
+  *x86_64*linux|*hppa*linux)
 	if test "x$MKSHARED" = "x"; then
 	    MKSHARED=yes
 	fi
@@ -683,10 +702,11 @@ if test ! "$runtime" = "yes" -a "$configreadline" = "yes" -a ! $readline_ok = "y
 		[Define to 1 if you have <readline/readline.h>])
       ocflags="$CFLAGS"
       CFLAGS="-I$RLPREFIX/include $CFLAGS"
-      AC_CHECK_FUNCS(rl_completion_matches rl_insert_close rl_readline_state)
-      AC_CHECK_FUNCS(rl_set_prompt rl_clear_pending_input rl_done)
+      AC_CHECK_FUNCS(rl_completion_matches rl_insert_close)
+      AC_CHECK_FUNCS(rl_set_prompt rl_clear_pending_input)
       AC_CHECK_FUNCS(rl_event_hook rl_cleanup_after_signal)
       AC_CHECK_FUNCS(rl_filename_completion_function)
+      AC_CHECK_DECLS([rl_done])
       FreeBSD="$ocflags"
       readline_ok=yes
     else
@@ -758,7 +778,8 @@ AC_CHECK_FUNCS(rint aint floor ceil isnan isinf tcsetattr cfmakeraw getpid)
 AC_CHECK_FUNCS(strerror tgetent times unsetenv grantpt nanosleep waitpid)
 AC_CHECK_FUNCS(setlocale fpgetmask fpresetsticky mtrace localtime_r)
 AC_CHECK_FUNCS(mmap confstr strcasecmp mbscoll mbscasecoll fpclassify fpclass)
-AC_CHECK_FUNCS(setenv posix_openpt wcsxfrm sysctlbyname)
+AC_CHECK_FUNCS(setenv posix_openpt wcsxfrm sysctlbyname mbsnrtowcs)
+AC_CHECK_DECLS([mbsnrtowcs])
 AC_HEADER_TIME
 AC_HEADER_DIRENT
 AC_HEADER_SYS_WAIT

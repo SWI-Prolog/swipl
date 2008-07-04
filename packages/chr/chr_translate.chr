@@ -497,10 +497,7 @@ validate_store_type_assumption(C) \ actual_store_types(C,STs), actual_ground_mul
 	|
 		( Index = [IndexPos],
                   get_constraint_arg_type(C,IndexPos,Type),
-		  % ( fail , is_chr_constants_type(Type,Key,_) -> get_chr_constants(Key,Constants)
-		  % ; 
-		  Type = chr_enum(Constants) % -> true
-		  % )
+		  Type = chr_enum(Constants)
 		->	 
 			Completeness = complete
 		;
@@ -529,10 +526,7 @@ validate_store_type_assumption(C) \ actual_store_types(C,STs)
 	<=>	
 		memberchk(multi_hash([[Index]]),STs),
 		get_constraint_arg_type(C,Index,Type),
-		% ( 
-		Type = chr_enum(Constants) % -> true
-		% ; fail, is_chr_constants_type(Type,Key,_) -> get_chr_constants(Key,Constants)
-		% )
+		Type = chr_enum(Constants)
 	|
 		delete(STs,multi_hash([[Index]]),STs0),
 		actual_store_types(C,[ground_constants([Index],Constants,complete)|STs0]).	
@@ -1905,6 +1899,7 @@ generate_attach_body_1(FA,Var,Susp,Body) :-
 	).
 
 generate_attach_body_n(F/A,Var,Susp,Body) :-
+	chr_pp_flag(experiment,off), !,	
 	get_constraint_index(F/A,Position),
 	get_max_constraint_index(Total),
 	get_target_module(Mod),
@@ -1914,6 +1909,24 @@ generate_attach_body_n(F/A,Var,Susp,Body) :-
 	( get_attr(Var,Mod,TAttr) ->
 		AddGoal,
 		put_attr(Var,Mod,NTAttr)
+	;
+		put_attr(Var,Mod,NewAttr3)
+	), !.
+generate_attach_body_n(F/A,Var,Susp,Body) :-
+	chr_pp_flag(experiment,on), !,	
+	get_constraint_index(F/A,Position),
+	or_pattern(Position,Pattern),
+	Position1 is Position + 1,
+	get_max_constraint_index(Total),
+	get_target_module(Mod),
+	singleton_attr(Total,Susp,Position,NewAttr3),
+	Body =
+	( get_attr(Var,Mod,TAttr) ->
+		arg(1,TAttr,BitVector),
+		arg(Position1,TAttr,Susps),
+		NBitVector is BitVector \/ Pattern,
+		setarg(1,TAttr,NBitVector),
+		setarg(Position1,TAttr,[Susp|Susps])
 	;
 		put_attr(Var,Mod,NewAttr3)
 	), !.
@@ -2272,11 +2285,7 @@ activate_constraint_body(Constraint,StoreYes,StoreNo,Vars,Susp,Generation,Body) 
 	;
 		get_dynamic_suspension_term_field(arguments,Constraint,Susp,Arguments,ArgumentsGoal),
 		generate_indexed_variables_body(Constraint,Arguments,IndexedVariablesBody,Vars),
-		( chr_pp_flag(guard_locks,off) ->
-			NoneLocked = true
-		;
-			NoneLocked = 'chr none_locked'( Vars)
-		),
+		chr_none_locked(Vars,NoneLocked),
 		if_used_state(Constraint,not_stored_yet,
 					  ( State == not_stored_yet ->
 					  	  ArgumentsGoal,
@@ -2477,11 +2486,7 @@ generate_insert_constraint_internal_body(Constraint,Susp,Continuation,Args,Vars,
 			GenID = true
 		),
 		generate_indexed_variables_body(Constraint,Args,IndexedVariablesBody,Vars),
-		( chr_pp_flag(guard_locks,off) ->
-			NoneLocked = true
-		;
-			NoneLocked = 'chr none_locked'( Vars)
-		),
+		chr_none_locked(Vars,NoneLocked),
 		Body =
 		(
 			Susp = Suspension,
@@ -2708,11 +2713,7 @@ generate_attach_increment_empty((attach_increment([],_) :- true)).
 generate_attach_increment_one(Clause) :-
 	Head = attach_increment([Var|Vars],Susps),
 	get_target_module(Mod),
-	( chr_pp_flag(guard_locks,off) ->
-		NotLocked = true
-	;
-		NotLocked = 'chr not_locked'( Var)
-	),
+	chr_not_locked(Var,NotLocked),
 	Body =
 	(
 		NotLocked,
@@ -2733,11 +2734,7 @@ generate_attach_increment_many(N,Clause) :-
 	merge_attributes(N,TAttr1,TAttr2,MergeGoal,Attr),
 	% writeln(merge_attributes_1_after),
 	get_target_module(Mod),
-	( chr_pp_flag(guard_locks,off) ->
-		NotLocked = true
-	;
-		NotLocked = 'chr not_locked'( Var)
-	),
+	chr_not_locked(Var,NotLocked),
 	Body =	
 	(
 		NotLocked,
@@ -2757,10 +2754,12 @@ generate_attr_unify_hook(Clauses) :-
 	( N == 0 ->
 		Clauses = []
 	; 
+		Clauses = [GoalsClause|HookClauses],
+		GoalsClause = attribute_goals(_,Goals,Goals),
 		( N == 1 ->
-			generate_attr_unify_hook_one(Clauses)
+			generate_attr_unify_hook_one(HookClauses)
 		;
-			generate_attr_unify_hook_many(N,Clauses)
+			generate_attr_unify_hook_many(N,HookClauses)
 		)
 	).
 
@@ -5374,8 +5373,12 @@ type_condition([DefCase|DefCases],Arg,UnrollArg,Mode,[Condition|Conditions]) :-
 			 	;	dense_int
 				;	chr_identifier
 				;	chr_identifier(any)
-				;       /* all possible values are given */
+				;       /* all possible values are given 
+					*/
 					chr_enum(list(any))
+				;	/* all values of interest are given
+					   for the other values a handler is provided */
+					chr_enum(list(any),any)
 				;	/* all possible values appear in rule heads; 
 					   to distinguish between multiple chr_constants
 					   we have a key*/
@@ -5402,9 +5405,13 @@ compound_builtin_type(chr_enum(Constants),Arg,(ground(Arg), memberchk(Arg,Consta
 			  )
 			 ) 
 	).
+compound_builtin_type(chr_enum(_,_),Arg,true,true).
 
 is_chr_constants_type(chr_constants(Key),Key,no).
 is_chr_constants_type(chr_constants(Key,ErrorHandler),Key,yes(ErrorHandler)).
+
+is_chr_enum_type(chr_enum(Constants),		Constants,	no).
+is_chr_enum_type(chr_enum(Constants,Handler),	Constants,	yes(Handler)).
 
 type_def_case_condition(DefCase,Arg,UnrollArg,Mode,Condition) :-
 	( nonvar(DefCase) ->
@@ -5791,6 +5798,10 @@ type_alias(TypePat,Alias) \ enumerated_atomic_type(Type,Atoms)
 		atomic(Alias),
 		copy_term_nat(TypePat-Alias,Type-NType),
 		enumerated_atomic_type(NType,Atoms).
+
+enumerated_atomic_type(_,_)
+	<=>
+	fail.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 :- chr_constraint
@@ -6390,13 +6401,8 @@ guard_splitting(Rule,SplitGuardList) :-
 	ground_vars(Heads,GroundVars),	
 	list_difference_eq(HeadVars,GroundVars,LockableHeadVars),
 	intersect_eq(LockableHeadVars,GuardVars1,GuardVars),
-	( chr_pp_flag(guard_locks,on),
-          bagof(('chr lock'(X)) - ('chr unlock'(X)), (lists:member(X,GuardVars)), LocksUnlocks) ->
-		once(pairup(Locks,Unlocks,LocksUnlocks))
-	;
-		Locks = [],
-		Unlocks = []
-	),
+	maplist(chr_lock,GuardVars,Locks),
+	maplist(chr_unlock,GuardVars,Unlocks),
 	list2conj(Locks,LockPhase),
 	list2conj(Unlocks,UnlockPhase),
 	list2conj(RestGuardList,RestGuard1),
@@ -6887,20 +6893,18 @@ add_args_types([Arg|Args],[Type|Types],VarTypes,NVarTypes) :-
 %~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~%
 % add_arg_types(+Term,+Type,+VarTypes,-NVarTypes) is det.
 %~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~%
+% OPTIMIZATION: don't add if `any' 
 add_arg_types(Term,Type,VarTypes,NVarTypes) :-
-	( var(Term) ->
+	( Type == any ->
+		NVarTypes = VarTypes
+	; var(Term) ->
 		( lookup_eq(VarTypes,Term,_) ->
 			NVarTypes = VarTypes
 		;
 			NVarTypes = [Term-Type|VarTypes]
 		) 
-	; ground(Term) ->
-		NVarTypes = VarTypes
-	; % TODO 	improve approximation!
-		term_variables(Term,Vars),
-		length(Vars,VarNb),
-		replicate(VarNb,any,Types),	
-		add_args_types(Vars,Types,VarTypes,NVarTypes)
+	; % nonvar
+		NVarTypes = VarTypes % approximate with any
 	).	
 			
 
@@ -7011,7 +7015,8 @@ rest_heads_retrieval_and_matching_n([H|Hs],[ID|IDs],PrevHs,PrevSusps,ActiveHead,
 						Sbag,
 						Susp = Suspension,		% not inlined
 						GetState
-					)
+					),
+		inline_matching_goal(MatchingGoal,MatchingGoal2)
 	;
 		delay_phase_end(validate_store_type_assumptions,
 			( static_suspension_term(F/A,Suspension),
@@ -7021,13 +7026,13 @@ rest_heads_retrieval_and_matching_n([H|Hs],[ID|IDs],PrevHs,PrevSusps,ActiveHead,
 		existential_lookup(StoreType,H,[ActiveHead|PrevHs],VarDict,GroundVars,Suspension,ExistentialLookup,Susp,Pairs,NPairs),
 		get_constraint_mode(F/A,Mode),
 		NMode = Mode, % filter_mode(NPairs,Pairs,Mode,NMode),
-		head_arg_matches(NPairs,NMode,VarDict,MatchingGoal,VarDict1,GroundVars,GroundVars1)
+		head_arg_matches(NPairs,NMode,VarDict,MatchingGoal,VarDict1,GroundVars,GroundVars1),
+		filter_append(NPairs,VarDict1,DA_),		% order important here
+		translate(GroundVars1,DA_,GroundVarsA),
+		translate(GroundVars1,VarDict1,GroundVarsB),
+		inline_matching_goal(MatchingGoal,MatchingGoal2,GroundVarsA,GroundVarsB)
 	),
 	different_from_other_susps(H,Susp,PrevHs,PrevSusps,DiffSuspGoals),
-	filter_append(NPairs,VarDict1,DA_),		% order important here
-	translate(GroundVars1,DA_,GroundVarsA),
-	translate(GroundVars1,VarDict1,GroundVarsB),
-	inline_matching_goal(MatchingGoal,MatchingGoal2,GroundVarsA,GroundVarsB),
 	Goal = 
 	(
 		ExistentialLookup,
@@ -7036,11 +7041,13 @@ rest_heads_retrieval_and_matching_n([H|Hs],[ID|IDs],PrevHs,PrevSusps,ActiveHead,
 	),
 	rest_heads_retrieval_and_matching_n(Hs,IDs,[H|PrevHs],[Susp|PrevSusps],ActiveHead,Goals,Susps,VarDict1,NVarDict,_NewAttrDict,GroundVars1,NGroundVars).
 
+inline_matching_goal(G1,G2) :-
+	inline_matching_goal(G1,G2,[],[]).
+
 inline_matching_goal(A==B,true,GVA,GVB) :- 
     memberchk_eq(A,GVA),
     memberchk_eq(B,GVB),
     A=B, !.
-    
 % inline_matching_goal(A=B,true,_,_) :- A=B, !.
 inline_matching_goal((A,B),(A2,B2),GVA,GVB) :- !,
     inline_matching_goal(A,A2,GVA,GVB),
@@ -7144,7 +7151,7 @@ via_goal(Vars,TypeDict,ViaGoal,Var) :-
         ( Vars = [] ->
 		ViaGoal = fail	
 	; Vars = [A] ->
-		lookup_eq(TypeDict,A,Type),
+		lookup_type(TypeDict,A,Type),
 		( atomic_type(Type) ->
 			ViaGoal = var(A),
 			A = Var
@@ -7156,6 +7163,12 @@ via_goal(Vars,TypeDict,ViaGoal,Var) :-
         ;   
 		ViaGoal = 'chr newvia'(Vars,Var)
        	).
+lookup_type(TypeDict,Var,Type) :-
+	( lookup_eq(TypeDict,Var,Type) ->
+		true
+	;
+		Type = any % default type
+	).
 gen_get_mod_constraints(FA,Var,AttrGoal,AllSusps) :-
 	get_target_module(Mod),
        	AttrGoal =
@@ -7187,11 +7200,16 @@ guard_body_copies2(Rule,VarDict,GuardCopyList,BodyCopy) :-
 	% variables that are declared to be ground don't need to be locked
 	ground_vars(H,GroundVars),
 	list_difference_eq(GuardVars,GroundVars,LockedGuardVars),
-	( chr_pp_flag(guard_locks,on),
-          bagof(('chr lock'(Y)) - ('chr unlock'(Y)),
-                X ^ (lists:member(X,LockedGuardVars),		% X is a variable appearing in the original guard
+	( chr_pp_flag(guard_locks,off) ->
+		Locks = [],
+		Unlocks = []
+	;
+          bagof(Lock - Unlock,
+                X ^ Y ^ (lists:member(X,LockedGuardVars),	 % X is a variable appearing in the original guard
                      pairlist:lookup_eq(VarDict,X,Y),            % translate X into new variable
-                     memberchk_eq(Y,GuardCopyVars)      % redundant check? or multiple entries for X possible?
+                     memberchk_eq(Y,GuardCopyVars),      	 % redundant check? or multiple entries for X possible?
+		     chr_lock(Y,Lock),
+		     chr_unlock(Y,Unlock)
                     ),
                 LocksUnlocks) ->
 		once(pairup(Locks,Unlocks,LocksUnlocks))
@@ -8292,9 +8310,16 @@ normalize_attr(Attr,NormalGoal,NormalAttr) :-
 	NormalGoal = 'chr normalize_attr'(Attr,NormalAttr).
 
 get_suspensions(N,Position,TAttr,(TAttr = Attr),Suspensions) :-
-	chr_pp_flag(dynattr,off), !,
+	chr_pp_flag(dynattr,off),
+	!, % chr_pp_flag(experiment,off), !,
 	make_attr(N,_,SuspsList,Attr),
 	nth1(Position,SuspsList,Suspensions).
+
+% get_suspensions(N,Position,TAttr,Goal,Suspensions) :-
+% 	chr_pp_flag(dynattr,off),
+% 	chr_pp_flag(experiment,on), !,
+% 	Position1 is Position + 1,
+% 	Goal = arg(Position1,TAttr,Suspensions).
 
 % NEW
 get_suspensions(N,Position,TAttr,Goal,Suspensions) :-
@@ -8361,7 +8386,8 @@ add_attr(N,Suspension,Position,TAttr,Goal,NTAttr) :-
 		).
 
 rem_attr(N,Var,Suspension,Position,TAttr,Goal) :-
-	chr_pp_flag(dynattr,off), !,
+	chr_pp_flag(dynattr,off), 
+	chr_pp_flag(experiment,off), !,
 	or_pattern(Position,Pattern),
 	and_pattern(Position,DelPattern),
 	make_attr(N,Mask,SuspsList,Attr),
@@ -8384,6 +8410,33 @@ rem_attr(N,Var,Suspension,Position,TAttr,Goal) :-
 				)
 			;
 				put_attr(Var,Mod,Attr2)
+			)
+		;
+			true
+		)
+	), !.
+rem_attr(N,Var,Suspension,Position,TAttr,Goal) :-
+	chr_pp_flag(dynattr,off),
+	chr_pp_flag(experiment,on), !,
+	or_pattern(Position,Pattern),
+	and_pattern(Position,DelPattern),
+	Position1 is Position + 1,
+	get_target_module(Mod),
+	Goal = (
+		arg(1,TAttr,Mask),
+		( Mask /\ Pattern =:= Pattern ->
+			arg(Position1,TAttr,Susps),
+			'chr sbag_del_element'(Susps,Suspension,NewSusps),
+			( NewSusps == [] ->
+				NewMask is Mask /\ DelPattern,
+				( NewMask == 0 ->
+					del_attr(Var,Mod)
+				;
+					setarg(1,TAttr,NewMask),
+					setarg(Position1,TAttr,NewSusps)
+				)
+			;
+				setarg(Position1,TAttr,NewSusps)
 			)
 		;
 			true
@@ -10318,35 +10371,69 @@ flattening_dictionary([CS|CSs],Dictionary) :-
 
 flattening_dictionary_entry(CS,Entry) :-
 	get_constraint_type_det(CS,Types),
-	constant_positions(Types,1,Positions,Keys,Handler),
-	Positions \== [],					% there are chr_constant arguments
-	pairup(Keys,Constants,Pairs0),
-	keysort(Pairs0,Pairs),
-	Entry = CS-Positions-Specs-Handler,
-	get_chr_constants(ConstantsList),
-	findall(Spec,
-			( member(Pairs,ConstantsList)
-			, flat_spec(CS,Positions,Constants,Spec)
-			),
-		Specs).
+	constant_positions(Types,1,Positions,Keys,Handler,MaybeEnum),
+	( Positions \== [] ->					% there are chr_constant arguments
+		pairup(Keys,Constants,Pairs0),
+		keysort(Pairs0,Pairs),
+		Entry = CS-Positions-Specs-Handler,
+		get_chr_constants(ConstantsList),
+		findall(Spec,
+				( member(Pairs,ConstantsList)
+				, flat_spec(CS,Positions,Constants,Spec)
+				),
+			Specs)
+	; MaybeEnum == yes ->
+		enum_positions(Types,1,EnumPositions,ConstantsLists,EnumHandler),
+		Entry = CS-EnumPositions-Specs-EnumHandler,
+		findall(Spec,
+				( cartesian_product(Terms,ConstantsLists)
+				, flat_spec(CS,EnumPositions,Terms,Spec)
+				),
+			Specs)
+	).
 
-constant_positions([],_,[],[],no).
-constant_positions([Type|Types],I,Positions,Keys,Handler) :-
+constant_positions([],_,[],[],no,no).
+constant_positions([Type|Types],I,Positions,Keys,Handler,MaybeEnum) :-
 	unalias_type(Type,NormalizedType),
 	( is_chr_constants_type(NormalizedType,Key,ErrorHandler) ->
 		compose_error_handlers(ErrorHandler,NHandler,Handler),
 		Positions = [I|NPositions],
-		Keys = [Key|NKeys]
+		Keys = [Key|NKeys],
+		MaybeEnum = NMaybeEnum
 	;
+		( is_chr_enum_type(NormalizedType,_,_) ->
+			MaybeEnum = yes
+		;
+			MaybeEnum = NMaybeEnum
+		),
 		NPositions = Positions,
 		NKeys = Keys,
 		NHandler = Handler
 	),
 	J is I + 1,
-	constant_positions(Types,J,NPositions,NKeys,NHandler).
+	constant_positions(Types,J,NPositions,NKeys,NHandler,NMaybeEnum).
 
 compose_error_handlers(no,Handler,Handler).
 compose_error_handlers(yes(Handler),_,yes(Handler)).
+
+enum_positions([],_,[],[],no).
+enum_positions([Type|Types],I,Positions,ConstantsLists,Handler) :-
+	unalias_type(Type,NormalizedType),
+	( is_chr_enum_type(NormalizedType,Constants,ErrorHandler) ->
+		compose_error_handlers(ErrorHandler,NHandler,Handler),
+		Positions      = [I|NPositions],
+		ConstantsLists = [Constants|NConstantsLists]
+	;	Positions      = NPositions,
+		ConstantsLists = NConstantsLists,
+		Handler	       = NHandler
+	),
+	J is I + 1,
+	enum_positions(Types,J,NPositions,NConstantsLists,NHandler).
+
+cartesian_product([],[]).
+cartesian_product([E|Es],[L|Ls]) :-
+	member(E,L),
+	cartesian_product(Es,Ls).
 
 flat_spec(C/N,Positions,Terms,Spec) :-
 	Spec = Terms - Functor,
@@ -10387,6 +10474,7 @@ install_new_declarations_and_restart(Declarations) :-
 % 
 % TODO:
 %	-) refined semantics correctness issue
+%	-) incorporate chr_enum into dictionary generation
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 flatten_clauses(Clauses,Dict,NClauses) :-
@@ -10867,4 +10955,69 @@ dump_code(Clauses) :-
 	).	
 
 chr_banner :-
-	chr_info(banner,'\tThe K.U.Leuven CHR System\t\n\t\tContributors:\tTom Schrijvers, Jon Sneyers, Bart Demoen,\n\t\t\t\tJan Wielemaker\n\t\tCopyright:\tK.U.Leuven, Belgium\n\t\tURL:\t\thttp://www.cs.kuleuven.be/~~toms/CHR/\n',[]).
+	chr_info(banner,'\tThe K.U.Leuven CHR System\n\t\tMain Developer:\tTom Schrijvers\n\t\tContributors:\tJon Sneyers, Bart Demoen, Jan Wielemaker\n\t\tCopyright:\tK.U.Leuven, Belgium\n\t\tURL:\t\thttp://www.cs.kuleuven.be/~~toms/CHR/\n',[]).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% LOCKING {{{
+
+chr_none_locked(Vars,Goal) :-
+	chr_pp_flag(guard_locks,Flag),
+	( Flag == off ->
+		Goal = true
+	; Flag == on ->
+		Goal = 'chr none_locked'( Vars)
+	; Flag == error ->
+		Goal = 'chr none_error_locked'( Vars)
+	).
+
+chr_not_locked(Var,Goal) :-
+	chr_pp_flag(guard_locks,Flag),
+	( Flag == off ->
+		Goal = true
+	; Flag == on ->
+		Goal = 'chr not_locked'( Var)
+	; Flag == error ->
+		Goal = 'chr not_error_locked'( Var)
+	).
+
+chr_lock(Var,Goal) :-
+	chr_pp_flag(guard_locks,Flag),
+	( Flag == off ->
+		Goal = true
+	; Flag == on ->
+		Goal = 'chr lock'( Var)
+	; Flag == error ->
+		Goal = 'chr error_lock'( Var)
+	).
+
+chr_unlock(Var,Goal) :-
+	chr_pp_flag(guard_locks,Flag),
+	( Flag == off ->
+		Goal = true
+	; Flag == on ->
+		Goal = 'chr unlock'( Var)
+	; Flag == error ->
+		Goal = 'chr unerror_lock'( Var)
+	).
+% }}}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% AST representation
+%	each AST representation caches the original term
+%
+%	ast_term ::= 	atomic(Term)		
+%		 |      compound(Functor,Arity,list(ast_term),Term)
+%		 |      var(int,Term)  
+%			-- unique integer identifier 		
+		
+	% TODO: thread Id number
+term_to_ast_term(Term,AstTerm) :- 
+ 	( atomic(Term) ->
+		AstTerm = atomic(Term)
+	; compound(Term) ->
+		functor(Term,Functor,Arity),
+		AstTerm = compound(Functor,Arity,[AstTerms],Term),
+		Term =.. [_|Args],
+		maplist(term_to_ast_term,Args,AstTerms)
+	; var(Term) ->
+		AstTerm = var(Id,Term)
+	).

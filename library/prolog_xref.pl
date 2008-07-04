@@ -331,7 +331,7 @@ xref_defined_class(Source, Class, file(File)) :-
 
 collect(Src, In) :-
 	repeat,
-	    catch(read_source_term(In, Term, TermPos),
+	    catch(read_source_term(Src, In, Term, TermPos),
 		  E, syntax_error(E)),
 	    xref_expand(Term, T),
 	    (   T == end_of_file
@@ -342,7 +342,7 @@ collect(Src, In) :-
 		fail
 	    ).
 
-%%	read_source_term(+In:stream, -Term, -TermPos) is det.
+%%	read_source_term(+Src, +In:stream, -Term, -TermPos) is det.
 %
 %	Read next term  from  In.   The  cross-referencer  supports  the
 %	comment_hook  as  also  implemented  by  the  compiler  for  the
@@ -351,7 +351,9 @@ collect(Src, In) :-
 :- multifile
 	prolog:comment_hook/3.
 
-read_source_term(In, Term, TermPos) :-
+read_source_term(Src, In, Term, TermPos) :-
+	atom(Src),
+	\+ source_file(Src),		% normally loaded; no need to update
 	'$get_predicate_attribute'(prolog:comment_hook(_,_,_),
 				   number_of_clauses, N),
 	N > 0, !,
@@ -366,7 +368,7 @@ read_source_term(In, Term, TermPos) :-
 	->  true
 	;   true
 	).
-read_source_term(In, Term, TermPos) :-
+read_source_term(_, In, Term, TermPos) :-
 	'$set_source_module'(SM, SM),
 	read_term(In, Term,
 		  [ term_position(TermPos),
@@ -613,10 +615,12 @@ xref_meta(clause(G, _),		[G]).
 xref_meta(clause(G, _, _),	[G]).
 xref_meta(phrase(G, _A),	[G+2]).
 xref_meta(phrase(G, _A, _R),	[G+2]).
+xref_meta(phrase_from_file(G,_),[G+2]).
 xref_meta(catch(A, _, B),	[A, B]).
 xref_meta(thread_create(A,_,_), [A]).
 xref_meta(thread_signal(_,A),   [A]).
 xref_meta(thread_at_exit(A),	[A]).
+xref_meta(thread_initialization(A), [A]).
 xref_meta(predsort(A,_,_),	[A+3]).
 xref_meta(call_cleanup(A, B),	[A, B]).
 xref_meta(call_cleanup(A, _, B),[A, B]).

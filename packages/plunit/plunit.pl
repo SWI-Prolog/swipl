@@ -5,7 +5,7 @@
     Author:        Jan Wielemaker
     E-mail:        wielemak@science.uva.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (C): 2006-2007, University of Amsterdam
+    Copyright (C): 2006-2008, University of Amsterdam
 
     This file is covered by the `The Artistic License', also in use by
     Perl.  See http://www.perl.com/pub/a/language/misc/Artistic.html
@@ -18,7 +18,9 @@
 	    end_tests/1,		% +Name
 	    run_tests/0,		% Run all tests
 	    run_tests/1,		% Run named test-set
-	    load_test_files/1		% +Options
+	    load_test_files/1,		% +Options
+	    running_tests/0,		% Prints currently running test
+	    test_report/1		% +What
 	  ]).
 
 /** <module> Unit Testing
@@ -96,6 +98,7 @@ set_test_flag(Name, Value) :-
 :- if(sicstus).
 throw_error(Error_term,Impldef) :-
 	throw(error(Error_term,i(Impldef))). % SICStus 3 work around
+
 :- use_module(swi).			% SWI-Compatibility
 :- use_module(library(terms)).
 :- op(700, xfx, =@=).
@@ -128,6 +131,11 @@ set_test_flag( Name, Val ) :-
 	retractall(test_flag(Name,_)),
 	asserta(test_flag(Name, Val)).
 
+:- op(1150, fx, thread_local).
+
+user:term_expansion((:- thread_local(PI)), (:- dynamic(PI))) :-
+	prolog_load_context(module, plunit).
+
 :- endif.
 
 		 /*******************************
@@ -157,17 +165,31 @@ set_test_flag( Name, Val ) :-
 %		When the tests are run.  Values are =manual=, =make=
 %		or make(all).
 %		
+%		* silent(+Bool)
+%		If =true= (default =false=), report successful tests
+%		using message level =silent=, only printing errors and
+%		warnings.
+%		
 %		* sto(+Bool)
 %		How to test whether code is subject to occurs check
 %		(STO).  If =false= (default), STO is not considered.
 %		If =true= and supported by the hosting Prolog, code
 %		is run in all supported unification mode and reported
 %		if the results are inconsistent.
-%		
-%	@tbd	Verify types	
 
 set_test_options(Options) :-
+	valid_options(Options, global_test_option),
 	set_test_flag(test_options, Options).
+
+global_test_option(load(Load)) :-
+	must_be(oneof([never,always,normal]), Load).
+global_test_option(run(When)) :-
+	must_be(oneof([manual,make,all]), When).
+global_test_option(silent(Bool)) :-
+	must_be(boolean, Bool).
+global_test_option(sto(Bool)) :-
+	must_be(boolean, Bool).
+
 
 %%	loading_tests
 %
@@ -426,7 +448,9 @@ test_option(error(_)).
 test_option(all(_)).
 test_option(set(_)).
 test_option(nondet).
-test_option(sto(V)) :- nonvar(V), member(V, [finite_trees, rational_trees]).
+test_option(fixme(_)).
+test_option(forall(X)) :-
+	must_be(callable, X).
 
 %%	test_option(+Option) is semidet.
 %
@@ -441,17 +465,23 @@ test_set_option(setup(X)) :-
 	must_be(callable, X).
 test_set_option(cleanup(X)) :-
 	must_be(callable, X).
+test_set_option(sto(V)) :-
+	nonvar(V), member(V, [finite_trees, rational_trees]).
 
 
 		 /*******************************
 		 *	  RUNNING TOPLEVEL	*
 		 *******************************/
 
-:- dynamic
+:- thread_local
 	passed/5,			% Unit, Test, Line, Det, Time
 	failed/4,			% Unit, Test, Line, Reason
 	blocked/4,			% Unit, Test, Line, Reason
-	sto/5.				% Unit, Test, Line, Results
+	sto/4,				% Unit, Test, Line, Results
+	fixme/5.			% Unit, Test, Line, Reason, Status
+
+:- dynamic
+	running/5.			% Unit, Test, Line, STO, Thread
 
 %%	run_tests is semidet.
 %%	run_tests(+TestSet) is semidet.
@@ -509,10 +539,13 @@ matching_test(Name, Set) :-
 	memberchk(Name, Set).
 
 cleanup :-
+	thread_self(Me),
 	retractall(passed(_, _, _, _, _)),
 	retractall(failed(_, _, _, _)),
 	retractall(blocked(_, _, _, _)),
-	retractall(sto(_, _, _, _)).
+	retractall(sto(_, _, _, _)),
+	retractall(fixme(_, _, _, _, _)),
+	retractall(running(_,_,_,_,Me)).
 
 
 %%	run_tests_in_files(+Files:list)	is det.
@@ -599,11 +632,27 @@ unification_capability(_) :-
 %	Run a single test.  
 
 run_test(Unit, Name, Line, Options, Body) :-
-	current_test_flag(test_options, Options),
-	option(sto(false), Options, false), !,
+	option(forall(Generator), Options), !,
+	unit_module(Unit, Module),
+	term_variables(Generator, Vars),
+	forall(Module:Generator,
+	       run_test_once(Unit, @(Name,Vars), Line, Options, Body)).
+run_test(Unit, Name, Line, Options, Body) :-
+	run_test_once(Unit, Name, Line, Options, Body).
+
+run_test_once(Unit, Name, Line, Options, Body) :-
+	current_test_flag(test_options, GlobalOptions),
+	option(sto(false), GlobalOptions, false), !,
 	run_test_6(Unit, Name, Line, Options, Body, Result),
 	report_result(Result, Options).
-run_test(Unit, Name, Line, Options, Body) :-
+run_test_once(Unit, Name, Line, Options, Body) :-
+	current_unit(Unit, _Module, _Supers, UnitOptions),
+	option(sto(Type), UnitOptions),
+	\+ option(sto(_), Options), !,
+	current_unification_capability(Cap0),
+	call_cleanup(run_test_cap(Unit, Name, Line, [sto(Type)|Options], Body),
+		     set_unification_capability(Cap0)).
+run_test_once(Unit, Name, Line, Options, Body) :-
 	current_unification_capability(Cap0),
 	call_cleanup(run_test_cap(Unit, Name, Line, Options, Body),
 		     set_unification_capability(Cap0)).
@@ -633,7 +682,9 @@ run_test_cap(Unit, Name, Line, Options, Body) :-
 test_caps(Type, Unit, Name, Line, Options, Body, Result, Key) :-
 	unification_capability(Type),
 	set_unification_capability(Type),
+	begin_test(Unit, Name, Line, Type),
 	run_test_6(Unit, Name, Line, Options, Body, Result),
+	end_test(Unit, Name, Line, Type),
 	result_to_key(Result, Key),
 	Key \== setup_failed.
 
@@ -873,6 +924,11 @@ match_error(Expect, Rec) :-
 %	    If it is the setup handler for a test
 
 setup(Module, Context, Options) :-
+	option(condition(Condition), Options),
+	option(setup(Setup), Options), !,
+	setup(Module, Context, [condition(Condition)]),
+	setup(Module, Context, [setup(Setup)]).
+setup(Module, Context, Options) :-
 	option(setup(Setup), Options), !,
 	(   catch(Module:Setup, E, true)
 	->  (   var(E)
@@ -910,6 +966,18 @@ cleanup(Module, Options) :-
 	;   print_message(warning, goal_failed(Cleanup, '(cleanup handler)'))
 	).
 
+success(Unit, Name, Line, Det, _Time, Options) :-
+	memberchk(fixme(Reason), Options), !,
+	(   (   Det == true
+	    ;	memberchk(nondet, Options)
+	    )
+	->  put_char(user_error, +),
+	    Ok = passed
+	;   put_char(user_error, !),
+	    Ok = nondet
+	),
+	flush_output(user_error),
+	assert(fixme(Unit, Name, Line, Reason, Ok)).
 success(Unit, Name, Line, Det, Time, Options) :-
 	assert(passed(Unit, Name, Line, Det, Time)),
 	(   (   Det == true
@@ -921,8 +989,13 @@ success(Unit, Name, Line, Det, Time, Options) :-
 	),
 	flush_output(user_error).
 
-failure(Unit, Name, Line, E, _Options) :-
-	report_failure(Unit, Name, Line, E),
+failure(Unit, Name, Line, _, Options) :-
+	memberchk(fixme(Reason), Options), !,
+	put_char(user_error, -),
+	flush_output(user_error),
+	assert(fixme(Unit, Name, Line, Reason, failed)).
+failure(Unit, Name, Line, E, Options) :-
+	report_failure(Unit, Name, Line, E, Options),
 	assert_cyclic(failed(Unit, Name, Line, E)).
 
 %%	assert_cyclic(+Term) is det.
@@ -956,6 +1029,44 @@ assert_cyclic(Term) :-
 		 *	      REPORTING		*
 		 *******************************/
 
+%%	begin_test(Unit, Test, Line, STO) is det.
+%%	end_test(Unit, Test, Line, STO) is det.
+%
+%	Maintain running/5 and report a test has started/is ended using
+%	a =silent= message:
+%	
+%	    * plunit(begin(Unit:Test, File:Line, STO))
+%	    * plunit(end(Unit:Test, File:Line, STO))
+%	    
+%	@see message_hook/3 for intercepting these messages    
+
+begin_test(Unit, Test, Line, STO) :-
+	thread_self(Me),
+	assert(running(Unit, Test, Line, STO, Me)),
+	unit_file(Unit, File),
+	print_message(silent, plunit(begin(Unit:Test, File:Line, STO))).
+
+end_test(Unit, Test, Line, STO) :-
+	thread_self(Me),
+	retractall(running(_,_,_,_,Me)),
+	unit_file(Unit, File),
+	print_message(silent, plunit(end(Unit:Test, File:Line, STO))).
+
+%%	running_tests is det.
+%
+%	Print the currently running test.
+
+running_tests :-
+	running_tests(Running),
+	print_message(informational, plunit(running(Running))).
+
+running_tests(Running) :-
+	findall(running(Unit:Test, File:Line, STO, Thread),
+		(   running(Unit, Test, Line, STO, Thread),
+		    unit_file(Unit, File)
+		), Running).
+
+
 %%	report is semidet.
 %
 %	True if there are no errors.  If errors were encountered, report
@@ -969,18 +1080,20 @@ report :-
 	(   Passed+Failed+Blocked+STO =:= 0
 	->  info(plunit(no_tests))
 	;   Failed+Blocked+STO =:= 0
-	->  info(plunit(all_passed(Passed)))
+	->  report_fixme,
+	    info(plunit(all_passed(Passed)))
 	;   report_blocked,
+	    report_fixme,
 	    report_failed,
 	    report_sto
 	).
 
 number_of_clauses(F/A,N) :-
-	(	current_predicate(F/A)
-	->	functor(G,F,A),
-		findall(t, G, Ts),
-		length(Ts, N)
-	;	N = 0
+	(   current_predicate(F/A)
+	->  functor(G,F,A),
+	    findall(t, G, Ts),
+	    length(Ts, N)
+	;   N = 0
 	).
 
 report_blocked :-
@@ -996,7 +1109,7 @@ report_blocked :-
 report_blocked.
 
 report_failed :-
-	number_of_clauses(failed/4,N),
+	number_of_clauses(failed/4, N),
 	N > 0, !,
 	info(plunit(failed(N))),
 	fail.
@@ -1004,15 +1117,43 @@ report_failed :-
 	info(plunit(failed(0))).
 
 report_sto :-
-	number_of_clauses(sto/4,N),
+	number_of_clauses(sto/4, N),
 	N > 0, !,
 	info(plunit(sto(N))),
 	fail.
 report_sto :-
 	info(plunit(sto(0))).
 
-report_failure(Unit, Name, Line, Error) :-
+report_fixme :-
+	report_fixme(_,_,_).
+
+report_fixme(TuplesF, TuplesP, TuplesN) :-
+	fixme(failed, TuplesF, Failed),
+	fixme(passed, TuplesP, Passed),
+	fixme(nondet, TuplesN, Nondet),
+	print_message(informational, plunit(fixme(Failed, Passed, Nondet))).
+
+
+fixme(How, Tuples, Count) :-
+	findall(fixme(Unit, Name, Line, Reason, How),
+		fixme(Unit, Name, Line, Reason, How), Tuples),
+	length(Tuples, Count).
+	
+
+report_failure(Unit, Name, Line, Error, _Options) :-
 	print_message(error, plunit(failed(Unit, Name, Line, Error))).
+
+
+%%	test_report(What) is det.
+%
+%	Produce reports on test results after the run.
+
+test_report(fixme) :- !,
+	report_fixme(TuplesF, TuplesP, TuplesN),
+	append([TuplesF, TuplesP, TuplesN], Tuples),
+	print_message(informational, plunit(fixme(Tuples))).
+test_report(What) :-
+	throw_error(domain_error(report_class, What), _).
 
 
 		 /*******************************
@@ -1118,6 +1259,17 @@ message(plunit(end(_Unit))) -->
 :- endif.
 message(plunit(blocked(unit(Unit, Reason)))) -->
 	[ 'PL-Unit: ~w blocked: ~w'-[Unit, Reason] ].
+message(plunit(running([]))) --> !,
+	[ 'PL-Unit: no tests running' ].
+message(plunit(running([One]))) --> !,
+	[ 'PL-Unit: running ' ],
+	running(One).
+message(plunit(running(More))) --> !,
+	[ 'PL-Unit: running tests:', nl ],
+	running(More).
+message(plunit(fixme([]))) --> !.
+message(plunit(fixme(Tuples))) --> !,
+	fixme_message(Tuples).
 
 					% Blocked tests
 message(plunit(blocked(1))) --> !,
@@ -1126,7 +1278,8 @@ message(plunit(blocked(N))) -->
 	[ '~D tests are blocked:'-[N] ].
 message(plunit(blocked(Pos, Name, Reason))) -->
 	locationprefix(Pos),
-	[ 'test ~w: ~w'-[Name, Reason] ].
+	test_name(Name),
+	[ ': ~w'-[Reason] ].
 
 					% fail/success
 message(plunit(no_tests)) --> !,
@@ -1143,10 +1296,20 @@ message(plunit(sto(0))) --> !,
 	[].
 message(plunit(sto(N))) -->
 	[ '~D test results depend on unification mode'-[N] ].
+message(plunit(fixme(0,0,0))) -->
+	[].
+message(plunit(fixme(Failed,0,0))) --> !,
+	[ 'all ~D tests flagged FIXME failed'-[Failed] ].
+message(plunit(fixme(Failed,Passed,0))) -->
+	[ 'FIXME: ~D failed; ~D passed'-[Failed, Passed] ].
+message(plunit(fixme(Failed,Passed,Nondet))) -->
+	{ TotalPassed is Passed+Nondet },
+	[ 'FIXME: ~D failed; ~D passed; (~D nondet)'-[Failed, TotalPassed, Nondet] ].
 message(plunit(failed(Unit, Name, Line, Failure))) -->
        { unit_file(Unit, File) },
        locationprefix(File:Line),
-       ['test ~w: '- [Name] ],
+       test_name(Name),
+       [': '-[] ],
        failure(Failure).
 					% Setup/condition errors
 message(plunit(error(Where, Context, Exception))) -->
@@ -1158,10 +1321,31 @@ message(plunit(error(Where, Context, Exception))) -->
 message(plunit(sto(Unit, Name, Line))) -->
 	{ unit_file(Unit, File) },
        locationprefix(File:Line),
-       ['test ~w is subject to occurs check (STO): '- [Name] ].
+       test_name(Name),
+       [' is subject to occurs check (STO): '-[] ].
 message(plunit(sto(Type, Result))) -->
 	sto_type(Type),
 	sto_result(Result).
+
+					% Interrupts (SWI)
+:- if(swi).
+message(interrupt(begin)) -->
+	{ thread_self(Me),
+	  running(Unit, Test, Line, STO, Me), !,
+	  unit_file(Unit, File)
+	},
+	[ 'Interrupted test '-[] ],
+	running(running(Unit:Test, File:Line, STO, Me)),
+	[nl],
+	'$messages':prolog_message(interrupt(begin)).
+message(interrupt(begin)) -->
+	'$messages':prolog_message(interrupt(begin)).
+:- endif.
+
+test_name(@(Name,Bindings)) --> !,
+	[ 'test ~w (forall bindings = ~p)'-[Name, Bindings] ].
+test_name(Name) --> !,
+	[ 'test ~w'-[Name] ].
 
 sto_type(sto_error_incomplete) -->
 	[ 'Finite trees (error checking): ' ].
@@ -1180,6 +1364,28 @@ det(true) -->
 	[ 'deterministic' ].
 det(false) -->
 	[ 'non-deterministic' ].
+
+running(running(Unit:Test, File:Line, STO, Thread)) -->
+	thread(Thread),
+	[ '~q:~q at ~w:~d'-[Unit, Test, File, Line] ],
+	current_sto(STO).
+running([H|T]) -->
+	['\t'], running(H),
+	(   {T == []}
+	->  []
+	;   [nl], running(T)
+	).
+
+thread(main) --> !.
+thread(Other) -->
+	[' [~w] '-[Other] ].
+	
+current_sto(sto_error_incomplete) -->
+	[ ' (STO: error checking)' ].
+current_sto(rational_trees) -->
+	[].
+current_sto(finite_trees) -->
+	[ ' (STO: occurs check enabled)' ].
 
 :- if(swi).
 write_term(T, OPS) -->
@@ -1226,6 +1432,24 @@ failure(Error) -->
 :- endif.
 failure(Why) -->
 	[ '~p~n'-[Why] ].
+
+fixme_message([]) --> [].
+fixme_message([fixme(Unit, _Name, Line, Reason, How)|T]) -->
+	{ unit_file(Unit, File) },
+	fixme_message(File:Line, Reason, How),
+	(   {T == []}
+	->  []
+	;   [nl],
+	    fixme_message(T)
+	).
+
+fixme_message(Location, Reason, failed) -->
+	[ 'FIXME: ~w: ~w'-[Location, Reason] ].
+fixme_message(Location, Reason, passed) -->
+	[ 'FIXME: ~w: passed ~w'-[Location, Reason] ].
+fixme_message(Location, Reason, nondet) -->
+	[ 'FIXME: ~w: passed (nondet) ~w'-[Location, Reason] ].
+
 
 write_options([ numbervars(true),
 		quoted(true),

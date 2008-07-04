@@ -1517,7 +1517,9 @@ struct queryFrame
   Word	       *aSave;			/* saved argument-stack */
   int		solutions;		/* # of solutions produced */
   Choice	saved_bfr;		/* Saved choice-point */
+#ifndef LIFE_GC
   QueryFrame	parent;			/* Only valid inside GC */
+#endif
   struct choice	choice;			/* First (dummy) choice-point */
   LocalFrame	saved_environment;	/* Parent local-frame */
 					/* Do not put anything between */
@@ -2034,9 +2036,11 @@ typedef struct
 { bool		requested;		/* GC is requested by stack expander */
   int		blocked;		/* GC is blocked now */
   bool		active;			/* Currently running? */
-  intptr_t		collections;		/* # garbage collections */
+  long		collections;		/* # garbage collections */
   int64_t	global_gained;		/* global stack bytes collected */
   int64_t	trail_gained;		/* trail stack bytes collected */
+  int64_t	global_left;		/* global stack bytes left after GC */
+  int64_t	trail_left;		/* trail stack bytes left after GC */
   real		time;			/* time spent in collections */
 } pl_gc_status_t;
 

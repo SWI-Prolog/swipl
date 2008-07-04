@@ -43,6 +43,7 @@
 :- use_module(library(debug)).
 :- use_module(library(memfile)).
 :- use_module(library(lists)).
+:- use_module(library(error)).
 :- use_module(dcg_basics).
 
 :- multifile
@@ -63,17 +64,17 @@ connect(Parts, Read, Write, _) :-
 	memberchk(socket(Read, Write), Parts), !.
 connect(Parts, Read, Write, Options) :-
 	address(Parts, Address, Options),
-	with_mutex(http_client_connect, connect2(Address, Read, Write)).
+	with_mutex(http_client_connect, connect2(Address, Read, Write, Options)).
 
-connect2(Address, In, Out) :-
+connect2(Address, In, Out, _) :-
 	thread_self(Self),
 	connection(Address, Self, In, Out), !.
-connect2(Address, In, Out) :-
+connect2(Address, In, Out, Options) :-
 	thread_self(Self),
-	do_connect(Address, In, Out),
+	do_connect(Address, In, Out, Options),
 	assert(connection(Address, Self, In, Out)).
 
-do_connect(Address, In, Out) :-
+do_connect(Address, In, Out, Options) :-
 	tcp_socket(Socket),
 	thread_self(Me),
 	debug(connection, '~w: Connecting to ~w ...', [Me, Address]),
@@ -83,8 +84,13 @@ do_connect(Address, In, Out) :-
 		  throw(E)
 	      )),
 	debug(connection, 'ok~n', []),
-	tcp_open_socket(Socket, In, Out), !.
-do_connect(Address, _, _) :-
+	tcp_open_socket(Socket, In, Out),
+	(   memberchk(timeout(Timeout), Options)
+        ->  set_stream(In, timeout(Timeout))
+        ;   true
+	), !.
+
+do_connect(Address, _, _, _) :-
 	throw(error(failed(connect, Address), _)).
 	
 
@@ -154,7 +160,7 @@ http_get(Parts, Data, Options) :-
 	      )), !.
 http_get(Parts, Data, Options) :-
 	address(Parts, Address, Options),
-	do_connect(Address, Read, Write),
+	do_connect(Address, Read, Write, Options),
 	call_cleanup(http_do_get([socket(Read, Write)|Parts], Data, Options),
 		     close_socket(Read, Write)).
 
@@ -260,7 +266,7 @@ x_headers(Options0, Out, Options) :-
 	x_headers(Options1, Out, Options).
 x_headers(Options, _, Options).
 
-%%	http_read_data(+Fields, +Data, +Options) is det.
+%%	http_read_data(+Fields, -Data, +Options) is det.
 %
 %	Read data from an HTTP connection.   Options must contain a term
 %	input(In) that provides the input stream   from the HTTP server.
@@ -294,17 +300,18 @@ http_read_data(In, Fields, Data, Options) :-
 	    ;   copy_stream_data(In, Stream)
 	    )
 	;   new_memory_file(MemFile),
-	    open_memory_file(MemFile, write, Stream),
+	    open_memory_file(MemFile, write, Stream, [encoding(octet)]),
 	    (   memberchk(content_length(Bytes), Fields)
 	    ->  copy_stream_data(In, Stream, Bytes)
 	    ;   copy_stream_data(In, Stream)
 	    ),
 	    close(Stream),
+	    encoding(Fields, Encoding),
 	    (   X == atom
-	    ->  memory_file_to_atom(MemFile, Data0)
+	    ->  memory_file_to_atom(MemFile, Data0, Encoding)
 	    ;	X == codes
-	    ->	memory_file_to_codes(MemFile, Data0)
-	    ;	throw(error(domain_error(return_type, X), _))
+	    ->	memory_file_to_codes(MemFile, Data0, Encoding)
+	    ;	domain_error(return_type, X)
 	    ),
 	    free_memory_file(MemFile),
 	    Data = Data0
@@ -321,6 +328,15 @@ http_read_data(In, Fields, Data, Options) :- 			% call hook
 	), !.
 http_read_data(In, Fields, Data, Options) :-
 	http_read_data(In, Fields, Data, [to(atom)|Options]).
+
+
+encoding(Fields, utf8) :-
+	memberchk(content_type(Type), Fields),
+	(   sub_atom(Type, _, _, _, 'UTF-8')
+	->  true
+	;   sub_atom(Type, _, _, _, 'utf-8')
+	), !.
+encoding(_, octet).
 
 
 		 /*******************************
@@ -351,7 +367,7 @@ http_post(Parts, In, Out, Options) :-
 	      )), !.
 http_post(Parts, In, Out, Options) :-
 	address(Parts, Address, Options),
-	do_connect(Address, Read, Write),
+	do_connect(Address, Read, Write, Options),
 	call_cleanup(http_do_post([socket(Read, Write)|Parts],
 				  In, Out, Options),
 		     close_socket(Read, Write)).

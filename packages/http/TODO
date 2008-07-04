@@ -1,41 +1,10 @@
 ---+ HTTP Server library todo list
 
----++ Support chunked encoding
+---++ Session handling
 
-Using the HTTP Chunked encoding is several advantages:
-
-	* No need to know the size of the reply in advance, avoiding
-	the need to buffer the reply in a memory file.
-
-	* Many modern browsers will update their window to reflect the
-	data processed sofar.  This allows for ging verbose messages on
-	progress or returning results on best-first basis and allow the
-	client to close the connection when it is satisfied.
-
-A possible approach to implement chunked encoding is to realise a stream
-similar to library(zlib) that performs  encoding   and  decoding of HTTP
-chunked streams.  This is now realised in http_chunked.pl
-
-Next step is interaction with the http_wrapper library.  Ideally we would
-like to add this to the CGI header, but how do we process this?
-
-	==
-	format('Transfer-Encoding: Chunked~n'),
-	==
-
-One  way  may  be  to  define    http_end_header/0,   which  will  cause
-http_wrapper to send the header  and   -if  the  encoding is =chunked=-,
-switch the stream logic accordingly. Alternatively   we  could define an
-alternative to using a CGI header for header info.  For example:
-
-	==
-	reply(Request) :-
-		http_send_header([ content_type('text/html'),
-				   transfer_encoding(chunked)
-				 ]),
-		<start writing HTML>
-	==
-
+Especially now that we store the current request  as a record in the CGI
+stream, it is now much too expensive to get the current session.  How to
+deal with that?	 Also store in the CGI object?
 
 ---++ Debugging
 
@@ -54,10 +23,19 @@ needed to store debugging information.
 
 ---++ JSON integration
 
-JavaScript Simple Object Notation is a simple and lightweight exchange
-protocol for structured data.  Support for it is progressing, with the
+JavaScript Simple Object Notation is a   simple and lightweight exchange
+protocol for structured data. Support for   it  is progressing, with the
 following items on our todo list.
 
 	* Hook json_convert.pl into json.pl
 	* Deal with nested objects in conversion
 	* Documentation.
+
+---++ Threading
+
+Getting close.  Remaining issues:
+
+	* Implement spawn(+Pool) in http_dispatch
+	* Realise time limitation after moving to another thread
+
+	

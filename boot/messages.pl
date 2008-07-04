@@ -337,6 +337,12 @@ prolog_message(io_warning(Stream, Message)) -->
 	[ 'stream ~p: ~w'-[Stream, Message] ].
 prolog_message(option_usage(pldoc)) -->
 	[ 'Usage: --pldoc[=port]' ].
+prolog_message(interrupt(begin)) -->
+	[ 'Action (h for help) ? ', flush ].
+prolog_message(interrupt(end)) -->
+	[ 'continue' ].
+prolog_message(interrupt(trace)) -->
+	[ 'continue (trace mode)' ].
 
 
 		 /*******************************
@@ -496,6 +502,9 @@ prolog_message(autoload(read_index(Dir))) -->
 		 *******************************/
 
 prolog_message(version) -->
+	{ current_prolog_flag(version_git, Version) }, !,
+	[ '~w'-[Version] ].
+prolog_message(version) -->
 	{ current_prolog_flag(version, Version),
 	  Major is Version // 10000,
 	  Minor is (Version // 100) mod 100,
@@ -556,7 +565,7 @@ prolog_message(query(QueryResult)) -->
 	query_result(QueryResult).
 
 query_result(no) -->		% failure
-	[ 'fail.' ],
+	[ 'false.' ],
 	extra_line.
 query_result(yes([])) --> !,	% prompt_alternatives_on: groundness
 	[ 'true.' ],

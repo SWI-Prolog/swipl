@@ -3,9 +3,9 @@
     Part of SWI-Prolog
 
     Author:        Jan Wielemaker
-    E-mail:        jan@swi.psy.uva.nl
+    E-mail:        J.Wielemaker@uva.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (C): 1985-2002, University of Amsterdam
+    Copyright (C): 1985-2008, University of Amsterdam
 
     This program is free software; you can redistribute it and/or
     modify it under the terms of the GNU General Public License
@@ -33,15 +33,19 @@
 	  [ http_wrapper/5,		% :Goal, +In, +Out, -Conn, +Options
 	    http_current_request/1,	% -Request
 	    http_send_header/1,		% +Term
-	    http_relative_path/2	% +AbsPath, -RelPath
+	    http_relative_path/2,	% +AbsPath, -RelPath
+					% Internal API
+	    http_wrap_spawned/3,	% :Goal, -Request, -Connection
+	    http_spawned/1		% +ThreadId
 	  ]).
 :- use_module(http_header).
-:- use_module(library(memfile)).
+:- use_module(http_stream).
 :- use_module(library(lists)).
 :- use_module(library(debug)).
+:- use_module(library(broadcast)).
 
 :- meta_predicate
-	http_wrapper(:, +, +, -, +).
+	http_wrapper(0, +, +, -, +).
 :- multifile
 	http:request_expansion/2.
 
@@ -51,15 +55,21 @@
 %	:Goal while watching for exceptions and send the result to the
 %	stream `Out'.
 %
-%	The goal is assumed to write a request to standard output preceeded
-%	by a header that should at least contain a Content-type: <type>
-%	line.  The header must be closed with a blank line.  The HTTP
-%	content-length is added by http_reply/3  Options:
+%	The goal is assumed  to  write   the  reply  to =current_output=
+%	preceeded by an HTTP header, closed by  a blank line. The header
+%	*must* contain a Content-type: <type>   line.  It may optionally
+%	contain a line =|Transfer-encoding: chunked|= to request chunked
+%	encoding.
+%
+%	Options:
 %	
 %		* request(-Request)
-%		Return the request to the caller
+%		Return the full request to the caller
 %		* peer(+Peer)
 %		IP address of client
+%		
+%	@param Close	Unified to one of =close=, =|Keep-Alife|= or
+%			spawned.
 
 http_wrapper(GoalSpec, In, Out, Close, Options) :-
 	strip_module(GoalSpec, Module, Goal),
@@ -67,76 +77,162 @@ http_wrapper(GoalSpec, In, Out, Close, Options) :-
 
 wrapper(Goal, In, Out, Close, Options) :-
 	http_read_request(In, Request0),
-	extend_request(Options, Request0, Request1),
-	memberchk(method(Method), Request1),
-	memberchk(path(Location), Request1),
-	thread_self(Self),
-	debug(http(wrapper), '[~w] ~w ~w ...', [Self, Method, Location]),
-	call_handler(Goal, Request1, Request, Error, CgiHeader0, MemFile),
-	debug(http(wrapper), '[~w] ~w ~w --> ~p', [Self, Method, Location, Error]),
-	(   var(Error)
-	->  size_memory_file(MemFile, Length),
-	    open_memory_file(MemFile, read, TmpIn),
-	    http_read_header(TmpIn, CgiHeader1),
-	    append(CgiHeader0, CgiHeader1, CgiHeader),
-	    join_cgi_header(Request, CgiHeader, Header0),
-	    http_update_encoding(Header0, Encoding, Header),
-	    set_stream(Out, encoding(Encoding)),
-	    (	Encoding == utf8
-	    ->  utf8_position_memory_file(MemFile, BytePos, ByteSize),
-		Size is ByteSize - BytePos
-	    ;   seek(TmpIn, 0, current, Pos),
-		Size is Length - Pos
-	    ),
-	    call_cleanup(reply(TmpIn, Size, Out, Header),
-			 cleanup(TmpIn, Out, MemFile)),
-
-	    memberchk(connection(Close), Header)
-	;   free_memory_file(MemFile),
-	    map_exception(Error, Reply, HdrExtra),
-	    http_reply(Reply, Out, HdrExtra),
-	    flush_output(Out),
-	    (	memberchk(connection(Close), HdrExtra)
-	    ->	true
-	    ;   Close = close
-	    )
+	(   Request0 == end_of_file
+	->  Close = close,
+	    extend_request(Options, [], _) % return request
+	;   extend_request(Options, Request0, Request1),
+	    memberchk(method(Method), Request1),
+	    memberchk(path(Location), Request1),
+	    cgi_open(Out, CGI, cgi_hook, [request(Request1)]),
+	    cgi_property(CGI, id(Id)),
+	    debug(http(request), '[~D] ~w ~w ...', [Id, Method, Location]),
+	    broadcast(http(request_start(Id, Request0))),
+	    handler_with_output_to(Goal, Request1, CGI, Error),
+	    cgi_close(CGI, Error, Close)
 	).
 
 
-%%	call_handler(:Goal, +RequestIn, -RequestOut, -Error, -CgiHeader, -MemFile)
+%%	http_wrap_spawned(:Goal, -Request, -Close) is det.
+%
+%	Internal  use  only.  Helper  for    wrapping  the  handler  for
+%	http_spawn/2.
 %	
-%	Process RequestIn using Goal, producing CGI data in MemFile
+%	@see http_spawned/1, http_spawn/2.
 
-call_handler(Goal, Request0, Request, Error, CgiHeader, MemFile) :-
-	new_memory_file(MemFile),
-	open_memory_file(MemFile, write, TmpOut),
-	current_output(OldOut),
-	set_output(TmpOut),
-	b_setval(http_cgi_header, []),
-	(   catch(call_handler(Goal, Request0, Request), Error, true)
+http_wrap_spawned(Goal, Request, Close) :-
+	handler_with_output_to(Goal, -, current_output, Error),
+	(   retract(spawned(_))
+	->  Close = spawned,
+	    Request = []
+	;   current_output(CGI),
+	    cgi_property(CGI, request(Request)),
+	    cgi_close(CGI, Error, Close)
+	).
+
+
+:- thread_local
+	spawned/1.
+
+%%	http_spawned(+ThreadId)
+%
+%	Internal use only. Indicate that the request is handed to thread
+%	ThreadId.
+
+http_spawned(ThreadId) :-
+	assert(spawned(ThreadId)).
+
+
+%%	cgi_close(+CGI, +Error, -Close)
+
+cgi_close(_, _, Close) :-
+	retract(spawned(_)), !,
+	Close = spawned.
+cgi_close(CGI, ok, Close) :- !,
+	cgi_property(CGI, connection(Close)),
+	close(CGI).
+cgi_close(CGI, Error, Close) :-
+	cgi_property(CGI, client(Out)),
+	cgi_discard(CGI),
+	close(CGI),
+	map_exception(Error, Reply, HdrExtra),
+	http_reply(Reply, Out, HdrExtra),
+	flush_output(Out),
+	(   memberchk(connection(Close), HdrExtra)
 	->  true
-	;   Error = failed
-	),
-	b_getval(http_cgi_header, CgiHeader0),
-	reverse(CgiHeader0, CgiHeader),
-	nb_delete(http_request),
-	nb_delete(http_cgi_header),
-	set_output(OldOut),
-	close(TmpOut).
+	;   Close = close
+	).
 
-call_handler(Goal, Request0, Request) :-
+
+%%	handler_with_output_to(:Goal, +Request, +Output, -Status) is det.
+%
+%	Run Goal with output redirected to   Output.  Unifies Status with
+%	=ok=, the error from catch/3 or a term goal_failed(Goal).
+%	
+%	@param Request	The HTTP request read or '-' for a continuation
+%			using http_spawn/2.
+
+handler_with_output_to(Goal, Request, current_output, Status) :- !,
+	thread_cputime(CPU0),
+	(   catch(call_handler(Goal, Request), Status, true)
+	->  (   var(Status)
+	    ->	Status = ok
+	    ;	true
+	    )
+	;   Status = goal_failed(Goal)
+	),
+	(   spawned(_)
+	->  true
+	;   thread_cputime(CPU1),
+	    CPU is CPU1 - CPU0,
+	    current_output(CGI),
+	    cgi_property(CGI, id(Id)),
+	    (   debugging(http(request))
+	    ->  debug_request(Status, Id, CPU)
+	    ;   true
+	    ),
+	    broadcast(http(request_finished(Id, CPU, Status)))
+	).
+handler_with_output_to(Goal, Request, Output, Error) :-
+	current_output(OldOut),
+	set_output(Output),
+	handler_with_output_to(Goal, Request, current_output, Error),
+	set_output(OldOut).
+
+call_handler(Goal, -) :- !,
+	call(Goal).
+call_handler(Goal, Request0) :-
 	expand_request(Request0, Request),
-	b_setval(http_request, Request),
+	current_output(CGI),
+	cgi_set(CGI, request(Request)),
 	call(Goal, Request).
 
-reply(TmpIn, Size, Out, Header) :-
-	http_reply(stream(TmpIn, Size), Out, Header),
-	flush_output(Out).
+%%	thread_cputime(-CPU) is det.
+%
+%	CPU is the CPU time used by the calling thread.
+%	
+%	@tbd	This does not work on MacOS X!
 
-cleanup(TmpIn, Out, MemFile) :-
-	set_stream(Out, encoding(octet)),
-	close(TmpIn),
-	free_memory_file(MemFile).
+:- if(current_prolog_flag(threads, true)).
+thread_cputime(CPU) :- 
+	thread_self(Me),
+	thread_statistics(Me, cputime, CPU).
+:- else.
+thread_cputime(CPU) :-
+	statistics(cputime, CPU).
+:- endif.
+
+
+%%	cgi_hook(+Event, +CGI) is det.
+%
+%	Hook called from the CGI   processing stream. See http_stream.pl
+%	for details.
+
+cgi_hook(What, _CGI) :-
+	debug(http(hook), 'Running hook: ~q', [What]),
+	fail.
+cgi_hook(header, CGI) :-
+	cgi_property(CGI, header_codes(HeadText)),
+	cgi_property(CGI, header(Header0)), % see http_send_header/1
+	http_parse_header(HeadText, CgiHeader0),
+	append(Header0, CgiHeader0, CgiHeader),
+	cgi_property(CGI, request(Request)),
+	http_update_connection(CgiHeader, Request, Connection, Header1),
+	http_update_transfer(Request, Header1, Transfer, Header2),
+	http_update_encoding(Header2, Encoding, Header),
+	set_stream(CGI, encoding(Encoding)),
+	cgi_set(CGI, connection(Connection)),
+	cgi_set(CGI, header(Header)),
+	debug(http(transfer_encoding), 'Transfer-encoding: ~w', [Transfer]),
+	cgi_set(CGI, transfer_encoding(Transfer)). % must be LAST
+cgi_hook(send_header, CGI) :-
+	cgi_property(CGI, header(Header)),
+	cgi_property(CGI, client(Out)),
+	(   cgi_property(CGI, transfer_encoding(chunked))
+	->  http_reply_header(Out, chunked_data, Header)
+	;   cgi_property(CGI, content_length(Len))
+	->  http_reply_header(Out, cgi_data(Len), Header)
+	).
+cgi_hook(close, _).
 
 
 %%	http_send_header(+Header)
@@ -144,10 +240,14 @@ cleanup(TmpIn, Out, MemFile) :-
 %	This API provides an alternative for writing the header field as
 %	a CGI header. Header has the  format Name(Value), as produced by
 %	http_read_header/2.
+%	
+%	@deprecated	Use CGI lines instead
 
 http_send_header(Header) :-
-	b_getval(http_cgi_header, CgiHeader0),
-	b_setval(http_cgi_header, [Header|CgiHeader0]).
+	current_output(CGI),
+	cgi_property(CGI, header(Header0)),
+	cgi_set(CGI, header([Header|Header0])).
+
 
 %%	expand_request(+Request0, -Request)
 %	
@@ -195,8 +295,14 @@ map_exception(error(permission_error(http_location, access, Location), _),
 	      forbidden(Location),
 	      [connection(close)]) :- !.
 map_exception(E,
+	      resource_error(E),
+	      [connection(close)]) :-
+	resource_error(E), !.
+map_exception(E,
 	      server_error(E),
 	      [connection(close)]).
+
+resource_error(error(resource_error(_), _)).
 
 %%	keep_alive(+Reply) is semidet.	
 %
@@ -209,39 +315,6 @@ keep_alive(stream(_In, _Len)).
 keep_alive(cgi_stream(_In, _Len)).
 
 
-%%	join_cgi_header(+Request, +CGIHeader, -Header)
-%
-%	Merge keep-alive information from  Request   and  CGIHeader into
-%	Header.
-
-join_cgi_header(Request, CgiHeader, [connection(Connect)|Rest]) :-
-	select(connection(CgiConn), CgiHeader, Rest), !,
-	connection(Request, ReqConnection),
-	join_connection(ReqConnection, CgiConn, Connect).
-join_cgi_header(Request, CgiHeader, [connection(Connect)|CgiHeader]) :-
-	connection(Request, Connect).
-
-join_connection(Keep1, Keep2, Connection) :-
-	(   downcase_atom(Keep1, 'keep-alive'),
-	    downcase_atom(Keep2, 'keep-alive')
-	->  Connection = 'Keep-Alive'
-	;   Connection = close
-	).
-
-
-%%	connection(+Header, -Connection)
-%	
-%	Extract the desired connection from a header.
-
-connection(Header, Close) :-
-	(   memberchk(connection(Connection), Header)
-	->  Close = Connection
-	;   memberchk(http_version(1-X), Header),
-	    X >= 1
-	->  Close = 'Keep-Alive'
-	;   Close = close
-	).
-
 %%	extend_request(+Options, +RequestIn, -Request)
 %	
 %	Merge options in the request.
@@ -249,12 +322,15 @@ connection(Header, Close) :-
 extend_request([], R, R).
 extend_request([request(R)|T], R0, R) :- !,
 	extend_request(T, R0, R).
-extend_request([peer(P)|T], R0, R) :- !,
-	extend_request(T, [peer(P)|R0], R).
-extend_request([protocol(P)|T], R0, R) :- !,
-	extend_request(T, [protocol(P)|R0], R).
-extend_request([_|T], R0, R) :- !,
+extend_request([H|T], R0, R) :-
+	request_option(H), !,
+	extend_request(T, [H|R0], R).
+extend_request([_|T], R0, R) :-
 	extend_request(T, R0, R).
+
+request_option(peer(_)).
+request_option(protocol(_)).
+request_option(pool(_,_,_,_)).
 
 
 %%	http_current_request(-Request)
@@ -262,7 +338,8 @@ extend_request([_|T], R0, R) :- !,
 %	Returns the HTTP request currently being processed.
 
 http_current_request(Request) :-
-	b_getval(http_request, Request).
+	current_output(CGI),
+	cgi_property(CGI, request(Request)).
 
 
 %%	http_relative_path(+AbsPath, -RelPath)
@@ -293,6 +370,31 @@ to_dot_dot([], Tail, Tail).
 to_dot_dot([_], Tail, Tail) :- !.
 to_dot_dot([_|T0], ['..'|T], Tail) :-
 	to_dot_dot(T0, T, Tail).
+
+
+		 /*******************************
+		 *	   DEBUG SUPPORT	*
+		 *******************************/
+
+%%	debug_request(+Status, +Id, +CPU0)
+%
+%	Emit debugging info after a request completed with Status.
+
+debug_request(ok, Id, CPU) :- !,
+	debug(http(request), '[~D] 200 OK (~3f seconds)', [Id, CPU]).
+debug_request(Status, Id, _) :-
+	map_exception(Status, Reply), !,
+	debug(http(request), '[~D] ~w', [Id, Reply]).
+debug_request(Except, Id, _) :- !,
+	Except = error(_,_), !,
+	message_to_string(Except, Message),
+	debug(http(request), '[~D] ERROR: ~w', [Id, Message]).
+debug_request(Status, Id, _) :-
+	debug(http(request), '[~D] ~w', [Id, Status]).
+
+map_exception(http_reply(Reply), Reply).
+map_exception(error(existence_error(http_location, Location), _Stack),
+	      error(404, Location)).
 
 
 		 /*******************************

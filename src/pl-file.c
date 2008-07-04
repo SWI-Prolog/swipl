@@ -5,7 +5,7 @@
     Author:        Jan Wielemaker
     E-mail:        wielemak@science.uva.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (C): 1985-2007, University of Amsterdam
+    Copyright (C): 1985-2008, University of Amsterdam
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
@@ -38,6 +38,7 @@ handling times must be cleaned, but that not only holds for this module.
 
 #include "pl-incl.h"
 #include "pl-ctype.h"
+#include "pl-utf8.h"
 #include <errno.h>
 
 #ifdef HAVE_SYS_SELECT_H
@@ -646,55 +647,74 @@ isConsoleStream(IOSTREAM *s)
 
 
 bool
-streamStatus(IOSTREAM *s)
-{ int rval = TRUE;
+reportStreamError(IOSTREAM *s)
+{ if ( GD->cleaning == CLN_NORMAL &&
+       !isConsoleStream(s) &&
+       (s->flags & (SIO_FERR|SIO_WARN)) )
+  { GET_LD
+    atom_t op;
+    term_t stream = PL_new_term_ref();
+    char *msg;
 
-  if ( GD->cleaning == CLN_NORMAL )
-  { if ( (s->flags & (SIO_FERR|SIO_WARN)) && !isConsoleStream(s) )
-    { GET_LD
-      atom_t op;
-      term_t stream = PL_new_term_ref();
-      char *msg;
-  
-      PL_unify_stream_or_alias(stream, s);
-  
-      if ( (s->flags & SIO_FERR) )
-      { if ( s->flags & SIO_INPUT )
-	{ if ( Sfpasteof(s) )
-	  { rval = PL_error(NULL, 0, NULL, ERR_PERMISSION,
-			    ATOM_input, ATOM_past_end_of_stream, stream);
-	    goto out;
-	  } else if ( (s->flags & SIO_TIMEOUT) )
-	  { rval = PL_error(NULL, 0, NULL, ERR_TIMEOUT,
-			    ATOM_read, stream);
-	    Sclearerr(s);
-	    goto out;
-	  } else
-	    op = ATOM_read;
-	} else
-	  op = ATOM_write;
-    
-	msg = s->message ? s->message : MSG_ERRNO;
+    PL_unify_stream_or_alias(stream, s);
 
-	rval = PL_error(NULL, 0, msg, ERR_STREAM_OP, op, stream);
-	
-	if ( (s->flags & SIO_CLEARERR) )
-	  Sseterr(s, SIO_FERR, NULL);
-      } else
-      { printMessage(ATOM_warning,
-		     PL_FUNCTOR_CHARS, "io_warning", 2,
-		     PL_TERM, stream,
-		     PL_CHARS, s->message);
-
-	Sseterr(s, SIO_WARN, NULL);
+    if ( (s->flags & SIO_FERR) )
+    { if ( s->exception )
+      { fid_t fid = PL_open_foreign_frame();
+	term_t ex = PL_new_term_ref();
+	PL_recorded(s->exception, ex);
+	PL_erase(s->exception);
+	s->exception = NULL;
+	PL_raise_exception(ex);
+	PL_close_foreign_frame(fid);
+	fail;
       }
+
+      if ( s->flags & SIO_INPUT )
+      { if ( Sfpasteof(s) )
+	{ return PL_error(NULL, 0, NULL, ERR_PERMISSION,
+			  ATOM_input, ATOM_past_end_of_stream, stream);
+	} else if ( (s->flags & SIO_TIMEOUT) )
+	{ PL_error(NULL, 0, NULL, ERR_TIMEOUT,
+		   ATOM_read, stream);
+	  Sclearerr(s);
+	  fail;
+	} else
+	  op = ATOM_read;
+      } else
+	op = ATOM_write;
+  
+      msg = s->message ? s->message : MSG_ERRNO;
+
+      PL_error(NULL, 0, msg, ERR_STREAM_OP, op, stream);
+      
+      if ( (s->flags & SIO_CLEARERR) )
+	Sseterr(s, SIO_FERR, NULL);
+
+      fail;
+    } else
+    { printMessage(ATOM_warning,
+		   PL_FUNCTOR_CHARS, "io_warning", 2,
+		   PL_TERM, stream,
+		   PL_CHARS, s->message);
+
+      Sseterr(s, SIO_WARN, NULL);
     }
   }
+  
+  succeed;
+}
 
-out:
+
+bool
+streamStatus(IOSTREAM *s)
+{ if ( (s->flags & (SIO_FERR|SIO_WARN)) )
+  { releaseStream(s);
+    return reportStreamError(s);
+  }
+
   releaseStream(s);
-
-  return rval;
+  succeed;
 }
 
 
@@ -739,9 +759,7 @@ dieIO()
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 closeStream() performs Prolog-level closing. Most important right now is
 to to avoid closing the user-streams. If a stream cannot be flushed (due
-to a write-error), an exception is  generated   and  the  stream is left
-open. This behaviour ensures proper error-handling. How to collect these
-resources??
+to a write-error), an exception is  generated.
 
 MT: We assume the stream is locked and will unlock it here.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
@@ -761,7 +779,8 @@ closeStream(IOSTREAM *s)
       Sclose(s);
       return FALSE;
     }
-    Sclose(s);				/* will unlock as well */
+    if ( Sclose(s) < 0 )		/* will unlock as well */
+      fail;
   }
 
   succeed;
@@ -800,32 +819,22 @@ closeFiles(int all)
 }
 
 
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-Get the open OS filedescriptors, so we can close them (see System())
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-int
-openFileDescriptors(unsigned char *buf, int size)
+void
+PL_cleanup_fork(void)
 { TableEnum e;
   Symbol symb;
-  int n = 0;
 
-  LOCK();
   e = newTableEnum(streamContext);
   while( (symb=advanceTableEnum(e)) )
   { IOSTREAM *s = symb->name;
     int fd;
 
-    if ( (fd=Sfileno(s)) >= 0 )
-    { if ( n > size )
-	break;
-      buf[n++] = fd;
-    }
+    if ( (fd=Sfileno(s)) >= 3 )
+      close(fd);
   }
   freeTableEnum(e);
-  UNLOCK();
 
-  return n;
+  stopItimer();
 }
 
 
@@ -1311,6 +1320,17 @@ pl_set_stream(term_t stream, term_t attr)
 	  goto error;
 	}
 	goto ok;
+      } else if ( aname == ATOM_buffer_size )
+      { int size;
+	
+	if ( !PL_get_integer_ex(a, &size) )
+	  goto error;
+	if ( size < 1 )
+	{ PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_not_less_than_one, a);
+	  goto error;
+	}
+	Ssetbuffer(s, NULL, size);
+	goto ok;
       } else if ( aname == ATOM_eof_action ) /* eof_action(Action) */
       { atom_t action;
 
@@ -1672,11 +1692,81 @@ pl_wait_for_input(term_t Streams, term_t Available,
 
 #endif /* HAVE_SELECT */
 
+
 		/********************************
 		*      PROLOG CONNECTION        *
 		*********************************/
 
 #define MAX_PENDING SIO_BUFSIZE		/* 4096 */
+
+static void
+re_buffer(IOSTREAM *s, const char *from, size_t len)
+{ if ( s->bufp < s->limitp )
+  { size_t size = s->limitp - s->bufp;
+
+    memmove(s->buffer, s->bufp, size);
+    s->bufp = s->buffer;
+    s->limitp = &s->bufp[size];
+  } else
+  { s->bufp = s->limitp = s->buffer;
+  }
+
+  memcpy(s->bufp, from, len);
+  s->bufp += len;
+}
+
+
+#ifndef HAVE_MBSNRTOWCS
+static size_t
+mbsnrtowcs(wchar_t *dest, const char **src,
+	   size_t nms, size_t len, mbstate_t *ps)
+{ wchar_t c;
+  const char *us = *src;
+  const char *es = us+nms;
+  size_t count = 0;
+
+  assert(dest == NULL);			/* incomplete implementation */
+
+  while(us<es)
+  { size_t skip = mbrtowc(&c, us, es-us, ps);
+
+    if ( skip == (size_t)-1 )		/* error */
+    { DEBUG(1, Sdprintf("mbsnrtowcs(): bad multibyte seq\n"));
+      return skip;
+    }
+    if ( skip == (size_t)-2 )		/* incomplete */
+    { *src = us;
+      return count;
+    }
+
+    count++;
+    us += skip;
+  }
+
+  *src = us;
+  return count;
+}
+#else
+#if defined(HAVE_DECL_MBSNRTOWCS) && !HAVE_DECL_MBSNRTOWCS
+size_t mbsnrtowcs(wchar_t *dest, const char **src,
+		  size_t nms, size_t len, mbstate_t *ps);
+#endif
+#endif /*HAVE_MBSNRTOWCS*/
+
+static int
+skip_cr(IOSTREAM *s)
+{ if ( s->flags&SIO_TEXT )
+  { switch(s->newline)
+    { case SIO_NL_DETECT:
+	s->newline = SIO_NL_DOS;
+        /*FALLTHROUGH*/
+      case SIO_NL_DOS:
+	return TRUE;
+    }
+  }
+  return FALSE;
+}
+
 
 static 
 PRED_IMPL("read_pending_input", 3, read_pending_input, 0)
@@ -1685,8 +1775,10 @@ PRED_IMPL("read_pending_input", 3, read_pending_input, 0)
 
   if ( getInputStream(A1, &s) )
   { char buf[MAX_PENDING];
-    ssize_t n, i;
-    Word gstore, lp, tp;
+    ssize_t n;
+    Word gstore, a, lp;
+    int64_t off0 = Stell64(s);
+    IOPOS pos0;
 
     if ( Sferror(s) )
       return streamStatus(s);
@@ -1694,33 +1786,215 @@ PRED_IMPL("read_pending_input", 3, read_pending_input, 0)
     n = Sread_pending(s, buf, sizeof(buf), 0);
     if ( n < 0 )			/* should not happen */
       return streamStatus(s);
-    if ( n == 0 )
+    if ( n == 0 )			/* end-of-file */
+    { S__fcheckpasteeof(s, -1);
       return PL_unify(A2, A3);
-
-    gstore = allocGlobal(n*3);		/* TBD: shift */
-    lp = valTermRef(A2);
-    deRef(lp);
-    tp = valTermRef(A3);
-    deRef(tp);
-
-    if ( !isVar(*lp) )
-      return PL_error(NULL, 0, NULL, ERR_MUST_BE_VAR, 2, A2);
-    *lp = consPtr(gstore, TAG_COMPOUND|STG_GLOBAL);
-    Trail(lp);
-
-    for(i=0; i<n; )
-    { *gstore++ = FUNCTOR_dot2;
-      *gstore++ = consInt(buf[i]&0xff);
-      if ( ++i < n )
-      { *gstore = consPtr(&gstore[1], TAG_COMPOUND|STG_GLOBAL);
-        gstore++;
-      }
+    }
+    if ( s->position )
+    { pos0 = *s->position;
+    } else
+    { memset(&pos0, 0, sizeof(pos0));	/* make compiler happy */
     }
 
-    setVar(*gstore);
-    unify_ptrs(gstore, tp PASS_LD);
+    switch(s->encoding)
+    { case ENC_OCTET:
+      case ENC_ISO_LATIN_1:
+      case ENC_ASCII:
+      { ssize_t i;
+	lp = gstore = allocGlobal(1+n*3); /* TBD: shift */
     
-    return streamStatus(s);
+	for(i=0; i<n; i++)
+	{ int c = buf[i]&0xff;
+    
+	  if ( c == '\r' && skip_cr(s) )
+	    continue;
+
+	  if ( s->position )
+	    S__fupdatefilepos_getc(s, c);
+    
+	  *gstore = consPtr(&gstore[1], TAG_COMPOUND|STG_GLOBAL);
+	  gstore++;
+	  *gstore++ = FUNCTOR_dot2;
+	  *gstore++ = consInt(c);
+	}
+	if ( s->position )
+	  s->position->byteno = pos0.byteno+n;
+
+	break;
+      }
+      case ENC_ANSI:
+      { size_t count, i;
+	mbstate_t s0;
+	const char *us = buf;
+	const char *es = buf+n;
+
+	if ( !s->mbstate )
+	{ if ( !(s->mbstate = malloc(sizeof(*s->mbstate))) )
+	  { PL_error(NULL, 0, NULL, ERR_NOMEM);
+	    goto failure;
+	  }
+	  memset(s->mbstate, 0, sizeof(*s->mbstate));
+	}
+	s0 = *s->mbstate;
+	count = mbsnrtowcs(NULL, &us, n, 0, &s0);
+	if ( count == (size_t)-1 )
+	{ Sseterr(s, SIO_WARN, "Illegal multibyte Sequence");
+	  goto failure;
+	}
+	
+	DEBUG(2, Sdprintf("Got %ld codes from %d bytes; incomplete: %ld\n",
+			  count, n, es-us));
+
+	lp = gstore = allocGlobal(1+count*3);
+    
+	for(us=buf,i=0; i<count; i++)
+	{ wchar_t c;
+
+	  us += mbrtowc(&c, us, es-us, s->mbstate);
+	  if ( c == '\r' && skip_cr(s) )
+	    continue;
+    	  if ( s->position )
+	    S__fupdatefilepos_getc(s, c);
+    
+	  *gstore = consPtr(&gstore[1], TAG_COMPOUND|STG_GLOBAL);
+	  gstore++;
+	  *gstore++ = FUNCTOR_dot2;
+	  *gstore++ = consInt(c);
+	}
+	if ( s->position )
+	  s->position->byteno = pos0.byteno+us-buf;
+
+	re_buffer(s, us, es-us);
+        break;
+      } 
+      case ENC_UTF8:
+      { const char *us = buf;
+	const char *es = buf+n;
+	size_t count = 0, i;
+
+	while(us<es)
+	{ const char *ec = us + UTF8_FBN(us[0]) + 1;
+	  
+	  if ( ec <= es )
+	  { count++;
+	    us=ec;
+	  } else
+	    break;
+	}
+
+	DEBUG(2, Sdprintf("Got %ld codes from %d bytes; incomplete: %ld\n",
+			  count, n, es-us));
+	
+	lp = gstore = allocGlobal(1+count*3);
+    
+	for(us=buf,i=0; i<count; i++)
+	{ int c;
+
+	  us = utf8_get_char(us, &c);
+	  if ( c == '\r' && skip_cr(s) )
+	    continue;
+    	  if ( s->position )
+	    S__fupdatefilepos_getc(s, c);
+    
+	  *gstore = consPtr(&gstore[1], TAG_COMPOUND|STG_GLOBAL);
+	  gstore++;
+	  *gstore++ = FUNCTOR_dot2;
+	  *gstore++ = consInt(c);
+	}
+	if ( s->position )
+	  s->position->byteno = pos0.byteno+us-buf;
+
+	re_buffer(s, us, es-us);
+        break;
+      }
+      case ENC_UNICODE_BE:
+      case ENC_UNICODE_LE:
+      { size_t count = (size_t)n/2;
+	const char *us = buf;
+	size_t done, i;
+
+	lp = gstore = allocGlobal(1+count*3);
+    
+	for(i=0; i<count; us+=2, i++)
+	{ int c;
+
+	  if ( s->encoding == ENC_UNICODE_BE )
+	    c = ((us[0]&0xff)<<8)+(us[1]&0xff);
+	  else
+	    c = ((us[1]&0xff)<<8)+(us[0]&0xff);
+	  if ( c == '\r' && skip_cr(s) )
+	    continue;
+    
+	  if ( s->position )
+	    S__fupdatefilepos_getc(s, c);
+    
+	  *gstore = consPtr(&gstore[1], TAG_COMPOUND|STG_GLOBAL);
+	  gstore++;
+	  *gstore++ = FUNCTOR_dot2;
+	  *gstore++ = consInt(c);
+	}	
+
+	done = count*2;
+	if ( s->position )
+	  s->position->byteno = pos0.byteno+done;
+	re_buffer(s, buf+done, n-done);
+        break;
+      }
+      case ENC_WCHAR:
+      { const pl_wchar_t *ws = (const pl_wchar_t*)buf;
+	size_t count = (size_t)n/sizeof(pl_wchar_t);
+	size_t done, i;
+
+	lp = gstore = allocGlobal(1+count*3);
+    
+	for(i=0; i<count; i++)
+	{ int c = ws[i];
+    
+	  if ( c == '\r' && skip_cr(s) )
+	    continue;
+	  if ( s->position )
+	    S__fupdatefilepos_getc(s, c);
+    
+	  *gstore = consPtr(&gstore[1], TAG_COMPOUND|STG_GLOBAL);
+	  gstore++;
+	  *gstore++ = FUNCTOR_dot2;
+	  *gstore++ = consInt(c);
+	}
+
+	done = count*sizeof(pl_wchar_t);
+	if ( s->position )
+	  s->position->byteno = pos0.byteno+done;
+	re_buffer(s, buf+done, n-done);
+        break;
+      }
+      case ENC_UNKNOWN:
+      default:
+	assert(0);
+        fail;
+    }
+
+
+    setVar(*gstore);
+    gTop = gstore+1;
+
+    a = valTermRef(A2);
+    deRef(a);
+    if ( !unify_ptrs(a, lp PASS_LD) )
+      goto failure;
+    a = valTermRef(A3);
+    deRef(a);
+    if ( !unify_ptrs(a, gstore PASS_LD) )
+      goto failure;
+    
+    releaseStream(s);
+    succeed;
+
+  failure:
+    Sseek64(s, off0, SIO_SEEK_SET);	/* TBD: error? */
+    if ( s->position )
+      *s->position = pos0;
+    releaseStream(s);
+    fail;
   }
 
   fail;
@@ -3022,6 +3296,24 @@ stream_buffer_prop(IOSTREAM *s, term_t prop ARG_LD)
 }
 
 
+static int
+stream_buffer_size_prop(IOSTREAM *s, term_t prop ARG_LD)
+{ if ( (s->flags & SIO_NBUF) )
+    fail;
+    
+  return PL_unify_integer(prop, s->bufsize);
+}
+
+
+static int
+stream_timeout_prop(IOSTREAM *s, term_t prop ARG_LD)
+{ if ( s->timeout == -1 )
+    return PL_unify_atom(prop, ATOM_infinite);
+  
+  return PL_unify_float(prop, (double)s->timeout/1000.0);
+}
+
+
 typedef struct
 { functor_t functor;			/* functor of property */
   int (*function)();			/* function to generate */
@@ -3041,12 +3333,14 @@ static const sprop sprop_list [] =
   { FUNCTOR_type1,    	    stream_type_prop },
   { FUNCTOR_file_no1,	    stream_file_no_prop },
   { FUNCTOR_buffer1,	    stream_buffer_prop },
+  { FUNCTOR_buffer_size1,   stream_buffer_size_prop },
   { FUNCTOR_close_on_abort1,stream_close_on_abort_prop },
   { FUNCTOR_tty1,	    stream_tty_prop },
   { FUNCTOR_encoding1,	    stream_encoding_prop },
   { FUNCTOR_bom1,	    stream_bom_prop },
   { FUNCTOR_newline1,	    stream_newline_prop },
   { FUNCTOR_representation_errors1, stream_reperror_prop },
+  { FUNCTOR_timeout1,       stream_timeout_prop },
   { 0,			    NULL }
 };
 
