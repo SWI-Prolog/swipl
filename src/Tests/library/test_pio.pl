@@ -35,7 +35,9 @@
 
 test_pio :-
 	run_tests([ phrase_from_file,
-		    read_pending_input
+		    read_pending_input,
+			 put_partial_codes,
+			 phrase_to_file
 		  ]).
 
 
@@ -172,3 +174,83 @@ test(wchar_t) :-
 	test_pe(1000, 25, wchar_t).
 
 :- end_tests(read_pending_input).
+
+:- begin_tests(put_partial_codes, []).
+
+test(skip, [(N,Xs)==(0,[a]),setup(open_null_stream(Stream)), cleanup(close(Stream))]) :-
+	put_partial_codes(Stream, N, [a],Xs).
+test(skip, [(N,Xs)==(1,[]),setup(open_null_stream(Stream)), cleanup(close(Stream))]) :-
+	put_partial_codes(Stream, N, [0'a],Xs).
+test(skip, [(N,Xs)==(1,Xs0),setup(open_null_stream(Stream)), cleanup(close(Stream))]) :-
+	put_partial_codes(Stream, N, [0'a|Xs0],Xs).
+test(skip, [(N,Xs)==(1,[X]),setup(open_null_stream(Stream)), cleanup(close(Stream))]) :-
+	put_partial_codes(Stream, N, [0'a,X],Xs).
+
+test(skip, [Xs == Xs0,setup((Xs0=[0'a|Xs0], open_null_stream(Stream))),
+			  		blocked(no_floyd_yet),
+			  									cleanup(close(Stream))]) :-
+	put_partial_codes(Stream, N, Xs0,Xs),
+	N > 0.
+
+:- end_tests(put_partial_codes).
+
+:- begin_tests(phrase_to_file,[]).
+ed(File) :-
+	( exists_file(File) -> delete_file(File) ; true ).
+
+seq([]) --> [].
+seq([E|Es]) -->
+	[E],
+	seq(Es).
+
+uglynt(x,[]).  % not a real non-terminal
+
+
+test(uglynt, [error(type_error(list,_)), setup(tmp_file(plunit_pio,Fichier)), cleanup(ed(Fichier))]) :-
+	phrase_to_file(("abc",uglynt),Fichier).
+
+%UWNtest(lists,[all(Xs == []), setup(tmp_file(plunit_pio,Fichier)),cleanup(ed(Fichier))]) :-
+%UWN	between(0,3,L),
+%UWN	length(Xs,L),
+%UWN	maplist(between(0'a,0'c),Xs),
+%UWN	\+ (
+%UWN		  phrase_to_file(Xs, Fichier),
+%UWN		  phrase_from_file(seq(Ys), Fichier),
+%UWN		  Xs == Ys
+%UWN		),
+%UWN	!. % To keep error messages short
+%UWNtest(overwrite, [setup(tmp_file(plunit_pio,Fichier)),cleanup(ed(Fichier))]) :-
+%UWN	Xs = "Das ist ein Test",
+%UWN	phrase_to_file((seq("Das")," ",seq("ist ein Test"),(seq("voller Unsinn"),{1=2};[])), Fichier),
+%UWN	phrase_from_file(seq(Xs),Fichier).
+%UWN
+%UWNtest(no_commit, [error(existence_error(source_sink,Fichier)),setup(tmp_file(plunit_pio,Fichier)),cleanup(ed(Fichier))]) :-
+%UWN	phrase_to_file(([];{1=2}), Fichier),
+%UWN	open(Fichier,read,_).
+%UWN
+%UWNtest(lists,[all(Xs == []), setup(tmp_file(plunit_pio,Fichier)),cleanup(ed(Fichier))]) :-
+%UWN	between(0,3,L),
+%UWN	length(Xs,L),
+%UWN	maplist(between(0'a,0'c),Xs),
+%UWN	\+ (
+%UWN		  once(phrase_to_file((seq(Xs)|{1=2}), Fichier)),
+%UWN		  phrase_from_file(seq(Ys), Fichier),
+%UWN		  Xs == Ys
+%UWN		),
+%UWN	!.
+%UWN
+%UWNtest(partial,[sto(rational_trees),setup(tmp_file(plunit_pio,Fichier)),cleanup(ed(Fichier))]) :-
+%UWN	phrase_to_file(([A],{A=0'a}), Fichier),
+%UWN	phrase_from_file("a",Fichier).
+%UWNtest(partial,[setup(tmp_file(plunit_pio,Fichier)),cleanup(ed(Fichier))]) :-
+%UWN	phrase_to_file(([A],seq([]),{A=0'a}), Fichier),
+%UWN	phrase_from_file("a",Fichier).
+%UWNtest(partial,[setup(tmp_file(plunit_pio,Fichier)),cleanup(ed(Fichier))]) :-
+%UWN	phrase_to_file(([A,B],seq([]),{A=0'a,B=0'b}), Fichier),
+%UWN	phrase_from_file("ab",Fichier).
+%UWN
+%UWNtest(incomplete, [error(representation_error(_)),setup(tmp_file(plunit_pio,Fichier))]) :-
+%UWN	phrase_to_file([_],Fichier).
+%UWN
+:- end_tests(phrase_to_file).
+
