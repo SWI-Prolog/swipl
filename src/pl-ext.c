@@ -89,6 +89,7 @@ static const PL_extension foreigns[] = {
   FRG("same_file",		2, pl_same_file,		0),
   FRG("time_file",		2, pl_time_file,		0),
   FRG("told",			0, pl_told,			0),
+  FRG("$truncate_file",          2, pl_truncate_file,            0),
   FRG("see",			1, pl_see,			0),
   FRG("tell",			1, pl_tell,			0),
   FRG("append",			1, pl_append,			0),

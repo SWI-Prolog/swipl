@@ -323,6 +323,7 @@ COMMON(word) 		pl_delete_directory(term_t name);
 COMMON(word) 		pl_make_directory(term_t name);
 COMMON(word) 		pl_same_file(term_t file1, term_t file2);
 COMMON(word) 		pl_rename_file(term_t old, term_t new);
+COMMON(word) 		pl_truncate_file(term_t f, term_t length);
 COMMON(word) 		pl_fileerrors(term_t old, term_t new);
 COMMON(word) 		pl_absolute_file_name(term_t name, term_t expanded);
 COMMON(word) 		pl_is_absolute_file_name(term_t name);

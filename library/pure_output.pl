@@ -57,13 +57,10 @@ $(X) :-
 	  fail.
 
 output_stream_to_output(Pos0, Codes0, Stream, Finished) :-
-	$must_be(list_or_partial_list, xy),
 	set_stream_position(Stream, Pos0),
-	$write_partial_codes(Codes0, Codes1, Stream),
-%	put_partial_codes(Stream, _, Codes0, Codes1),
+	'$put_partial_codes'(Stream, _, Codes0, Codes1),
 	stream_property(Stream, position(Pos1)),
-	% Idealiter truncate file to current position now
-	$must_be(list_or_partial_list, Codes1),
+	must_be(list_or_partial_list, Codes1),
 	(	var(Codes1)
 	-> freeze(Codes1, output_stream_to_output(Pos1, Codes1, Stream, Finished))
 	;	Codes1 = []
@@ -76,23 +73,17 @@ output_stream_to_output(Pos0, Codes0, Stream, Finished) :-
 	).
 
 close_lazystream(Solution, Finished, TmpFile, AbsoluteFile, Stream) :-
+	stream_property(Stream, position('$stream_position'(_, _, _, Bytes))),
+	close(Stream),
 	(	var(Solution)
-	->	close(Stream),
-		delete_file(TmpFile)
+	->	delete_file(TmpFile)
 	;	var(Finished)
-	->	close(Stream),
-		delete_file(TmpFile),
+	->	delete_file(TmpFile),
 		representation_error(unfinished_output)
-	;	stream_property(Stream, position(Pos)),
-		% truncate_to_position(Stream,Pos),
-		close(Stream),
-		% rename_file(TmpFile, AbsoluteFile),
-		Pos = '$stream_position'(_, _, _, Bytes),
-		format(atom(Codes),'head -c ~d ~a > ~a',[Bytes, TmpFile, AbsoluteFile]),
-		(	shell(Codes)
-		->	delete_file(TmpFile)
-		;	delete_file(TmpFile),
-			permission_error(execute, command, Codes)
+	;	'$truncate_file'(TmpFile,Bytes),
+		(	TmpFile \== AbsoluteFile
+		->	rename_file(TmpFile, AbsoluteFile)
+		;	true
 		)
 	).
 

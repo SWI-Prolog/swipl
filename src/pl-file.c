@@ -1767,44 +1767,38 @@ skip_cr(IOSTREAM *s)
   return FALSE;
 }
 
-static intptr_t
-put_partial_codes(IOSTREAM *s, Word l, Word *tailp ARG_LD)
-{
+/* '$put_partial_codes'(+Stream, -length, +Xs0, -Xs) */
+
+static
+PRED_IMPL("$put_partial_codes",4, put_partial_codes4, 0)
+{ PRED_LD
+  IOSTREAM *s;
+  Word l = valTermRef(A3);
   intptr_t length = 0;
+
+  if ( !getOutputStream(A1, &s) )
+    fail;
 
   for (;;)
   { Word head;
     intptr_t i;
     deRef(l);
-    if( !isList(*l)) break;
+    if ( !isList(*l) ) break;
     head = HeadList(l);
     deRef(head);
-    if (!isTaggedInt(*head)) break;
+    if ( !isTaggedInt(*head) ) break;
     i = valInt(*head);
-    if (i < 0) break;
+    if ( i < 0 ) break;
     length++;
     l=TailList(l);
-    Sputcode(i, s);
+    if ( Sputcode(i, s) < 0 )
+      return PL_release_stream(s);
   }
-  *tailp = l;
 
-  return length;
-}
-
-/* put_partial_codes(+Stream, -length, +Xs0, -Xs) */
-
-static
-PRED_IMPL("put_partial_codes",4, put_partial_codes4, 0)
-{ PRED_LD
-  IOSTREAM *s;
-  Word l = valTermRef(A3), tail;
-
-  if ( !getOutputStream(A1, &s) )
+  PL_release_stream(s);
+  if ( !PL_unify_integer(A2, length) )
     fail;
-
-  if (!PL_unify_integer(A2, put_partial_codes(s, l, &tail PASS_LD)))
-    fail;
-  return unify_ptrs(valTermRef(A4), tail PASS_LD);
+  return unify_ptrs(valTermRef(A4), l PASS_LD);
 }
 
 
@@ -4401,6 +4395,23 @@ pl_rename_file(term_t old, term_t new)
   fail;
 }
 
+word
+pl_truncate_file(term_t tfilename, term_t tlength)
+{ GET_LD
+  char *f;
+  intptr_t length;
+  if ( !PL_get_integer_ex(tlength, &length) )
+    fail;
+  if (length < 0)
+    return PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_not_less_than_zero, tlength);
+  if ( !PL_get_file_name(tfilename, &f, 0) )
+    fail;
+  if ( truncate(f, length) != 0 )
+    return PL_error("$truncate_file", 2, OsError(), ERR_FILE_OPERATION,
+		      ATOM_rename, ATOM_file, tfilename);
+  succeed;
+}
+
 
 word
 pl_fileerrors(term_t old, term_t new)
@@ -4691,7 +4702,7 @@ pl_copy_stream_data2(term_t in, term_t out)
 BeginPredDefs(file)
   PRED_DEF("set_prolog_IO", 3, set_prolog_IO, 0)
   PRED_DEF("read_pending_input", 3, read_pending_input, 0)
-  PRED_DEF("put_partial_codes", 4, put_partial_codes4, 0)
+  PRED_DEF("$put_partial_codes", 4, put_partial_codes4, 0)
   PRED_DEF("get_code", 2, get_code2, PL_FA_ISO)
   PRED_DEF("get_code", 1, get_code1, PL_FA_ISO)
   PRED_DEF("get_char", 2, get_char2, PL_FA_ISO)
