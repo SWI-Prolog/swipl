@@ -29,6 +29,7 @@
 
 :- module(pio, []).
 :- reexport(pure_input).
+:- reexport(pure_output).
 
 /** <module> Pure I/O
 
