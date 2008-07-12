@@ -4395,20 +4395,25 @@ pl_rename_file(term_t old, term_t new)
   fail;
 }
 
-word
-pl_truncate_file(term_t tfilename, term_t tlength)
-{ GET_LD
-  char *f;
-  intptr_t length;
-  if ( !PL_get_integer_ex(tlength, &length) )
+
+/** truncate_file(+FileName:file, +Length:nonneg) is det.
+*/
+
+static
+PRED_IMPL("$truncate_file", 2, truncate_file, 0)
+{ char *f;
+  int64_t length;
+
+  if ( !PL_get_int64_ex(A2, &length) )
     fail;
   if (length < 0)
-    return PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_not_less_than_zero, tlength);
-  if ( !PL_get_file_name(tfilename, &f, 0) )
+    return PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_not_less_than_zero, A2);
+  if ( !PL_get_file_name(A1, &f, 0) )
     fail;
   if ( truncate(f, length) != 0 )
-    return PL_error("$truncate_file", 2, OsError(), ERR_FILE_OPERATION,
-		      ATOM_rename, ATOM_file, tfilename);
+    return PL_error(NULL, 0, OsError(), ERR_FILE_OPERATION,
+		    ATOM_truncate, ATOM_file, A1);
+
   succeed;
 }
 
@@ -4735,4 +4740,5 @@ BeginPredDefs(file)
   PRED_DEF("line_count", 2, line_count, 0)
   PRED_DEF("line_position", 2, line_position, 0)
   PRED_DEF("with_output_to", 2, with_output_to, PL_FA_TRANSPARENT)
+  PRED_DEF("$truncate_file", 2, truncate_file, 0)
 EndPredDefs
