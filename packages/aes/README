@@ -1,0 +1,14 @@
+This directory contains code to  create   AES  encrypted  streams and is
+contributed to SWI-Prolog by SecuritEase under  the LGPL. It is included
+in the source, but it is currently not a proper package.
+
+TODO:
+
+	* Add eas.pl that can be installed into the library
+	* Create SWI-Prolog package autoconfig/makefile framework
+	* Convert documentation into LaTeX (or PlDoc).
+	* Add simple test framework
+
+If anyone wishes to pick this up, please contact me.
+
+	--- Jan Wielemaker

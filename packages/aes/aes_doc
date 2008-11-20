@@ -1,0 +1,151 @@
+================================================================================
+AES Module for SWI
+================================================================================
+
+Predicate list:
+---------------
+aes_encrypt_key/2
+aes_encrypt/3
+aes_decrypt_key/2
+aes_decrypt/3
+aes_open/4
+
+hacking:
+--------
+aes_debug/1
+aes_gc_flag/1
+
+
+================================================================================
+CAVEAT
+================================================================================
+I am not trained in security. I make no guarantees or warranties about the 
+security provided by this implementation whatsoever. I cannot guarantee it is
+sound or correct.
+
+
+
+================================================================================
+Description
+================================================================================
+
+The code implements AES encryption with either 128, 192 or 256 bit keys, 
+including a chunking mechanism to implement a simple stream encryption.
+
+
+================================================================================
+Encrypting and decrypting manually:
+================================================================================
+aes_encrypt_key(+Bytes, -Context) 
+turns a list of either 16, 24, or 32 bytes into an encryption context.
+
+aes_encrypt(+Context, +PlainBytes, -CipherBytes) 
+Encrypts exactly 16 bytes of plaintext using the given context. If you have less
+ than 16 bytes to encrypt, you must pad them using some kind of padding schema.
+
+aes_decrypt_key(+Bytes, -Context) 
+turns a list of either 16, 24, or 32 bytes into an decryption context.
+
+aes_decrypt(+Context, +CipherBytes, -OutBytes) 
+Decrypts exactly 16 bytes of the ciphertext using the given context.
+
+
+================================================================================
+Doing it automatically on a stream:
+================================================================================
+aes_open(+Stream, +Context, -AesStream, +Options)
+Will create a new stream, AesStream. If the Context is an encryption key, then 
+the stream will be write-only, and if it is a decryption key, then it will be
+read-only. Options is a list of options; currently only one is supported:
+close_parent/1 which has argument either true or false. If true then closing
+AesStream will also close Stream.
+
+The stream implements its own internal padding scheme and buffers bytes until
+either a flush or is received or 15 bytes have are pending. In either case the
+following algorithm is applied:
+* Are there 15 bytes in the buffer? 
+** If so, append a 0, encrypt the 16 resulting bytes and transmit the packet
+** If not, suppose there are N bytes. Append a 1, then 15-N, then sufficiently
+   many zeroes, and finally the actual bytes to be written. Encrypt these 16
+   bytes and transmit.
+
+The reverse is applied on decrypt; on receipt of a 16 byte block, we decrypt, 
+then inspect the first byte. If it's a 0 then there is no padding, and we can
+treat the remaining 15 bytes as data. Otherwise, inspect the next byte, which
+is the number of bytes to discard. Included is AesInputStream.java and 
+AesOutputStream.java; sample implementations of Java applications that can 
+communicate with an AesStream from Prolog.
+
+Closing the AesStream initiates a flush of any pending bytes. 
+
+If we cannot decrypt, currently only a warning is printed. I'm unsure of how to
+raise an exception from inside aesread.
+
+Once the context is garbage collected, the associated data should be cleaned up
+automatically. 
+
+The keys are not deleted securely. 
+
+
+================================================================================
+Hacking
+================================================================================
+aes_debug(+DebugLevel)
+Is used to set the debug level to an integer value. 0 disables debugging.
+
+aes_gc_flag(+GCLevel)
+GCLevel = 1 enables automatic cleanup of the contexts. GCLevel = 0 disables it.
+Note that if disabled there is no way to free resources allocated. This is 
+purely intended for use in panic situations involving unexpected segmentation
+faults!!
+
+
+================================================================================
+Files
+================================================================================
+aes.c  
+aes.h  
+aescrypt.c  
+aeskey.c  
+aesopt.h  
+aestab.c  
+aestab.h
+Makefile (the defines at the top must be edited or it won't compile)
+
+================================================================================
+Demo programs
+================================================================================
+AesInputStream.java
+AesOutputStream.java
+aesdemo.pl
+
+* running demo/0 we see the following in Prolog:
+Ciphertext: (random ascii characters)
+
+
+Recovered plaintext: This is a message which is to be encrypted
+
+* Running AesInputStream then transmit_to_java(localhost:AppropriatePort), we see
+the following in Java:
+Waiting for client...
+Hello from Prolog!
+
+* Running receive_from_java(Port) and then AesOutputStream localhost Port, we 
+see the following in Prolog:
+Message received from ip(127, 0, 0, 1): Hello from Java!
+
+
+
+================================================================================
+Outstanding bugs
+================================================================================
+* if the key is wrong on decode in Prolog, we should raise an exception, but I
+  don't know how to do it from aesread
+* If the call to aesread passes in a buffer with less than 15 bytes available,
+  we will likely overrun the end of the buffer.
+Both of these are marked TODO in aes.c
+
+* In aesdemo.pl receive_from_java, if you switch the order of close(AesRead) and
+close(Write), then you sometimes get an exception 'socket operation on 
+non-socket', which seems to be related to an existing problem in the Winsock 
+code (Jan?)
