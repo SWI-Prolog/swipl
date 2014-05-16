@@ -295,7 +295,7 @@ firstClause(Word argv, LocalFrame fr, Definition def, ClauseChoice chp ARG_LD)
 	{ best_index->tried_better = new_bitvector(def->functor->arity);
 
 	  for(ci=def->impl.clauses.clause_indexes; ci; ci=ci->next)
-	    set_bit(best_index->tried_better, ci->args[0]-1);
+	    clear_bit(best_index->tried_better, ci->args[0]-1);
 	}
 
 	if ( (best=bestHash(argv, def,
