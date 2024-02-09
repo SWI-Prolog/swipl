@@ -1147,11 +1147,13 @@ exists_source/1).
 
 Next, it locates \exam{path(name)} using SWI-Prolog's file search
 mechanism defined by absolute_file_name/3.  After loading this file it
-demands a to find the entry point registered using initialization/2 as
-shown in \secref{compilation}.  By default, the application terminates
-after the entry point terminates.  The entry point may enable the
-interactive Prolog REPL loop by calling
-cli_enable_development_system/0.
+finds the last goal registered for \const{main} using initialization/2
+as described in \secref{compilation} - if there is no initization
+directive for \const{main}, the program terminates with an error.  By
+default, the application terminates after the entry point terminates.
+The entry point may enable the interactive Prolog REPL loop by calling
+cli_enable_development_system/0. Other forms of the initialization/2
+directive are also allowed, in addition to `main`.
 
 All command line options after \verb$[path:]name$ are accessible in
 the Prolog flag \prologflag{argv}.
@@ -2509,6 +2511,25 @@ write_term/2.  Default is \const{ignore}.
 Internal flag used by help/1 when writing to a terminal. If
 present and \const{true} it prints bold and underlined text using
 \jargon{overstrike}.
+
+    \prologflagitem{xdg}{bool}{r(w)}
+This flaf defines whether or not the we follow the Free Desktop
+standard for application data and confiration files.   The flag is
+\const{true} and read-only for non-Windows systems.  On Windows
+systems the flag is \const{true} but read-write when compiled under
+\jargon{Conda} or \const{MSYS2} and not defined otherwise.  On
+Windows, the search order is
+
+\begin{description}
+   \definition{Flag is not defined}
+First search the Windows directories, then the XDG directories.
+This is the default for the Windows binaries.
+   \definition{Flag is \const{true}}
+First search the XDG directories, then the Windows directories.
+This is the default on MSYS2 and Conda.
+   \definition{Flag is \const{false}}
+Search the Windows directories only.
+\end{description}
 
     \prologflagitem{xpce}{bool}{r}
 Available and set to \const{true} if the XPCE graphics system is loaded.

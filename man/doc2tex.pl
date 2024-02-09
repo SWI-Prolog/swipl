@@ -100,16 +100,23 @@ tr(Object) -->
     !,
     tr_name(Name, Object).
 tr(\cfuncref(FName, Args)) -->
-    "PL_", c_identifier(Name), "(", string_without(")", Chars), ")",
+    pl_c_func_prefix(Prefix),
+    c_identifier(Name), paren_arg(Chars),
     !,
-    {  atom_concat('PL_', Name, FName),
-       string_chars(Args, Chars)
+    {  atom_concat(Prefix, Name, FName),
+       expand_urldefs(Chars, Args)
     }.
 tr(\cfuncref(FName, Args)) -->
-    "S", c_identifier(Name), "(", string_without(")", Chars), ")",
+    pl_cxx_func_prefix(Prefix),
+    cxx_identifier(Name), paren_arg(Chars),
     !,
-    {  atom_concat('S', Name, FName),
-       string_chars(Args, Chars)
+    {  atom_concat(Prefix, Name, FName),
+       expand_urldefs(Chars, Args)
+    }.
+tr(\cfuncref(FName, Args)) --> % This might become a different cmd
+    cxx_identifier(FName), paren_arg(Chars),
+    !,
+    {  expand_urldefs(Chars, Args)
     }.
 tr([\begin(code),Code,\end(code),'\n\n',\noindent,'\n']) -->
     "\\begin{code}", string(CodeChars), "\\end{code}",
@@ -176,6 +183,43 @@ tr(\bnfmeta(Name)) -->
 tr(C) -->
     [C].
 
+%!  paren_arg(-Codes)//
+%
+%   Read  a  string  between  parenthesis,    keeping  track  of  nested
+%   parenthesis.
+%
+%   @tbd Test for too long argument lists?
+
+paren_arg(Codes) -->
+    "(", paren_arg(Codes, [0')]).
+
+paren_arg([], [Close]) -->
+    [Close],
+    !.
+paren_arg([H|T], Stack) -->
+    [H],
+    { code_type(H, paren(Close)) },
+    !,
+    paren_arg(T, [Close|Stack]).
+paren_arg([H|T], [H|Stack]) -->
+    [H],
+    !,
+    paren_arg(T, Stack).
+paren_arg([H|T], Stack) -->
+    [H],
+    paren_arg(T, Stack).
+
+
+expand_urldefs(Codes, String) :-
+    phrase(doc2tex(Parsed), Codes),
+    with_output_to(string(String), emit(Parsed, current_output)).
+
+pl_c_func_prefix('PL_') --> "PL_", !.
+pl_c_func_prefix('S')   --> "S", !.
+pl_c_func_prefix('Plx') --> "Plx", !. % SWI-cpp2-plx.h
+pl_c_func_prefix('Pl')  --> "Pl".  % SWI-cpp2.h
+
+pl_cxx_func_prefix('Pl') --> "Pl", !. % SWI-cpp2.h
 
 tr_name(Module, [\index(Index),\qpredref(Module,Name,write(Arity))]) -->
     ":", unquoted_atom(Name), "/", arity(Arity), !,
@@ -343,6 +387,26 @@ c_id_cont([H|T]) -->
 	[H], { code_type(H, csym) }, !,
 	c_id_cont(T).
 c_id_cont([]) --> "".
+
+%!  cxx_identifier(-Identifier)//
+% This covers thing such as Class::method
+
+cxx_identifier(Name) -->
+    [C0], { code_type(C0, csymf) }, !,
+    cxx_id_cont(CL),
+    { atom_codes(Name, [C0|CL]) }.
+
+cxx_id_cont([0':,0':|T]) -->
+    "::", !, % For C++ "::"
+    cxx_id_cont(T).
+cxx_id_cont([0'~|T]) --> % '
+    "~", !, % For C++ destructor
+    cxx_id_cont(T).
+cxx_id_cont([H|T]) -->
+    [H], { code_type(H, csym) }, !,
+    cxx_id_cont(T).
+cxx_id_cont([]) --> "".
+
 
 %!  arity(-Spec)
 
