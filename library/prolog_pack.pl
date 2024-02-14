@@ -429,11 +429,11 @@ pack_list(Query, Options) :-
     maplist(arg(1), Local, Packs),
     (   option(server(false), Options)
     ->  Hits = []
-    ;   query_pack_server(info(Packs), true(Hits), [])
+    ;   query_pack_server(info(Packs), true(Hits), Options)
     ),
     list_hits(Hits, Local, Options).
-pack_list(Query, _Options) :-
-    query_pack_server(search(Query), Result, []),
+pack_list(Query, Options) :-
+    query_pack_server(search(Query), Result, Options),
     (   Result == false
     ->  (   local_search(Query, Packs),
             Packs \== []
@@ -649,6 +649,10 @@ search_info(download(_)).
 %       the download count.  The server stores the IP address of the
 %       client.  Subsequent downloads of the same version from the
 %       same IP address are ignored.
+%     * server(+URL)
+%       Pack server to contact. Default is the setting
+%       `prolog_pack:server`, by default set to
+%       ``https://www.swi-prolog.org/pack/``
 %
 %   Non-interactive installation can be established using the option
 %   interactive(false). It is adviced to   install from a particular
@@ -931,7 +935,7 @@ pack_install_set(Pairs, Dir, Options) :-
     ->  AllVersions = LocalVersions
     ;   pairs_keys(Remote, Packs),
         prolog_description(Properties),
-        query_pack_server(versions(Packs, Properties), Result, []),
+        query_pack_server(versions(Packs, Properties), Result, Options),
         (   Result = true(RemoteVersions)
         ->  append(LocalVersions, RemoteVersions, AllVersions)
         ;   print_message(error, pack(query_failed(Result))),
@@ -2890,8 +2894,8 @@ download_data(Info, Data) =>                % Archive download.
 %   results.
 
 query_pack_server(Query, Result, Options) :-
-    (   option(server(ServerBase), Options)
-    ->  true
+    (   option(server(ServerOpt), Options)
+    ->  server_url(ServerOpt, ServerBase)
     ;   setting(server, ServerBase),
         ServerBase \== ''
     ),
@@ -2908,6 +2912,20 @@ query_pack_server(Query, Result, Options) :-
         close(In)),
     message_severity(Result, Level, Informational),
     print_message(Level, pack(server_reply(Result))).
+
+server_url(URL0, URL) :-
+    uri_components(URL0, Components),
+    uri_data(scheme, Components, Scheme),
+    var(Scheme),
+    !,
+    atom_concat('https://', URL0, URL1),
+    server_url(URL1, URL).
+server_url(URL0, URL) :-
+    uri_components(URL0, Components),
+    uri_data(path, Components, ''),
+    !,
+    uri_edit([path('/pack/')], URL0, URL).
+server_url(URL, URL).
 
 read_reply(ContentType, In, Result) :-
     sub_atom(ContentType, 0, _, _, 'application/x-prolog'),
