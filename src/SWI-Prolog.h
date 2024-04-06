@@ -1347,22 +1347,24 @@ PL_EXPORT(int)		PL_destroy_engine(PL_engine_t engine);
 		 *******************************/
 typedef _PLS(table)	  *hash_table_t;
 typedef _PLS(table_enum) *hash_table_enum_t;
+typedef void *table_key_t;	/* introduced abstract types for forward compatibility */
+typedef void *table_value_t;
 
 #define PL_HT_NEW	0x0001
 #define PL_HT_UPDATE	0x0002
 
 PL_EXPORT(hash_table_t)	PL_new_hash_table(int size,
-					  void (*free_symbol)(void *n, void *v));
+					  void (*free_symbol)(table_key_t n, table_value_t v));
 PL_EXPORT(int)		PL_free_hash_table(hash_table_t table);
-PL_EXPORT(void*)	PL_lookup_hash_table(hash_table_t table, void *key);
-PL_EXPORT(void*)	PL_add_hash_table(hash_table_t table,
-					  void *key, void *value, int flags);
-PL_EXPORT(void*)	PL_del_hash_table(hash_table_t table, void *key);
+PL_EXPORT(table_value_t) PL_lookup_hash_table(hash_table_t table, table_key_t key);
+PL_EXPORT(table_value_t) PL_add_hash_table(hash_table_t table,
+					   table_key_t key, table_value_t value, int flags);
+PL_EXPORT(table_value_t) PL_del_hash_table(hash_table_t table, table_key_t key);
 PL_EXPORT(int)		PL_clear_hash_table(hash_table_t table);
 PL_EXPORT(hash_table_enum_t) PL_new_hash_table_enum(hash_table_t table);
 PL_EXPORT(void)		PL_free_hash_table_enum(hash_table_enum_t e);
 PL_EXPORT(int)		PL_advance_hash_table_enum(hash_table_enum_t e,
-						   void **key, void **value);
+						   table_key_t *key, table_value_t *value);
 
 
 		 /*******************************
