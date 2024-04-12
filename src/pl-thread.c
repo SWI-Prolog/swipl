@@ -8253,7 +8253,7 @@ markAccessedPredicates(PL_local_data_t *ld)
 }
 
 
-#if O_PLMT
+#if O_PLMT && !defined(__SANITIZE_ADDRESS__)
 #define stack_avail(_) LDFUNC(stack_avail, _)
 
 static size_t
@@ -8276,7 +8276,7 @@ stack_avail(DECL_LD)
 int
 require_c_stack(DECL_LD size_t needed)
 {
-#if O_PLMT
+#if O_PLMT && !defined(__SANITIZE_ADDRESS__)
   PL_thread_info_t *info = LD->thread.info;
 
   if ( !info->c_stack_low && needed > stack_avail() )
@@ -8293,7 +8293,7 @@ require_c_stack(DECL_LD size_t needed)
 void
 clear_low_c_stack(DECL_LD)
 {
-#if O_PLMT
+#if O_PLMT && !defined(__SANITIZE_ADDRESS__)
   PL_thread_info_t *info = LD->thread.info;
 
   if ( info->c_stack_low && stack_avail() > C_STACK_MIN )
