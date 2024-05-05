@@ -37,6 +37,12 @@ endif()
 # For GCC, using -O3 makes the program bigger and slower.  -O2 is
 # better.  Possibly tuning individual flags can reach better results.
 
+option(SANITIZE,
+  "ASAN option"
+  address)
+
+set(GCC_GFLAGS "-gdwarf-2 -g3")
+
 if(CMAKE_COMPILER_IS_GNUCC)
   if($ENV{CFLAGS})
     string(REGEX MATCH "-O" match $ENV{CFLAGS})
@@ -54,23 +60,23 @@ if(CMAKE_COMPILER_IS_GNUCC)
   set(CMAKE_C_FLAGS_PGO "${GCC_OPTFLAGS} -gdwarf-2 -g3"
       CACHE STRING "CFLAGS for a PGO build" FORCE)
   set(CMAKE_C_FLAGS_SANITIZE
-      "-O0 -gdwarf-2 -g3 -fsanitize=address -fno-omit-frame-pointer"
+      "-O0 ${GCC_GFLAGS} -fsanitize=${SANITIZE} -fno-omit-frame-pointer $ENV{CFLAGS}"
       CACHE STRING "CFLAGS for a Sanitize build" FORCE)
   set(CMAKE_CXX_FLAGS_DEBUG "-DO_DEBUG -O0 -gdwarf-2 -g3"
       CACHE STRING "CFLAGS for a Debug build" FORCE)
   set(CMAKE_CXX_FLAGS_SANITIZE
-      "-O0 -gdwarf-2 -g3 -fsanitize=address -fno-omit-frame-pointer"
+      "-O0 ${GCC_GFLAGS} -fsanitize=${SANITIZE} -fno-omit-frame-pointer $ENV{CXXFLAGS}"
       CACHE STRING "CFLAGS for a Sanitize build" FORCE)
 elseif(CMAKE_C_COMPILER_ID STREQUAL Clang)
   set(CMAKE_C_FLAGS_DEBUG "-DO_DEBUG -gdwarf-2 -g3"
       CACHE STRING "CFLAGS for a Debug build" FORCE)
   set(CMAKE_C_FLAGS_SANITIZE
-      "-gdwarf-2 -g3 -fsanitize=address -O1 -fno-omit-frame-pointer"
+      "${GCC_GFLAGS} -fsanitize=${SANITIZE} -O1 -fno-omit-frame-pointer $ENV{CFLAGS}"
       CACHE STRING "CFLAGS for a Sanitize build" FORCE)
   set(CMAKE_CXX_FLAGS_DEBUG "-DO_DEBUG -gdwarf-2 -g3"
       CACHE STRING "CFLAGS for a Debug build" FORCE)
   set(CMAKE_CXX_FLAGS_SANITIZE
-      "-gdwarf-2 -g3 -fsanitize=address -O1 -fno-omit-frame-pointer"
+      "${GCC_GFLAGS} -fsanitize=${SANITIZE} -O1 -fno-omit-frame-pointer $ENV{CXXFLAGS}"
       CACHE STRING "CFLAGS for a Sanitize build" FORCE)
 elseif(CMAKE_C_COMPILER_ID STREQUAL AppleClang)
   set(CMAKE_C_FLAGS_DEBUG "-DO_DEBUG -gdwarf-2 -g3"
