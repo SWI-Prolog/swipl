@@ -100,7 +100,7 @@ option  parsing,  initialisation  and  handling  of errors and warnings.
 
 static int	usage(void);
 static int	giveVersionInfo(const char *a);
-static bool	vsysError(const char *fm, va_list args);
+static bool	vsysError(const char *errtype, const char *fm, va_list args);
 
 #define	optionString(s) { if (argc > 1) \
 			  { if ( s ) remove_string(s); \
@@ -1734,12 +1734,11 @@ sysError(const char *fm, ...)
 { va_list args;
 
   va_start(args, fm);
-  vsysError(fm, args);
+  vsysError("system", fm, args);
   va_end(args);
 
   PL_fail;
 }
-
 
 void
 fatalError(const char *fm, ...)
@@ -1769,7 +1768,7 @@ warning(const char *fm, ...)
 #endif
 
 static bool
-vsysError(const char *fm, va_list args)
+vsysError(const char *errtype, const char *fm, va_list args)
 { GET_LD
   static int active = 0;
   time_t now;
@@ -1791,11 +1790,11 @@ vsysError(const char *fm, va_list args)
   if ( PL_get_thread_alias(tid, &alias) )
     name = PL_atom_wchars(alias, NULL);
 
-  SfprintfX(Serror, "[PROLOG SYSTEM ERROR:  Thread %d (%Ws) at %s\n\t",
-	    tid, name, tbuf);
+  SfprintfX(Serror, "[PROLOG %s ERROR:  Thread %d (%Ws) at %s\n\t",
+	    errtype, tid, name, tbuf);
 }
 #else
-  Sfprintf(Serror, "[PROLOG SYSTEM ERROR: at %s\n\t", tbuf);
+  Sfprintf(Serror, "[PROLOG %s ERROR: at %s\n\t", errtype, tbuf);
 #endif
   Svfprintf(Serror, fm, args);
   if ( gc_status.active )
@@ -1850,7 +1849,16 @@ PL_system_error(const char *fm, ...)
 { va_list args;
 
   va_start(args, fm);
-  vsysError(fm, args);
+  vsysError("system", fm, args);
+  va_end(args);
+}
+
+void
+PL_api_error(const char *fm, ...)
+{ va_list args;
+
+  va_start(args, fm);
+  vsysError("API", fm, args);
   va_end(args);
 }
 
