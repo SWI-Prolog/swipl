@@ -39,7 +39,7 @@
 
 
 		/********************************
-		*	     VARIANT	        *
+		*	     VARIANT		*
 		*********************************/
 
 #define consVar(w) (((intptr_t)(w)<<LMASK_BITS) | TAG_VAR | FIRST_MASK)
@@ -143,7 +143,7 @@ static inline int
 var_id(Word p, Buffer buf)
 { word w = *p;
 
-  if ( w )
+  if ( (w&FIRST_MASK) )
   { return (int)valVar(w);		/* node id truncated to int: */
   } else				/* < 2^31 nodes */
   { int n = (int)entriesBuffer(buf, node);
@@ -335,9 +335,17 @@ variant(DECL_LD argPairs *agenda, Buffer buf)
    if ( tag(wl) != tag(wr) )
      return FALSE;
 
-   if ( tag(wl) == TAG_VAR )
+   if ( needsRef(wl) )		/* var or attvar */
    { int i, j, m, n;
      node *vl, *vr;
+     Word al, ar;
+
+     if ( tag(wl) == TAG_ATTVAR )
+     { al = valPAttVar(wl);
+       ar = valPAttVar(wr);
+     } else
+     { al = ar = NULL;
+     }
 
      if ((i = var_id(l, buf)) < 0)
        return MEMORY_OVERFLOW;
@@ -353,19 +361,22 @@ variant(DECL_LD argPairs *agenda, Buffer buf)
      if ( (m==0) && (n==0) )
      { vl->a = j;
        vr->b = i;
+       if ( al )
+       { l = al; r = ar;
+	 goto attvar;
+       }
        continue;
      }
      if ( (m != 0) && (n != 0) )
      { if ( (m == j) && (n == i) )
+       { if ( al )
+	 { l = al; r = ar;
+	   goto attvar;
+	 }
 	 continue;
+       }
      }
      return FALSE;
-    }
-
-    if ( tag(wl) == TAG_ATTVAR )
-    { l = valPAttVar(wl);
-      r = valPAttVar(wr);
-      goto attvar;
     }
 
     if ( wl == wr && !isTerm(wl) )
