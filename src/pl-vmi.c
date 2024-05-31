@@ -4783,6 +4783,7 @@ VMH(foreign_redo, 0, (), ())
 { Choice ch;
   FliFrame ffr;
 
+  environment_frame = FR;
   lTop = (LocalFrame)argFrameP(FR, DEF->functor->arity);
   ch = newChoice(CHP_JUMP, FR);
   ch->value.pc = PC+3;
