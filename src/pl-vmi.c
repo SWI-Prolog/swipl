@@ -5256,7 +5256,8 @@ again:
 	    Sdprintf(" (retrying)\n"));
 
       PL_rewind_foreign_frame(fid);
-      clear((LocalFrame)valTermRef(catchfr_ref), FR_CATCHED);
+      if ( catchfr_ref )
+	clear((LocalFrame)valTermRef(catchfr_ref), FR_CATCHED);
       goto again;
     }
   }
