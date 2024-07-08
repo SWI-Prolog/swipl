@@ -1678,7 +1678,9 @@ gcPolicy(Stack s, int policy)
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-trimStacks() reclaims all unused space on the stack.
+trimStacks() reclaims all unused space on the stack. In some places this
+may be called with arguments pushed to the   next frame. In this case we
+must extend lTop to ARGP.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 void
@@ -1686,8 +1688,14 @@ trimStacks(DECL_LD int resize)
 { LD->trim_stack_requested = FALSE;
 
   if ( resize )
-  { growStacks(GROW_TRIM, GROW_TRIM, GROW_TRIM);
-  } else
+    growStacks(GROW_TRIM, GROW_TRIM, GROW_TRIM);
+
+  LocalFrame lSave = lTop;
+  if ( LD->query && LD->query->registers.fr && /* we have saved registers */
+       LD->query->registers.argp > (Word)lTop )
+    lTop = (LocalFrame)LD->query->registers.argp;
+
+  if ( !resize )
   { trim_stack((Stack) &LD->stacks.local);
     trim_stack((Stack) &LD->stacks.global);
     trim_stack((Stack) &LD->stacks.trail);
@@ -1707,6 +1715,8 @@ trimStacks(DECL_LD int resize)
 	{ scan_global(FALSE);
 	  checkStacks(NULL);
 	});
+
+  lTop = lSave;
 }
 
 
