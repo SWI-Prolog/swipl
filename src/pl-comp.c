@@ -354,9 +354,7 @@ typedef struct
   unsigned int	entry[1];
 } var_table, *VarTable;
 
-#undef struct_offsetp
-#define struct_offsetp(t, f) ((size_t)((t*)0)->f)
-#define sizeofVarTable(isize) (struct_offsetp(var_table, entry) + sizeof(int)*(isize))
+#define sizeofVarTable(isize) (offsetof(var_table, entry) + sizeof(int)*(isize))
 
 #define mkCopiedVarTable(o) copyVarTable(alloca(sizeofVarTable(o->isize)), o)
 #define BITSPERINT (int)(sizeof(int)*8)
@@ -2054,8 +2052,8 @@ Finish up the clause.
     space = ( clause.variables*sizeof(word) +
 	      sizeofClause(clause.code_size) +
 	      SIZEOF_CREF_CLAUSE +
-	      sizeof(word) +		/* possible alignment */
-	      (size_t)argFrameP((LocalFrame)NULL, MAXARITY) +
+	      sizeof(word) +     /* possible alignment */
+	      LOCAL_MARGIN +
 	      sizeof(struct choice)
 	    );
     if ( addPointer(lTop, space) >= (void*)lMax )
