@@ -4628,7 +4628,7 @@ conventions.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 VMI(I_FCALLDETVA, 0, 1, (CA1_FOREIGN))
-{ typedef foreign_t (*va_func)(term_t av, int ac, control_t ctx);
+{ typedef foreign_t (*va_func)(term_t av, size_t ac, control_t ctx);
   va_func f = (va_func)*PC++;
   term_t h0 = consTermRef(argFrameP(FR, 0));
 
@@ -4804,8 +4804,13 @@ END_VMH
 
 
 VMI(I_FCALLNDETVA, 0, 1, (CA1_FOREIGN))
+<<<<<<< HEAD
 { typedef foreign_t (*ndet_func)(term_t h0, int arity, struct foreign_context*);
   ndet_func f = (ndet_func)*PC++;
+=======
+{ typedef foreign_t (*ndet_func)(term_t h0, size_t arity, struct foreign_context*);
+  ndet_func f = code2ptr(ndet_func, *PC++);
+>>>>>>> 17424dc59 (Consistently use size_t for the arity of foreign functions.)
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
   VMH_GOTO_AS_VMI(I_FEXITNDET, (*f)(h0, DEF->functor->arity, &FNDET_CONTEXT));
