@@ -466,7 +466,12 @@ retry:
 }
 
 
+/* Forward compatibility.  This is a dummy */
 
+void
+PL_free_term_ref(term_t t)
+{
+}
 
 
 void
