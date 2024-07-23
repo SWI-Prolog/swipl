@@ -2718,7 +2718,7 @@ compile_trie_value(DECL_LD Word v, trie_compile_state *state)
 	      add_vmi_d(state, T_INT64, (code)ip[0]);
 	      addBuffer(&state->codes, (code)ip[1], code);
 #endif
-#ifdef O_GMP
+#ifdef O_BIGNUM
 	    } else
 	    { add_vmi_d(state, T_MPZ, (code)ip[-1]);
 	      addMultipleBuffer(&state->codes, ip, wsize, code);
