@@ -2441,6 +2441,8 @@ size N on the global stack AND  can   use  bindConst()  to bind it to an
 	 likely(tTop+(t)+BIND_TRAIL_SPACE <= tMax))
 #define hasTrailSpace(t) \
 	likely(tTop+(t) <= tMax)
+#define hasLocalSpace(bytes) \
+	likely((char*)lTop + bytes <= (char*)lMax)
 #define overflowCode(n) \
 	( (gTop+(n)+BIND_GLOBAL_SPACE > gMax) ? GLOBAL_OVERFLOW \
 					      : TRAIL_OVERFLOW )
