@@ -3663,7 +3663,8 @@ freeThreadSignals(PL_local_data_t *ld)
   for( sg = ld->thread.sig_head; sg; sg = next )
   { next = sg->next;
 
-    PL_erase(sg->goal);
+    if ( sg->goal )
+      PL_erase(sg->goal);
     freeHeap(sg, sizeof(*sg));
   }
 }
