@@ -125,9 +125,16 @@ APPROACH
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 #if defined(__linux__)
+#ifdef HAVE_GETTID_FUNCTION
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#include <unistd.h>
+#else
 #include <syscall.h>
 #ifdef HAVE_GETTID_MACRO
 _syscall0(pid_t,gettid)
+#endif
 #endif
 #endif
 
@@ -1935,7 +1942,7 @@ set_system_thread_id(PL_thread_info_t *info)
   info->has_tid = TRUE;
 #if defined(HAVE_GETTID_SYSCALL)
   info->pid = syscall(__NR_gettid);
-#elif defined(HAVE_GETTID_MACRO)
+#elif defined(HAVE_GETTID_FUNCTION) || defined(HAVE_GETTID_MACRO)
   info->pid = gettid();
 #elif defined(__CYGWIN__)
   info->pid = getpid();
