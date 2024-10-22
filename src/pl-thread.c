@@ -5476,11 +5476,11 @@ PRED_IMPL("is_message_queue", 1, is_message_queue, 0)
   }
 
   if ( queueTable && PL_get_atom(A1, &id) )
-  { if ( (q = lookupHTableWP(queueTable, id)) )
+  { if ( (q = lookupHTable(queueTable, (void*)id)) )
       return !q->destroyed;
   }
 
-  return false;
+  return FALSE;
 }
 
 		 /*******************************

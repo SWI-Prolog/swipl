@@ -1103,7 +1103,7 @@ put_vm_call(DECL_LD term_t t, term_t frref, Code PC, code op, int has_firstvar,
       Word       a  = varFrameP(fr, (int)PC[3]);
 
       if ( !gt )
-	return false;
+	return FALSE;
 
       setVar(*a);
       gt[0] = FUNCTOR_arg3;
@@ -1114,7 +1114,7 @@ put_vm_call(DECL_LD term_t t, term_t frref, Code PC, code op, int has_firstvar,
       gt[5] = consPtr(gt, STG_GLOBAL|TAG_COMPOUND);
       *valTermRef(t) = consPtr(&gt[4], STG_GLOBAL|TAG_COMPOUND);
 
-      return true;
+      return TRUE;
     }
     case B_EQ_VC:    clean = 0x0; ftor = FUNCTOR_strict_equal2;     goto vc_2;
     case B_NEQ_VC:   clean = 0x0; ftor = FUNCTOR_not_strict_equal2; goto vc_2;

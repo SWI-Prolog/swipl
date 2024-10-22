@@ -961,7 +961,7 @@ PRED_IMPL("$profile", 4, profile, PL_FA_TRANSPARENT)
 
   atom_t ports_opt;
   if ( !PL_get_atom_ex(A3, &ports_opt) )
-    return false;
+    return FALSE;
   switch (ports_opt)
   { case ATOM_false: LD->profile.ports_control = PROFC_FALSE;   break;
     case ATOM_true:  LD->profile.ports_control = PROFC_TRUE;    break;

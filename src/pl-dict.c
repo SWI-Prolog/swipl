@@ -526,7 +526,7 @@ unify_left_dict(DECL_LD word del, word from)
   int rc;
 
   /* unify the tags */
-  if ( (rc=unify_ptrs(din, fin, ALLOW_RETCODE)) != true )
+  if ( (rc=unify_ptrs(din, fin, ALLOW_RETCODE)) != TRUE )
     return rc;
 
   /* advance to first v+k entry */
@@ -540,12 +540,12 @@ unify_left_dict(DECL_LD word del, word from)
     deRef2(fin+1, f);
 
     if ( *d == *f )		/* same keys */
-    { if ( (rc = unify_ptrs(din, fin, ALLOW_RETCODE)) != true )
+    { if ( (rc = unify_ptrs(din, fin, ALLOW_RETCODE)) != TRUE )
 	return rc;
       din += 2;
       fin += 2;
     } else if ( *d < *f )
-    { return false;
+    { return FALSE;
     } else
     { fin += 2;
     }
@@ -571,7 +571,7 @@ select_dict(DECL_LD word del, word from, word *new_dict)
   int rc;
 
   /* unify the tags */
-  if ( (rc=unify_ptrs(din, fin, ALLOW_RETCODE)) != true )
+  if ( (rc=unify_ptrs(din, fin, ALLOW_RETCODE)) != TRUE )
     return rc;
 
   /* advance to first v+k entry */
@@ -585,11 +585,11 @@ select_dict(DECL_LD word del, word from, word *new_dict)
     deRef2(fin+1, f);
 
     if ( *d == *f )		/* same keys */
-    { if ( (rc = unify_ptrs(din, fin, ALLOW_RETCODE)) != true )
+    { if ( (rc = unify_ptrs(din, fin, ALLOW_RETCODE)) != TRUE )
 	return rc;
       din += 2;
     } else if ( *d < *f )
-    { return false;
+    { return FALSE;
     } else
     { if ( !keep )
       { size_t entries = arityFunctor(fd->definition)/2;
@@ -627,12 +627,12 @@ select_dict(DECL_LD word del, word from, word *new_dict)
 	}
       }
       gTop = out;
-      rc = true;
+      rc = TRUE;
     } else
     { rc = GLOBAL_OVERFLOW;
     }
   } else
-  { rc = false;
+  { rc = FALSE;
   }
 
   if ( keep && keep != (bit_vector*)buf )

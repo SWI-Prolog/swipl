@@ -293,7 +293,7 @@ get_v_float_arg(int i, term_t t, term_t a, double *val, bool *v, double def)
   { *val = def;
     return PL_unify_float(a, def);
   } else
-  { *v = false;
+  { *v = FALSE;
     return PL_get_float_ex(a, val);
   }
 }
@@ -305,7 +305,7 @@ get_v_int_arg(int i, term_t t, term_t a, int *val, bool *v, int def)
   { *val = def;
     return PL_unify_integer(a, def);
   } else
-  { *v = false;
+  { *v = FALSE;
     return PL_get_integer_ex(a, val);
   }
 }
@@ -319,7 +319,7 @@ get_ftm(term_t t, ftm *ftm)
   memset(ftm, 0, sizeof(*ftm));
 
   if ( (date9=PL_is_functor(t, FUNCTOR_date9)) )
-  { bool v = true;
+  { int v = TRUE;
 
     if ( get_int_arg  (1, t, tmp, &ftm->tm.tm_year) &&
 
