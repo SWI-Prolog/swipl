@@ -879,7 +879,7 @@ PL_EXPORT(int)		PL_warningX(const char *fmt, ...);
 PL_EXPORT(void)		PL_fatal_error(const char *fmt, ...) WPRINTF12;
 PL_EXPORT(void)		PL_api_error(const char *fmt, ...) WPRINTF12;
 PL_EXPORT(void)		PL_system_error(const char *fmt, ...) WPRINTF12;
-PL_EXPORT(bool)		PL_print_message(atom_t severity, ...) WUNUSED;
+PL_EXPORT(int)		PL_print_message(atom_t severity, ...) WUNUSED;
 
 		 /*******************************
 		 *      RECORDED DATABASE	*

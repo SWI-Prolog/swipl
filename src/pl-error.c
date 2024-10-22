@@ -953,11 +953,22 @@ and TRUE if the printing succeeded or merely failed.
 
 int
 printMessage(atom_t severity, ...)
+{ va_list args;
+  int rc;
+
+  va_start(args, severity);
+  rc = printMessagev(severity, args);
+  va_end(args);
+
+  return rc;
+}
+
+int
+printMessagev(atom_t severity, va_list args)
 { GET_LD
   wakeup_state wstate;
   term_t av;
   predicate_t pred = PROCEDURE_print_message2;
-  va_list args;
   int rc;
 
   if ( ++LD->in_print_message >= OK_RECURSIVE*3 )
@@ -968,10 +979,8 @@ printMessage(atom_t severity, ...)
   }
 
   av = PL_new_term_refs(2);
-  va_start(args, severity);
   PL_put_atom(av+0, severity);
   rc = PL_unify_termv(av+1, args);
-  va_end(args);
 
   if ( rc )
   { if ( isDefinedProcedure(pred) && LD->in_print_message <= OK_RECURSIVE )

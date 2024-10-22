@@ -117,6 +117,7 @@ int		PL_error(const char *pred, int arity, const char *msg,
 			 PL_error_code id, ...);
 int		PL_no_memory(void);
 int		printMessage(atom_t severity, ...) WUNUSED;
+int		printMessagev(atom_t severity, va_list args) WUNUSED;
 int		PL_get_atom_ex(term_t t, atom_t *a);
 int		PL_get_size_ex(term_t t, size_t *i);
 int		pl_get_uint64(term_t t, uint64_t *i, int ex);
