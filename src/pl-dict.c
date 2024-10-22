@@ -512,20 +512,21 @@ partial_unify_dict(DECL_LD word dict1, word dict2)
    two pass process.
 */
 
-#define select_dict(del, from, new_dict) LDFUNC(select_dict, del, from, new_dict)
+#define unify_left_dict(del, from) \
+	LDFUNC(unify_left_dict, del, from)
+
 static int
-select_dict(DECL_LD word del, word from, word *new_dict)
+unify_left_dict(DECL_LD word del, word from)
 { Functor dd = valueTerm(del);
   Functor fd = valueTerm(from);
   Word din  = dd->arguments;
   Word fin  = fd->arguments;
   Word dend = din+arityFunctor(dd->definition);
   Word fend = fin+arityFunctor(fd->definition);
-  size_t left = 0;
   int rc;
 
   /* unify the tags */
-  if ( (rc=unify_ptrs(din, fin, ALLOW_RETCODE)) != TRUE )
+  if ( (rc=unify_ptrs(din, fin, ALLOW_RETCODE)) != true )
     return rc;
 
   /* advance to first v+k entry */
@@ -538,57 +539,106 @@ select_dict(DECL_LD word del, word from, word *new_dict)
     deRef2(din+1, d);
     deRef2(fin+1, f);
 
-    if ( *d == *f )
-    { if ( (rc = unify_ptrs(din, fin, ALLOW_RETCODE)) != TRUE )
+    if ( *d == *f )		/* same keys */
+    { if ( (rc = unify_ptrs(din, fin, ALLOW_RETCODE)) != true )
 	return rc;
       din += 2;
       fin += 2;
     } else if ( *d < *f )
-    { return FALSE;
+    { return false;
     } else
     { fin += 2;
-      left++;
     }
   }
-  if ( din < dend )
-    return FALSE;
-  left += (fend-fin)/2;
 
-  if ( !new_dict )
-    return TRUE;
+  return din == dend;
+}
 
-  if ( gTop+2+2*left <= gMax )
-  { Word out = gTop;
 
-    *new_dict = consPtr(out, TAG_COMPOUND|STG_GLOBAL);
+#define select_dict(del, from, new_dict) \
+	LDFUNC(select_dict, del, from, new_dict)
 
-    *out++ = dict_functor(left);
-    setVar(*out++);			/* tag for new dict */
+static int
+select_dict(DECL_LD word del, word from, word *new_dict)
+{ Functor dd = valueTerm(del);
+  Functor fd = valueTerm(from);
+  Word din  = dd->arguments;
+  Word fin  = fd->arguments;
+  Word dend = din+arityFunctor(dd->definition);
+  Word fend = fin+arityFunctor(fd->definition);
+  int buf[256];
+  bit_vector *keep = NULL;
+  int rc;
 
-    din = dd->arguments+1;
-    fin = fd->arguments+1;
+  /* unify the tags */
+  if ( (rc=unify_ptrs(din, fin, ALLOW_RETCODE)) != true )
+    return rc;
 
-    while(left > 0)
-    { Word d, f;
+  /* advance to first v+k entry */
+  din++;
+  fin++;
 
-      deRef2(din+1, d);
-      deRef2(fin+1, f);
-      if ( *d == *f )
-      { din += 2;
-	fin += 2;
-      } else
-      { *out++ = linkValI(fin);
-	*out++ = *f;
-	fin += 2;
-	left--;
+  for(size_t i=0; din < dend && fin < fend; i++, fin += 2)
+  { Word d, f;
+
+    deRef2(din+1, d);
+    deRef2(fin+1, f);
+
+    if ( *d == *f )		/* same keys */
+    { if ( (rc = unify_ptrs(din, fin, ALLOW_RETCODE)) != true )
+	return rc;
+      din += 2;
+    } else if ( *d < *f )
+    { return false;
+    } else
+    { if ( !keep )
+      { size_t entries = arityFunctor(fd->definition)/2;
+	size_t sz = sizeof_bitvector(entries);
+
+	if ( sz <= sizeof(buf) )
+	  keep = (bit_vector*)buf;
+	else if ( !(keep = malloc(sz)) )
+	  return MEMORY_OVERFLOW;
+	init_bitvector(keep, entries);
       }
+      set_bit(keep, i);
     }
-    gTop = out;
-
-    return TRUE;
   }
 
-  return GLOBAL_OVERFLOW;
+  if ( din == dend )		/* unification succeeded */
+  { size_t nsize = (keep ? popcount_bitvector(keep) : 0) + (fend-fin)/2;
+
+    if ( gTop+nsize*2+2 <= gMax )
+    { Word out = gTop;
+
+      *new_dict = consPtr(out, TAG_COMPOUND|STG_GLOBAL);
+      *out++ = dict_functor(nsize);
+      setVar(*out++);
+
+      Word fe = fin;
+      fin  = fd->arguments+1;
+      for(size_t i=0; fin < fend; i++, fin += 2)
+      { if ( fin >= fe || (keep && true_bit(keep, i)) )
+	{ Word f;
+
+	  deRef2(fin+1, f);
+	  *out++ = linkValI(fin);
+	  *out++ = *f;
+	}
+      }
+      gTop = out;
+      rc = true;
+    } else
+    { rc = GLOBAL_OVERFLOW;
+    }
+  } else
+  { rc = false;
+  }
+
+  if ( keep && keep != (bit_vector*)buf )
+    free(keep);
+
+  return rc;
 }
 
 
@@ -1640,7 +1690,8 @@ PRED_IMPL("select_dict", 3, select_dict, 0)
 retry:
   if ( get_create_dict_ex(A1, dt+0) &&
        get_create_dict_ex(A2, dt+1) )
-  { int rc = select_dict(*valTermRef(dt+0), *valTermRef(dt+1), &r);
+  { Mark(fli_context->mark);
+    int rc = select_dict(*valTermRef(dt+0), *valTermRef(dt+1), &r);
 
     switch(rc)
     { case TRUE:
@@ -1654,6 +1705,7 @@ retry:
       case MEMORY_OVERFLOW:
 	return PL_no_memory();
       default:
+	Undo(fli_context->mark);
 	if ( !makeMoreStackSpace(rc, ALLOW_GC|ALLOW_SHIFT) )
 	  return FALSE;
         goto retry;
@@ -1665,14 +1717,15 @@ retry:
 
 
 static
-PRED_IMPL(":<", 2, select_dict, 0)
+PRED_IMPL(":<", 2, unify_left_dict, 0)
 { PRED_LD
   term_t dt = PL_new_term_refs(2);
 
 retry:
   if ( get_create_dict_ex(A1, dt+0) &&
        get_create_dict_ex(A2, dt+1) )
-  { int rc = select_dict(*valTermRef(dt+0), *valTermRef(dt+1), NULL);
+  { Mark(fli_context->mark);
+    int rc = unify_left_dict(*valTermRef(dt+0), *valTermRef(dt+1));
 
     switch(rc)
     { case TRUE:
@@ -1681,6 +1734,7 @@ retry:
       case MEMORY_OVERFLOW:
 	return PL_no_memory();
       default:
+	Undo(fli_context->mark);
 	if ( !makeMoreStackSpace(rc, ALLOW_GC|ALLOW_SHIFT) )
 	  return FALSE;
         goto retry;
@@ -1760,6 +1814,6 @@ BeginPredDefs(dict)
   PRED_DEF("del_dict",	   4, del_dict,	    0)
   PRED_DEF("get_dict",     5, get_dict,     0)
   PRED_DEF("select_dict",  3, select_dict,  0)
-  PRED_DEF(":<",	   2, select_dict,  0)
+  PRED_DEF(":<",	   2, unify_left_dict,  0)
   PRED_DEF(">:<",	   2, punify_dict,  0)
 EndPredDefs
