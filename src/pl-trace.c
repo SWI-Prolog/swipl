@@ -469,8 +469,13 @@ We are in searching mode; should we actually give this port?
     }
   }
 
-  if ( !saveWakeup(&wstate, FALSE) )
-    return action;
+  { int rc;
+    SAVE_PTRS();
+    rc = saveWakeup(&wstate, FALSE);
+    RESTORE_PTRS();
+    if ( !rc )
+      return action;
+  }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Do the Prolog trace interception.
