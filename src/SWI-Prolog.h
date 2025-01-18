@@ -209,7 +209,7 @@ typedef _PLS(PL_local_data) *PL_engine_t; /* opaque engine handle */
 typedef uintptr_t	PL_atomic_t;	/* same a word */
 typedef uintptr_t	foreign_t;	/* return type of foreign functions */
 typedef wchar_t		pl_wchar_t;	/* Prolog wide character */
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ > 201710L
 typedef void *		pl_function_t;      /* pass function as void* */
 #else
 typedef foreign_t	(*pl_function_t)(); /* foreign language functions */
