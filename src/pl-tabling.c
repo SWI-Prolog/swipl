@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2017-2022, VU University Amsterdam
+    Copyright (c)  2017-2025, VU University Amsterdam
 			      CWI, Amsterdam
 			      SWI-Prolog Solutions b.v.
     All rights reserved.
@@ -55,6 +55,7 @@
 #include "os/pl-prologflag.h"
 #include "pl-termhash.h"
 #include "pl-variant.h"
+#include "pl-index.h"
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 We provide two answer completion strategies:
@@ -132,7 +133,7 @@ typedef struct
 
 #define LDFUNC_DECLARATIONS
 
-static int	destroy_answer_trie(trie *atrie);
+static bool	destroy_answer_trie(trie *atrie);
 static void	free_worklist(worklist *wl);
 static void	clean_worklist(worklist *wl);
 static void	destroy_depending_worklists(worklist *wl0);
@@ -149,13 +150,13 @@ static trie_node* wkl_mode_add_answer(worklist *wl, trie *trie, term_t answer,
 static int	tbl_put_moded_args(term_t t, trie_node *node);
 static void	del_child_component(tbl_component *parent, tbl_component *child);
 static void	free_components_set(component_set *cs, int destroy);
-static int	unify_skeleton(trie *trie, term_t wrapper, term_t skel);
+static bool	unify_skeleton(trie *trie, term_t wrapper, term_t skel);
 #ifdef O_DEBUG
 static void	print_worklist(const char *prefix, worklist *wl);
 static void	print_delay(const char *msg,
 			    trie_node *variant, trie_node *answer);
 static void	print_answer(const char *msg, trie_node *answer);
-static int	put_delay_info(term_t t, trie_node *answer);
+static bool	put_delay_info(term_t t, trie_node *answer);
 static void	print_answer_table(trie *atrie, const char *msg, ...);
 #endif
 static int	simplify_component(tbl_component *scc);
@@ -166,7 +167,7 @@ static void	reeval_complete(trie *atrie);
 static void	reset_reevaluation(trie *atrie);
 static int	unify_component_status(term_t t, tbl_component *scc);
 static int	simplify_answer(worklist *wl, trie_node *answer, int truth);
-static int	table_is_incomplete(trie *trie);
+static bool	table_is_incomplete(trie *trie);
 static int	idg_add_edge(trie *atrie, trie *ctrie);
 static int	idg_set_current_wl(term_t wlref);
 #ifdef O_PLMT
@@ -319,7 +320,7 @@ free_component(tbl_component *c, int flags)
   if ( c == LD->tabling.component )
   { LD->tabling.component = c->parent;
     if ( !c->parent && LD->tabling.has_scheduling_component )
-      LD->tabling.has_scheduling_component = FALSE;
+      LD->tabling.has_scheduling_component = false;
   }
 
   initSegStack(&stack, sizeof(Component), sizeof(buf), buf);
@@ -427,7 +428,7 @@ merge_component(tbl_component *c)
 static void
 wl_set_component(worklist *wl, tbl_component *c)
 { wl->component = c;
-  wl->executing = FALSE;
+  wl->executing = false;
   if ( !wl->in_global_wl && wl_has_work(wl) )
     add_global_worklist(wl);
   if ( wl->negative )
@@ -565,7 +566,7 @@ add_global_worklist(worklist *wl)
   else
     addBuffer(&wls->members, wl, worklist*);
 
-  wl->in_global_wl = TRUE;
+  wl->in_global_wl = true;
 }
 
 
@@ -598,7 +599,7 @@ negative_worklist(DECL_LD tbl_component *scc)
       { cluster *c;
 	answer ans = {NULL};
 
-	wl->neg_delayed = TRUE;
+	wl->neg_delayed = true;
 	DEBUG(MSG_TABLING_NEG,
 	      { term_t t = PL_new_term_ref();
 		unify_trie_term(wl->table->data.variant, NULL, t);
@@ -647,7 +648,7 @@ pop_worklist(DECL_LD tbl_component *c)
   if ( wls )
   { while( !isEmptyBuffer(&wls->members) )
     { worklist *wl = popBuffer(&wls->members, worklist*);
-      wl->in_global_wl = FALSE;
+      wl->in_global_wl = false;
 
       if ( wl_has_work(wl) )
 	return wl;
@@ -712,7 +713,7 @@ free_worklist_set(worklist_set *wls, int freewl)
     for(i=0; i<nwpl; i++)
     { worklist *wl = wlp[i];
 
-      if ( (freewl&WLFS_FREE_ALL) || true(wl->table, TRIE_COMPLETE) )
+      if ( (freewl&WLFS_FREE_ALL) || ison(wl->table, TRIE_COMPLETE) )
       { free_worklist(wl);
       } else if ( (freewl&WLFS_DISCARD_INCOMPLETE) )
       { trie *atrie = wl->table;
@@ -778,7 +779,7 @@ answer_delay_info(worklist *wl, trie_node *answer, int create)
   { return NULL;
   } else if ( (di=malloc(sizeof(*di))) )
   { di->variant = wl->table->data.variant;
-    di->has_share_records = FALSE;
+    di->has_share_records = false;
     initBuffer(&di->delay_sets);
     initBuffer(&di->delays);
     answer->data.delayinfo = di;
@@ -794,7 +795,7 @@ answer_delay_info(worklist *wl, trie_node *answer, int create)
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 destroy_delay_info(trie_node  *answer,  int  propagate)    removes   and
 deallocates the delay info  that  may   be  associated  to  `answer`. If
-`propagate` is TRUE, it also removes   the backpointers to `answer` from
+`propagate` is true, it also removes   the backpointers to `answer` from
 the worklist `delay` buffer of worklists   that  are references from the
 delay elements.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
@@ -868,7 +869,7 @@ destroy_delay_info(trie *atrie, trie_node *answer, int propagate)
 
 static void
 answer_set_general_undefined(trie *atrie, trie_node *answer)
-{ destroy_delay_info(atrie, answer, TRUE);
+{ destroy_delay_info(atrie, answer, true);
   answer->data.delayinfo = DL_UNDEFINED;
 }
 
@@ -894,7 +895,7 @@ delete_depending_answers(worklist *wl, TmpBuffer wlset)
     assert(wl->depend_abolish);
 
     if ( DL_IS_DELAY_LIST(di=answer->data.delayinfo) )
-    { trie *at = symbol_trie(di->variant->value);
+    { trie *at = symbol_trie(word2atom(di->variant->value));
       worklist *dwl;
 
       if ( WL_IS_WORKLIST((dwl=at->data.worklist)) &&
@@ -903,7 +904,7 @@ delete_depending_answers(worklist *wl, TmpBuffer wlset)
 	assert(dwl->table != wl->table);
 	DEBUG(MSG_TABLING_VTRIE_DEPENDENCIES,
 	      print_dl_dependency(wl->table, dwl->table));
-	dwl->depend_abolish = TRUE;
+	dwl->depend_abolish = true;
 	addBuffer(wlset, dwl, worklist *);
       }
       answer_set_general_undefined(at, answer);
@@ -927,7 +928,7 @@ destroy_depending_worklists(worklist *wl0)
 { tmp_buffer wlset;
 
   initBuffer(&wlset);
-  wl0->depend_abolish = TRUE;
+  wl0->depend_abolish = true;
   delete_depending_answers(wl0, &wlset);
   while( !isEmptyBuffer(&wlset) )
   { worklist *wl = popBuffer(&wlset, worklist *);
@@ -1025,7 +1026,7 @@ add_to_wl_delays(trie *at, trie_node *answer, worklist *wla)
     assert(0);
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1055,13 +1056,13 @@ equal_delay_set(const delay *delays, const delay_set *a, const delay_set *b)
 
     for( ; ia < ea; ia++, ib++)
     { if ( !equal_delay(&delays[ia], &delays[ib]) )
-	return FALSE;
+	return false;
     }
 
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -1074,29 +1075,20 @@ simplify_delay_set(delay_info *di, delay_set *ds)
   { if ( equal_delay_set(delays, base, ds) )
     { seekBuffer(&di->delays, ds->offset, delay);
       popBufferP(&di->delay_sets, delay_set);
-      return TRUE;
+      return true;
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
 #define word_to_answer(w) LDFUNC(word_to_answer, w)
-static trie_node *
+static inline trie_node *
 word_to_answer(DECL_LD word w)
-{
-#if SIZEOF_VOIDP == 8
-   assert(isTaggedInt(w));
-   return intToPointer(valInt(w));
-#else
-   if ( isTaggedInt(w) )
-   { return intToPointer(valInt(w));
-   } else
-   { assert(isBignum(w));
-     return intToPointer(valBignum(w));
-   }
-#endif
+{ assert(isTaggedInt(w));
+
+  return intToPointer((uintptr_t)valInt(w));
 }
 
 
@@ -1137,17 +1129,17 @@ retry:
   { delay_info *di;
 
     if ( (di=answer->data.delayinfo) )
-    { destroy_delay_info(wl->table, answer, TRUE);
+    { destroy_delay_info(wl->table, answer, true);
       answer->data.delayinfo = NULL;
       wl->undefined--;
       DEBUG(MSG_TABLING_SIMPLIFY,
 	    Sdprintf("Unconditional answer after conditional\n"));
-      simplify_answer(wl, answer, TRUE);
+      simplify_answer(wl, answer, true);
     }
 					/* Incremental tabling */
     if ( wl->table->data.IDG && wl->table->data.IDG->reevaluating )
-    { if ( false(answer, TN_IDG_UNCONDITIONAL) )
-	simplify_answer(wl, answer, TRUE);
+    { if ( isoff(answer, TN_IDG_UNCONDITIONAL) )
+	simplify_answer(wl, answer, true);
     }
 
     DEBUG(TABLING_NO_EARLY_COMPLETION,
@@ -1157,7 +1149,7 @@ retry:
       return UDL_COMPLETE;
     return UDL_TRUE;
   } else
-  { delay_info *di = answer_delay_info(wl, answer, TRUE);
+  { delay_info *di = answer_delay_info(wl, answer, true);
     delay_set  *ds = create_delay_set(di);
     size_t count;
     Word tail;
@@ -1172,7 +1164,7 @@ retry:
     if ( !hasGlobalSpace(count+2) )
     { int rc;
 
-      if ( (rc = ensureGlobalSpace(count+2, ALLOW_GC)) != TRUE )
+      if ( (rc = ensureGlobalSpace(count+2, ALLOW_GC)) != true )
 	return raiseStackOverflow(rc);
       goto retry;
     }
@@ -1200,11 +1192,11 @@ retry:
 	  h = HeadList(dlp);
 	  deRef(h);
 	  if ( isAtom(*h) )		/* Answer trie symbol */
-	  { if ( (at=symbol_trie(*h)) )
+	  { if ( (at=symbol_trie(word2atom(*h))) )
 	    { an = NULL;
 	    } else			/* deleted trie or 'undefined' */
 	    { undef:
-	      destroy_delay_info(wl->table, answer, TRUE);
+	      destroy_delay_info(wl->table, answer, true);
 	      answer->data.delayinfo = DL_UNDEFINED;
 	      return UDL_TRUE;
 	    }
@@ -1215,7 +1207,7 @@ retry:
 	    if ( f->definition == FUNCTOR_plus2 )
 	    { deRef2(&f->arguments[0], p);
 	      assert(isAtom(*p));
-	      if ( !(at=symbol_trie(*p)) )
+	      if ( !(at=symbol_trie(word2atom(*p))) )
 	      { goto undef;
 	      }
 	      deRef2(&f->arguments[1], p);
@@ -1241,21 +1233,21 @@ retry:
 		  }
 		}
 
-		if ( true(at, TRIE_ISMAP) )	/* answer subsumption */
+		if ( ison(at, TRIE_ISMAP) )	/* answer subsumption */
 		{ Word rp;
 		  trie_node *root;
 
 		  assert(hasFunctor(*p, FUNCTOR_divide2));
 		  rp = argTermP(*p, 0);
-		  rc = trie_lookup(at, NULL, &root, rp+0, TRUE, NULL);
-		  if ( rc == TRUE )
-		  { rc = trie_lookup(at, root, &an, rp+1, TRUE, NULL);
+		  rc = trie_lookup(at, NULL, &root, rp+0, true, NULL);
+		  if ( rc == true )
+		  { rc = trie_lookup(at, root, &an, rp+1, true, NULL);
 		  }
 		} else
-		{ rc = trie_lookup(at, NULL, &an, p, TRUE, NULL);
+		{ rc = trie_lookup(at, NULL, &an, p, true, NULL);
 		}
 
-		if ( rc == TRUE )
+		if ( rc == true )
 		{ // TBD: can we immediately simplify if this already has a value?
 		  DEBUG(MSG_TABLING_DELAY_VAR,
 			print_delay("Waiting for instantiated",
@@ -1292,7 +1284,7 @@ retry:
 	if ( r )
 	{ if ( !add_to_delay_set(di, ds, NULL, REC_DELAY(r)) )
 	    goto nomem;
-	  di->has_share_records = TRUE;
+	  di->has_share_records = true;
 	} else
 	{ return UDL_FALSE;
 	}
@@ -1348,7 +1340,7 @@ init_delay_list(void)
 }
 
 
-int
+bool
 PL_get_delay_list(term_t t)
 { GET_LD
 
@@ -1385,7 +1377,7 @@ PRED_IMPL("$tbl_set_delay_list", 1, tbl_set_delay_list, 0)
   if ( !hasGlobalSpace(0) )
   { int rc;
 
-    if ( (rc=ensureGlobalSpace(0, ALLOW_GC)) != TRUE )
+    if ( (rc=ensureGlobalSpace(0, ALLOW_GC)) != true )
       return raiseStackOverflow(rc);
   }
 
@@ -1397,7 +1389,7 @@ PRED_IMPL("$tbl_set_delay_list", 1, tbl_set_delay_list, 0)
     unify_vp(p, valTermRef(A1));
   }
 
-  return TRUE;
+  return true;
 }
 
 #define push_delay_list(p) LDFUNC(push_delay_list, p)
@@ -1423,9 +1415,9 @@ delay_to_data(DECL_LD trie_node *answer, Word wrapper)
   { return consInt(0);
   } else if ( is_ground_trie_node(answer) )
   {
-#if SIZEOF_VOIDP == 8
-    intptr_t rc = consInt(pointerToInt(answer));
-    DEBUG(0, assert(intToPointer(valInt(rc)) == answer));
+#if SIZEOF_WORD == 8
+    word rc = consInt(pointerToInt(answer));
+    DEBUG(0, assert(intToPointer((uintptr_t)valInt(rc)) == answer));
     return rc;
 #else
     word rc;
@@ -1436,7 +1428,7 @@ delay_to_data(DECL_LD trie_node *answer, Word wrapper)
     { return rc;
     } else
     { int rcp = put_int64(&rc, i, 0);
-      return rcp == TRUE ? rc : 0;
+      return rcp == true ? rc : 0;
     }
 #endif
   } else
@@ -1494,7 +1486,7 @@ PRED_IMPL("$tbl_add_global_delays", 2, tbl_add_global_delays, 0)
     assert(isNil(*tailp));
 
     if ( !(p=allocGlobal(3*len)) )
-      return FALSE;
+      return false;
     l = consPtr(p, TAG_COMPOUND|STG_GLOBAL);
 
     dlp = valTermRef(dl);
@@ -1507,7 +1499,7 @@ PRED_IMPL("$tbl_add_global_delays", 2, tbl_add_global_delays, 0)
       deRef(dlp);
       if ( isNil(*dlp) )
       { *p = linkValI(valTermRef(A1));
-	return _PL_unify_atomic(A2, l);
+	return PL_unify_atomic(A2, l);
       }
       *p   = consPtr(&p[1], TAG_COMPOUND|STG_GLOBAL);
       p++;
@@ -1551,7 +1543,7 @@ push_propagate(spf_agenda *a, worklist *wl, trie_node *answer, int result)
   p->answer   = answer;
   p->result   = result;
 
-  return TRUE;
+  return true;
 }
 
 static propagate *
@@ -1574,24 +1566,24 @@ make_answer_unconditional(spf_agenda *agenda, trie_node *answer)
 { delay_info *di = answer->data.delayinfo;
 
   if ( DL_IS_DELAY_LIST(di) )
-  { trie *at = symbol_trie(di->variant->value);
+  { trie *at = symbol_trie(word2atom(di->variant->value));
     worklist *wl = at->data.worklist;
     assert(wl->magic == WORKLIST_MAGIC);
 
     DEBUG(MSG_TABLING_SIMPLIFY,
 	  print_delay("   Making answer unconditional", di->variant, answer));
 
-    destroy_delay_info(at, answer, TRUE);
+    destroy_delay_info(at, answer, true);
     agenda->done++;
     wl->undefined--;
 
     if ( !isEmptyBuffer(&wl->delays) )
-      push_propagate(agenda, wl, answer, TRUE);
+      push_propagate(agenda, wl, answer, true);
   } else
   { assert(0);
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1600,7 +1592,7 @@ remove_conditional_answer(spf_agenda *agenda, trie_node *answer)
 { delay_info *di = answer->data.delayinfo;
 
   if ( DL_IS_DELAY_LIST(di) )
-  { trie *at = symbol_trie(di->variant->value);
+  { trie *at = symbol_trie(word2atom(di->variant->value));
     worklist *wl = at->data.worklist;
 
     assert(wl->magic == WORKLIST_MAGIC);
@@ -1608,16 +1600,16 @@ remove_conditional_answer(spf_agenda *agenda, trie_node *answer)
     DEBUG(MSG_TABLING_SIMPLIFY,
 	  print_delay("    Removing conditional answer", di->variant, answer));
 
-    destroy_delay_info(at, answer, TRUE);
-    trie_delete(at, answer, TRUE);		/* cannot prune as may be */
+    destroy_delay_info(at, answer, true);
+    trie_delete(at, answer, true);		/* cannot prune as may be */
     agenda->done++;				/* in worklist delay lists */
     wl->undefined--;
 
     if ( !isEmptyBuffer(&wl->delays) )
-      push_propagate(agenda, wl, answer, FALSE);
+      push_propagate(agenda, wl, answer, false);
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1631,8 +1623,8 @@ answer_delay_sets(delay_info *di, delay_set **base, delay_set **top)
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Propagate a result in worklist wl. For  negative nodes `answer` is NULL.
-The `result` indicates whether the  answer   is  satisfied (TRUE) or not
-(FALSE). If an answer is satisfied it is removed from the delay list and
+The `result` indicates whether the  answer   is  satisfied (true) or not
+(false). If an answer is satisfied it is removed from the delay list and
 if  the  resulting  delay  list  becomes    empty  the  answer  is  made
 unconditional. Otherwise the delay list can   no longer become satisfied
 and we remove the delay list. If this was the last delay list the answer
@@ -1647,11 +1639,11 @@ propagate_to_answer(spf_agenda *agenda, worklist *wl,
 		    trie_node *panswer, int result, trie_node *answer)
 { delay_info *di;
   trie *variant = wl->table;
-  int found = FALSE;
+  int found = false;
 
   DEBUG(MSG_TABLING_SIMPLIFY, print_answer("  to", answer));
 
-  if ( (di=answer_delay_info(NULL, answer, FALSE)) )
+  if ( (di=answer_delay_info(NULL, answer, false)) )
   { delay_set *ds, *dz;
     delay *db = baseBuffer(&di->delays, delay);
 
@@ -1672,7 +1664,7 @@ propagate_to_answer(spf_agenda *agenda, worklist *wl,
 			   wl->component->simplifications));
 
 	    if ( d->answer == NULL )
-	    { if ( result == FALSE &&
+	    { if ( result == false &&
 		   (wl->has_answers || wl->undefined) )
 		continue;
 	      res = !result;
@@ -1680,7 +1672,7 @@ propagate_to_answer(spf_agenda *agenda, worklist *wl,
 	    { res = result;
 	    }
 
-	    found = TRUE;
+	    found = true;
 	    wl->component->simplifications++;
 
 	    if ( res )			/* remove member from conjunction */
@@ -1718,7 +1710,7 @@ static int
 propagate_result(spf_agenda *agenda,
 		 worklist *wl, trie_node *panswer, int result)
 { DEBUG(MSG_TABLING_SIMPLIFY,
-	{ print_delay(result ? "Propagating TRUE" : "Propagating FALSE",
+	{ print_delay(result ? "Propagating true" : "Propagating false",
 		      wl->table->data.variant, panswer);
 	  Sdprintf("  %zd dependent answers\n",
 		   entriesBuffer(&wl->delays, trie_node*));
@@ -1730,7 +1722,7 @@ propagate_result(spf_agenda *agenda,
     propagate_to_answer(agenda, wl, panswer, result, answer);
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1745,7 +1737,7 @@ simplify_answer(worklist *wl, trie_node *answer, int truth)
     propagate_result(&agenda, p->worklist, p->answer, p->result);
   exit_spf_agenda(&agenda);
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1795,7 +1787,7 @@ simplify_component(tbl_component *scc)
 	      });
 
 	count++;
-	push_propagate(&agenda, wl, NULL, FALSE);
+	push_propagate(&agenda, wl, NULL, false);
 	while( (p=pop_propagate(&agenda)) )
 	  propagate_result(&agenda, p->worklist, p->answer, p->result);
       }
@@ -1853,7 +1845,7 @@ simplify_component(tbl_component *scc)
   if ( undefined && scc->simplifications )
     return answer_completion(scc);
   else
-    return TRUE;
+    return true;
 }
 
 #ifdef O_DEBUG
@@ -1913,19 +1905,19 @@ call_answer_completion(DECL_LD trie *atrie)
 	  });
 
     LD->tabling.component = NULL;
-    LD->tabling.has_scheduling_component = FALSE;
-    LD->tabling.in_answer_completion = TRUE;
+    LD->tabling.has_scheduling_component = false;
+    LD->tabling.in_answer_completion = true;
     rc = ( PL_put_atom(av+0, atrie->symbol) &&
 	   unify_skeleton(atrie, 0, av+1) &&
 	   PL_call_predicate(NULL, PL_Q_PASS_EXCEPTION, pred, av) );
-    LD->tabling.in_answer_completion = FALSE;
+    LD->tabling.in_answer_completion = false;
     LD->tabling.has_scheduling_component = hsc;
     LD->tabling.component = scc_old;
 
     PL_close_foreign_frame(fid);
     return rc;
   } else
-    return FALSE;				/* stack overflow */
+    return false;				/* stack overflow */
 }
 
 
@@ -1953,13 +1945,13 @@ has_positive_dl(trie_node *n)
 
 	if ( d->variant && d->variant != DV_DELETED )
 	{ if ( d->answer )
-	    return TRUE;
+	    return true;
 	}
       }
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 static int
@@ -1971,11 +1963,11 @@ is_ac_candidate_wl(worklist *wl)
 
     for( ; n < z; n++)
     { if ( has_positive_dl(*n) )
-	return TRUE;
+	return true;
     }
   }
 
-  return FALSE;
+  return false;
 }
 #endif /*O_AC_EAGER*/
 
@@ -1986,11 +1978,11 @@ answer_completion(tbl_component *scc)
 
 #ifdef O_DEBUG
   if ( DEBUGGING(TABLING_NO_AC) )
-    return TRUE;
+    return true;
 #endif
 
   if ( LD->tabling.in_answer_completion )
-    return TRUE;			/* not recursive! */
+    return true;			/* not recursive! */
 
 #ifdef O_AC_EAGER
   worklist **wlp = baseBuffer(&scc->created_worklists->members, worklist*);
@@ -2001,11 +1993,11 @@ answer_completion(tbl_component *scc)
 
     if ( is_ac_candidate_wl(wl) )
     { if ( !call_answer_completion(wl->table) )
-	return FALSE;
+	return false;
     }
   }
 
-  return TRUE;
+  return true;
 #else
   return call_answer_completion(scc->leader);
 #endif /*O_AC_EAGER*/
@@ -2023,7 +2015,7 @@ PRED_IMPL("$tbl_force_truth_value", 3, tbl_force_truth_value, 0)
 { PRED_LD
   void *ptr;
   int truth;
-  int rc = FALSE;
+  int rc = false;
 
   if ( PL_get_pointer_ex(A1, &ptr) &&
        PL_get_bool_ex(A2, &truth) )
@@ -2035,7 +2027,7 @@ PRED_IMPL("$tbl_force_truth_value", 3, tbl_force_truth_value, 0)
     init_spf_agenda(&agenda);
 
     if ( DL_IS_DELAY_LIST(di) )
-    { trie *at = symbol_trie(di->variant->value);
+    { trie *at = symbol_trie(word2atom(di->variant->value));
       worklist *wl = at->data.worklist;
 
       DEBUG(MSG_TABLING_AC,
@@ -2048,7 +2040,7 @@ PRED_IMPL("$tbl_force_truth_value", 3, tbl_force_truth_value, 0)
 	      PL_write_term(Serror, a, 999, 0);
 	      Sdprintf(" for ");
 	      PL_write_term(Serror, v, 999, 0);
-	      Sdprintf(" to FALSE\n");
+	      Sdprintf(" to false\n");
 	    });
 
       if ( WL_IS_WORKLIST(wl) )
@@ -2063,9 +2055,9 @@ PRED_IMPL("$tbl_force_truth_value", 3, tbl_force_truth_value, 0)
     { if ( !truth )
       { trie *at = get_trie_from_node(answer);
 
-	trie_delete(at, answer, FALSE);		/* TBD: propagate? */
+	trie_delete(at, answer, false);		/* TBD: propagate? */
       }
-      rc = TRUE;
+      rc = true;
     }
 
     while( rc && (p=pop_propagate(&agenda)) )
@@ -2088,18 +2080,18 @@ PRED_IMPL("$tbl_set_answer_completed", 1, tbl_set_answer_completed, 0)
   { worklist *wl;
 
     if ( WL_IS_WORKLIST((wl=trie->data.worklist)) )
-    { wl->answer_completed = TRUE;
+    { wl->answer_completed = true;
 
-      return TRUE;
+      return true;
     }
 
-    if ( true(trie, TRIE_COMPLETE) )
-      return TRUE;
+    if ( ison(trie, TRIE_COMPLETE) )
+      return true;
 
     return PL_permission_error("set_answer_complete", "trie", A1);
   }
 
-  return FALSE;
+  return false;
 }
 
 static
@@ -2112,10 +2104,10 @@ PRED_IMPL("$tbl_is_answer_completed", 1, tbl_is_answer_completed, 0)
     if ( WL_IS_WORKLIST((wl=trie->data.worklist)) )
       return wl->answer_completed;
 
-    return !!true(trie, TRIE_COMPLETE);
+    return !!ison(trie, TRIE_COMPLETE);
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -2169,7 +2161,7 @@ print_answer_table(trie *atrie, const char *msg, ...)
   va_start(args, msg);
   unify_trie_term(atrie->data.variant, NULL, t);
   if ( msg )
-  { if ( true(atrie, TRIE_ISSHARED) )
+  { if ( ison(atrie, TRIE_ISSHARED) )
       Sdprintf("Thread [%d]: ", PL_thread_self());
 
     Svdprintf(msg, args);
@@ -2195,9 +2187,9 @@ save_tabling_status(tbl_status *state)
   state->iap = LD->tabling.in_assert_propagation;
 
   LD->tabling.component                = NULL;
-  LD->tabling.has_scheduling_component = FALSE;
-  LD->tabling.in_answer_completion     = FALSE;
-  LD->tabling.in_assert_propagation    = FALSE;
+  LD->tabling.has_scheduling_component = false;
+  LD->tabling.in_answer_completion     = false;
+  LD->tabling.in_assert_propagation    = false;
 }
 
 
@@ -2214,14 +2206,20 @@ restore_tabling_status(tbl_status *state)
 
 
 		 /*******************************
-		 *     THREAD VARIANT TABLE	*
+		 *     (THREAD) VARIANT TABLE	*
 		 *******************************/
 
 static void release_variant_table_node(trie *trie, trie_node *node);
 
+/* Get the variant  table.  If `shared` is `true`, this  is for shared
+ * tabling.  Otherwise  it is for  (thread) local tabling.   This trie
+ * maps call variants to answer tables.
+ */
+
 #define variant_table(shared) LDFUNC(variant_table, shared)
+
 static trie *
-variant_table(DECL_LD int shared)
+variant_table(DECL_LD bool shared)
 { trie **tp;
   alloc_pool *pool;
 
@@ -2265,7 +2263,7 @@ variant_table(DECL_LD int shared)
 	  acquire_trie(t);			/* bit misuse */
 	}
       } else
-      { PL_unregister_atom(symb);			/* destroyed by atom-GC */
+      { PL_unregister_atom(symb);		/* destroyed by atom-GC */
       }
     }
   }
@@ -2293,7 +2291,7 @@ reset_answer_table(trie *atrie, int cleanup)
   clear(atrie, TRIE_COMPLETE);
 
   if ( (n=atrie->data.IDG) )
-  { if ( true(atrie, TRIE_ISSHARED) && GD->cleaning != CLN_DATA )
+  { if ( ison(atrie, TRIE_ISSHARED) && GD->halt.cleaning != CLN_DATA )
     { idg_reset(n);
     } else
     { atrie->data.IDG = NULL;
@@ -2301,7 +2299,7 @@ reset_answer_table(trie *atrie, int cleanup)
     }
   }
 
-  if ( true(atrie, TRIE_ISTRACKED) )
+  if ( ison(atrie, TRIE_ISTRACKED) )
     tt_abolish_table(atrie);
 
   trie_empty(atrie);
@@ -2313,7 +2311,7 @@ release_variant_table_node(trie *variant_table, trie_node *node)
 { (void)variant_table;
 
   if ( node->value )
-  { trie *atrie = symbol_trie(node->value);
+  { trie *atrie = symbol_trie(word2atom(node->value));
 
     reset_answer_table(atrie, variant_table->magic == TRIE_CMAGIC);
     assert(atrie->data.variant == node);
@@ -2322,7 +2320,7 @@ release_variant_table_node(trie *variant_table, trie_node *node)
 }
 
 
-static int
+static bool
 is_variant_trie(trie *trie)
 { return trie->release_node == release_variant_table_node;
 }
@@ -2334,7 +2332,7 @@ clear_variant_table(trie **vtriep)
 
   if ( (vtrie=*vtriep) )
   { vtrie->magic = TRIE_CMAGIC;
-    if ( true(vtrie, TRIE_ISSHARED) )
+    if ( ison(vtrie, TRIE_ISSHARED) )
       release_trie(vtrie);			/* acquired in variant_table() */
     trie_empty(vtrie);
     PL_unregister_atom(vtrie->symbol);
@@ -2347,11 +2345,30 @@ clear_variant_table(trie **vtriep)
 static functor_t fast_ret_functor[VAR_SKEL_FAST] = {0};
 
 #define unify_trie_ret(ret, vars) LDFUNC(unify_trie_ret, ret, vars)
-static int
+
+static size_t
+trie_ret_arity(Word const *pp, Word const *ep)
+{
+#if O_TRIE_ATTVAR
+  size_t arity = 0;
+
+  for(Word const *ap = pp; ap<ep; ap++)
+  { if ( isAttVar(**ap) )
+      ap++;
+    arity++;
+  }
+
+  return arity;
+#else
+  return ep-pp;
+#endif
+}
+
+static int /* bool or *_OVERFLOW */
 unify_trie_ret(DECL_LD term_t ret, TmpBuffer vars)
 { Word *pp = baseBuffer(vars, Word);
   Word *ep = topBuffer(vars, Word);
-  size_t arity = ep-pp;
+  size_t arity = trie_ret_arity(pp, ep);
   functor_t vf;
 
   assert(arity > 0);
@@ -2373,13 +2390,19 @@ unify_trie_ret(DECL_LD term_t ret, TmpBuffer vars)
     { Word ap = *pp;
 
       if ( isVar(*ap) )
-	*p++ = makeRefG(ap);
-      else
-	*p++ = *ap;
+      { *p++ = makeRefG(ap);
+#if O_TRIE_ATTVAR
+      } else if ( isAttVar(*ap) )
+      { *p++ = makeRefG(ap);
+	pp++;			/* skip attribute */
+#endif
+      } else			/* can this happen? */
+      { *p++ = *ap;
+      }
     }
 
     if ( PL_is_variable(ret) )
-      return _PL_unify_atomic(ret, w);
+      return PL_unify_atomic(ret, w);
     else
       return unify_ptrs(valTermRef(ret), &w, ALLOW_RETCODE);
   }
@@ -2391,7 +2414,7 @@ unify_trie_ret(DECL_LD term_t ret, TmpBuffer vars)
 static void
 release_answer_node(trie *atrie, trie_node *node)
 { if ( DL_IS_DELAY_LIST(node->data.delayinfo) )
-    destroy_delay_info(atrie, node, TRUE);
+    destroy_delay_info(atrie, node, true);
 }
 
 
@@ -2399,7 +2422,7 @@ release_answer_node(trie *atrie, trie_node *node)
 get_answer_table(+Variant, -Return, int flags)
 
 Find the answer table for  Variant  and   its  return  template  (a term
-ret/N). If `create` is TRUE, create the table if it does not exist.
+ret/N). If `create` is true, create the table if it does not exist.
 
 (*) We must avoid a race  with   trie_discard_clause().  As  long as the
 (atom) clause reference is not garbage collected  the clause is safe. We
@@ -2443,7 +2466,7 @@ get_answer_table(DECL_LD Definition def, term_t t, term_t ret, atom_t *clrefp,
   Word v;
   tmp_buffer vars;
   mark m;
-  int shared;
+  bool shared;
   size_abstract sa = {.from_depth = 2, .size = (size_t)-1};
 
 #ifdef O_PLMT
@@ -2460,10 +2483,10 @@ get_answer_table(DECL_LD Definition def, term_t t, term_t ret, atom_t *clrefp,
 	return NULL;
       }
     }
-    shared = def->tabling && true(def->tabling, TP_SHARED);
+    shared = def->tabling && ison(def->tabling, TP_SHARED);
   }
 #else
-  shared = FALSE;
+  shared = false;
 #endif
 
   if ( def )			/* otherwise we don't need it anyway */
@@ -2499,7 +2522,7 @@ retry:
     }
 
     if ( node->value )
-    { atrie = symbol_trie(node->value);
+    { atrie = symbol_trie(word2atom(node->value));
     } else if ( (flags&AT_CREATE) )
     { atom_t symb;
 #ifdef O_PLMT
@@ -2511,7 +2534,7 @@ retry:
 
       if ( !(atrie = trie_create(pool)) )
 	return NULL;
-      set(atrie, (flags&AT_MODED) ? TRIE_ISMAP : TRIE_ISSET);
+      set(atrie, TRIE_ISTABLE|((flags&AT_MODED) ? TRIE_ISMAP : TRIE_ISSET));
       atrie->data.predicate = def;
       atrie->release_node = release_answer_node;
       atrie->data.variant = node;
@@ -2526,7 +2549,7 @@ retry:
 	} else
 	{ release_trie_ref(symb);
 	  PL_unregister_atom(symb);
-	  atrie = symbol_trie(node->value);
+	  atrie = symbol_trie(word2atom(node->value));
 	}
       } else
 #endif
@@ -2549,7 +2572,7 @@ retry:
     if ( ret )
     { if ( isEmptyBuffer(&vars) )		/* TBD: only needed first time */
       { if ( WL_IS_WORKLIST(atrie->data.worklist) )
-	{ atrie->data.worklist->ground = TRUE;
+	{ atrie->data.worklist->ground = true;
 	} else if ( !atrie->data.worklist )
 	{ atrie->data.worklist = WL_GROUND;
 	}
@@ -2558,7 +2581,7 @@ retry:
       } else
       { int rc;
 
-	if ( (rc=unify_trie_ret(ret, &vars)) != TRUE )
+	if ( (rc=unify_trie_ret(ret, &vars)) != true )
 	{ if ( rc < 0 )
 	  { Undo(m);
 	    emptyBuffer(&vars, (size_t)-1);
@@ -2593,46 +2616,6 @@ clearThreadTablingData(PL_local_data_t *ld)
 		 *   CALL SUBSUPTION INDEXING	*
 		 *******************************/
 
-/* TBD: Share with pl-index.c */
-
-#define indexOfWord(w) LDFUNC(indexOfWord, w)
-static word
-indexOfWord(DECL_LD word w)
-{ for(;;)
-  { switch(tag(w))
-    { case TAG_VAR:
-      case TAG_ATTVAR:
-	return 0;
-      case TAG_ATOM:
-	break;				/* atom_t */
-      case TAG_INTEGER:
-	if ( storage(w) == STG_INLINE )
-	  break;
-      /*FALLTHROUGH*/
-      case TAG_STRING:
-      case TAG_FLOAT:
-      { Word p = addressIndirect(w);
-	size_t n = wsizeofInd(*p);
-	word k;
-
-	k = MurmurHashAligned2(p+1, n*sizeof(*p), MURMUR_SEED);
-	k &= ~((word)STG_GLOBAL);	/* avoid confusion with functor_t */
-	if ( !k ) k = 1;		/* avoid no-key */
-	return k;
-      }
-      case TAG_COMPOUND:
-	w = *valPtr(w);			/* functor_t */
-	break;
-      case TAG_REFERENCE:
-	w = *unRef(w);
-	continue;
-    }
-
-    return w;
-  }
-}
-
-
 #define suspension_keys(instance) LDFUNC(suspension_keys, instance)
 static sindex_key *
 suspension_keys(DECL_LD term_t instance)
@@ -2649,11 +2632,11 @@ suspension_keys(DECL_LD term_t instance)
       arity = SINDEX_MAX;
 
     for(i=0; i<arity; i++)
-    { unsigned int ki = indexOfWord(f->arguments[i]);
+    { word ki = index_of_word(f->arguments[i]);
 
       if ( ki )
       { k->argn = i+1;
-	k->key  = ki;
+	k->key  = (unsigned int)ki;
 	if ( ++k >= &keys[SINDEX_MAX-1] )
 	  break;
       }
@@ -2686,11 +2669,11 @@ suspension_matches_index(const suspension *susp, const sindex_key *skeys)
     { const sindex_key *sk = &skeys[k->argn];
 
       if ( unlikely(k->key != sk->key) && likely(!!sk->key) )
-	return FALSE;
+	return false;
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -2714,7 +2697,7 @@ suspension_matches(DECL_LD term_t answer, const suspension *susp)
     ok = PL_unify(tmp, answer);
     PL_discard_foreign_frame(fid);
 
-    return ok ? TRUE : PL_exception(0) ? -1 : FALSE;
+    return ok ? true : PL_exception(0) ? -1 : false;
   } else
     return -1;
 }
@@ -2805,12 +2788,12 @@ static int
 new_suspension(DECL_LD suspension *sp, term_t term, int is_tnot,
 	       term_t instance)
 { if ( !(sp->term=PL_record(term)) )
-    return FALSE;
+    return false;
 
   if ( unlikely(instance) )
   { if ( !(sp->instance=PL_record(instance)) )
     { PL_erase(sp->term);
-      return FALSE;
+      return false;
     }
     sp->keys = suspension_keys(instance);
   } else
@@ -2820,7 +2803,7 @@ new_suspension(DECL_LD suspension *sp, term_t term, int is_tnot,
 
   sp->term = TNOT(sp->term, is_tnot);
 
-  return TRUE;
+  return true;
 }
 
 
@@ -2874,10 +2857,10 @@ add_to_suspension_cluster(DECL_LD cluster *c, term_t sterm, int is_tnot,
 { suspension s;
 
   if ( !new_suspension(&s, sterm, is_tnot, instance) )
-    return FALSE;
+    return false;
   addBuffer(&c->members, s, suspension);
 
-  return TRUE;
+  return true;
 }
 
 static void
@@ -2932,7 +2915,7 @@ new_worklist(trie *trie)
   wl->magic = WORKLIST_MAGIC;
   wl->table = trie;
   if ( trie->data.worklist == WL_GROUND )
-    wl->ground = TRUE;
+    wl->ground = true;
   initBuffer(&wl->delays);
   initBuffer(&wl->pos_undefined);
   trie->data.worklist = wl;
@@ -3021,13 +3004,13 @@ complete_worklist(DECL_LD worklist *wl, int destroy)
 static int
 worklist_negative(worklist *wl)
 { if ( !wl->negative )
-  { wl->negative = TRUE;
+  { wl->negative = true;
     add_delay_worklist(wl);
     if ( wl->component->neg_status == SCC_NEG_NONE )
       wl->component->neg_status = SCC_NEG_DELAY;
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -3150,7 +3133,7 @@ wkl_add_answer(DECL_LD worklist *wl, trie_node *an)
   answer ans = {an};
 
   if ( !answer_is_conditional(an) )
-    wl->has_answers = TRUE;
+    wl->has_answers = true;
 
   if ( wl->head && wl->head->type == CLUSTER_ANSWERS )
   { add_to_answer_cluster(wl->head, &ans);
@@ -3164,7 +3147,7 @@ wkl_add_answer(DECL_LD worklist *wl, trie_node *an)
 	{ print_worklist("Added answer: ", wl);
 	});
 
-  return TRUE;
+  return true;
 }
 
 
@@ -3175,18 +3158,18 @@ wkl_add_suspension(DECL_LD worklist *wl, term_t suspension, int is_tnot,
 { potentially_add_to_global_worklist(wl);
   if ( wl->tail && wl->tail->type == CLUSTER_SUSPENSIONS )
   { if ( !add_to_suspension_cluster(wl->tail, suspension, is_tnot, inst) )
-      return FALSE;
+      return false;
   } else
   { cluster *c = new_suspension_cluster(wl, suspension, is_tnot, inst);
     if ( !c )
-      return FALSE;
+      return false;
     wkl_append_right(wl, c);
     if ( c->prev && c->prev->type == CLUSTER_ANSWERS )
       wl->riac = c->prev;
   }
   DEBUG(MSG_TABLING_WORK, print_worklist("Added suspension: ", wl));
 
-  return TRUE;
+  return true;
 }
 
 
@@ -3226,7 +3209,7 @@ unify_fresh(DECL_LD term_t t, trie *atrie, Definition def, int create)
 				 PL_POINTER, scc,
 				 PL_POINTER, wl);
     } else
-    { return FALSE;
+    { return false;
     }
   } else
   { return PL_unify_atom(t, ATOM_fresh);
@@ -3278,10 +3261,10 @@ unify_complete_or_invalid(DECL_LD term_t t, trie *atrie,
  *   - `invalid`
  *   - `dynamic` (for pseudo answer tries representing an incremental
  *     dynamic predicate)
- *   - `fresh` (if `create` is `FALSE`)
- *   - `fresh(SCC, WL)` (if `create` is `TRUE`)
+ *   - `fresh` (if `create` is `false`)
+ *   - `fresh(SCC, WL)` (if `create` is `true`)
  *
- * @param `create` If `TRUE`, we are going to use this worklist for
+ * @param `create` If `true`, we are going to use this worklist for
  * filling the trie.  This is used by '$tbl_variant_table'/6 and
  * friends.
  */
@@ -3289,7 +3272,7 @@ unify_complete_or_invalid(DECL_LD term_t t, trie *atrie,
 #define unify_table_status(t, trie, def, create) LDFUNC(unify_table_status, t, trie, def, create)
 static int
 unify_table_status(DECL_LD term_t t, trie *trie, Definition def, int create)
-{ if ( true(trie, TRIE_COMPLETE) )
+{ if ( ison(trie, TRIE_COMPLETE) )
   { return unify_complete_or_invalid(t, trie, def, create);
   } else
   { worklist *wl = trie->data.worklist;
@@ -3318,8 +3301,8 @@ unify_table_status(DECL_LD term_t t, trie *trie, Definition def, int create)
 #define table_status(trie) LDFUNC(table_status, trie)
 static atom_t
 table_status(DECL_LD trie *trie)
-{ if ( true(trie, TRIE_COMPLETE) )
-  { return complete_or_invalid_status(trie, FALSE);
+{ if ( ison(trie, TRIE_COMPLETE) )
+  { return complete_or_invalid_status(trie, false);
   } else
   { worklist *wl = trie->data.worklist;
 
@@ -3333,32 +3316,32 @@ table_status(DECL_LD trie *trie)
 }
 
 
-static int
+static bool
 table_is_incomplete(trie *trie)
 { return ( WL_IS_WORKLIST(trie->data.worklist) &&
-	   false(trie, TRIE_COMPLETE) );
+	   isoff(trie, TRIE_COMPLETE) );
 }
 
 
-static int
+static bool
 unify_skeleton(DECL_LD trie *atrie, term_t wrapper, term_t skeleton)
-{ if ( !wrapper )
-    wrapper = PL_new_term_ref();
+{ if ( !wrapper && !(wrapper=PL_new_term_ref()) )
+    return false;
 
-  if ( atrie->data.variant && wrapper &&
+  if ( atrie->data.variant &&
        unify_trie_term(atrie->data.variant, NULL, wrapper) )
   { worklist *wl = atrie->data.worklist;
     Definition def = WL_IS_WORKLIST(wl) ? wl->predicate : NULL;
-    int flags = true(atrie, TRIE_ISSHARED) ? AT_SHARED : AT_PRIVATE;
+    int flags = ison(atrie, TRIE_ISSHARED) ? AT_SHARED : AT_PRIVATE;
     return ( get_answer_table(def, wrapper, skeleton,
 			      NULL, flags|AT_NOCLAIM) != NULL);
   }
 
-  return FALSE;
+  return false;
 }
 
 
-static int
+static bool
 get_scc(term_t t, tbl_component **cp)
 { void *ptr;
 
@@ -3366,18 +3349,18 @@ get_scc(term_t t, tbl_component **cp)
   { tbl_component *c = ptr;
 
     if ( c->magic != COMPONENT_MAGIC )
-      return PL_existence_error("table component", t),FALSE;
+      return PL_existence_error("table component", t),false;
 
     *cp = c;
 
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 #define get_worklist(t, wlp) LDFUNC(get_worklist, t, wlp)
-static int
+static bool
 get_worklist(DECL_LD term_t t, worklist **wlp)
 { void *ptr;
 
@@ -3385,15 +3368,14 @@ get_worklist(DECL_LD term_t t, worklist **wlp)
   { worklist *wl = ptr;
     assert(wl->magic == WORKLIST_MAGIC);
     *wlp = wl;
-    return TRUE;
+    return true;
   }
 
-  PL_type_error("worklist", t);
-  return FALSE;
+  return PL_type_error("worklist", t),false;
 }
 
 
-static int
+static bool
 tnot_get_worklist(term_t t, worklist **wlp, int *is_tnot)
 { GET_LD
   void *ptr;
@@ -3402,8 +3384,8 @@ tnot_get_worklist(term_t t, worklist **wlp, int *is_tnot)
   { worklist *wl = ptr;
     assert(wl->magic == WORKLIST_MAGIC);
     *wlp = wl;
-    *is_tnot = FALSE;
-    return TRUE;
+    *is_tnot = false;
+    return true;
   }
 
   if ( PL_is_functor(t, FUNCTOR_tnot1) )
@@ -3413,13 +3395,12 @@ tnot_get_worklist(term_t t, worklist **wlp, int *is_tnot)
     { worklist *wl = ptr;
       assert(wl->magic == WORKLIST_MAGIC);
       *wlp = wl;
-      *is_tnot = TRUE;
-      return TRUE;
+      *is_tnot = true;
+      return true;
     }
   }
 
-  PL_type_error("worklist", t);
-  return FALSE;
+  return PL_type_error("worklist", t),false;
 }
 
 
@@ -3439,7 +3420,7 @@ tbl_add_worklist(trie *atrie, tbl_component *scc)
 }
 
 
-static int
+static bool
 destroy_answer_trie(trie *atrie)
 { if ( atrie->data.variant)
   { trie *vtrie = get_trie_from_node(atrie->data.variant);
@@ -3448,36 +3429,36 @@ destroy_answer_trie(trie *atrie)
     { DEBUG(MSG_TABLING_VTRIE_DEPENDENCIES,
 	    print_answer_table(atrie, "Delete answer trie for"));
 
-      if ( true(atrie, TRIE_ISSHARED) )
+      if ( ison(atrie, TRIE_ISSHARED) )
       { COMPLETE_WORKLIST(atrie,		/* lock might be overkill */
-			  reset_answer_table(atrie, FALSE));
+			  reset_answer_table(atrie, false));
       } else
-	trie_delete(vtrie, atrie->data.variant, TRUE);
+	trie_delete(vtrie, atrie->data.variant, true);
 
-      return TRUE;
+      return true;
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
-static int
+static bool
 delayed_destroy_table(trie *atrie)
 { if ( table_is_incomplete(atrie) )
   { set(atrie, TRIE_ABOLISH_ON_COMPLETE);
     DEBUG(MSG_TABLING_ABOLISH,
 	  print_answer_table(atrie, "Scheduling for delayed abolish"));
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
-static int
+static bool
 abolish_table(trie *atrie)
 { if ( atrie->data.worklist == WL_DYNAMIC )
-    return TRUE;		/* quickly ignore dynamic pseudo tables */
+    return true;		/* quickly ignore dynamic pseudo tables */
 
   if ( atrie->data.variant)
   { trie *vtrie = get_trie_from_node(atrie->data.variant);
@@ -3487,16 +3468,16 @@ abolish_table(trie *atrie)
 #ifdef O_PLMT
       int mytid = PL_thread_self();
 
-      if ( true(atrie, TRIE_ISSHARED) )
+      if ( ison(atrie, TRIE_ISSHARED) )
       { LOCK_SHARED_TABLE(atrie);
 	if ( !atrie->tid )			/* no owner */
 	{ take_trie(atrie, mytid);
 	  assert(!table_is_incomplete(atrie));
-	  reset_answer_table(atrie, FALSE);
+	  reset_answer_table(atrie, false);
 	  drop_trie(atrie);
 	} else if ( atrie->tid == mytid )	/* I am the owner */
 	{ if ( !delayed_destroy_table(atrie) )
-	  { reset_answer_table(atrie, FALSE);
+	  { reset_answer_table(atrie, false);
 	    drop_trie(atrie);
 	    cv_broadcast(&GD->tabling.cvar);
 	  }
@@ -3509,14 +3490,14 @@ abolish_table(trie *atrie)
       } else
 #endif
       { if ( !delayed_destroy_table(atrie) )
-	  trie_delete(vtrie, atrie->data.variant, TRUE);
+	  trie_delete(vtrie, atrie->data.variant, true);
       }
 
-      return TRUE;
+      return true;
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 /** '$tbl_destroy_table'(+Trie)
@@ -3532,7 +3513,7 @@ PRED_IMPL("$tbl_destroy_table", 1, tbl_destroy_table, 0)
   if ( get_trie(A1, &atrie) )
     return abolish_table(atrie);
 
-  return FALSE;
+  return false;
 }
 
 
@@ -3564,7 +3545,7 @@ PRED_IMPL("$tbl_pop_worklist", 2, tbl_pop_worklist, 0)
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 /** '$tbl_wkl_add_answer'(+Worklist, +Answer, +Delays, -Complete) is semidet.
@@ -3603,16 +3584,16 @@ PRED_IMPL("$tbl_wkl_add_answer", 4, tbl_wkl_add_answer, 0)
     int rc;
 
 #ifdef O_PLMT
-    DEBUG(0, assert(false(wl->table, TRIE_ISSHARED) || wl->table->tid));
+    DEBUG(0, assert(isoff(wl->table, TRIE_ISSHARED) || wl->table->tid));
 #endif
 
     kp = valTermRef(A2);
-    if ( true(wl->table, TRIE_ISMAP) )
+    if ( ison(wl->table, TRIE_ISMAP) )
       return !!wkl_mode_add_answer(wl, wl->table, A2, A3);
 
     sa.size = pred_max_table_answer_size(wl->predicate);
     rc = trie_lookup_abstract(wl->table, NULL, &node, kp,
-			      TRUE, &sa, NULL);
+			      true, &sa, NULL);
     if ( rc > 0 )				/* ok or abstracted */
     { idg_node *idg;
 
@@ -3624,17 +3605,17 @@ PRED_IMPL("$tbl_wkl_add_answer", 4, tbl_wkl_add_answer, 0)
 
 	if ( action == ATOM_bounded_rationality )
 	{ if ( !add_radial_restraint() )
-	    return FALSE;
+	    return false;
 	} else if ( action == ATOM_fail ||
 		    !tbl_wl_tripwire(wl, action, ATOM_max_table_answer_size) )
-	{ trie_delete(wl->table, node, TRUE);
-	  return FALSE;
+	{ trie_delete(wl->table, node, true);
+	  return false;
 	}
       }
 
       if ( node->value )
       { if ( node->value == ATOM_trienode )
-	{ if ( true(node, TN_IDG_DELETED) )
+	{ if ( ison(node, TN_IDG_DELETED) )
 	  { clear(node, TN_IDG_DELETED);
 	    goto update_dl;
 	  } else
@@ -3644,7 +3625,7 @@ PRED_IMPL("$tbl_wkl_add_answer", 4, tbl_wkl_add_answer, 0)
 	    }
 	  }
 
-	  return FALSE;				/* already in trie */
+	  return false;				/* already in trie */
 	}
 	return PL_permission_error("modify", "trie_key", A2);
       } else if ( (action=tripwire_answers_for_subgoal(wl)) )
@@ -3653,22 +3634,22 @@ PRED_IMPL("$tbl_wkl_add_answer", 4, tbl_wkl_add_answer, 0)
 	if ( action == ATOM_bounded_rationality )
 	{ term_t gen;
 
-	  trie_delete(wl->table, node, TRUE);
+	  trie_delete(wl->table, node, true);
 
 	  if ( !(gen = PL_new_term_ref()) ||
 	       !generalise_answer_substitution(A2, gen) ||
 	       !add_answer_count_restraint() )
-	    return FALSE;
+	    return false;
 
 	  kp = valTermRef(gen);
-	  rc = trie_lookup(wl->table, NULL, &node, kp, TRUE, NULL);
-	  if ( rc == TRUE )
+	  rc = trie_lookup(wl->table, NULL, &node, kp, true, NULL);
+	  if ( rc == true )
 	  { if ( !PL_unify_atom(A4, ATOM_cut) )
-	      return FALSE;
+	      return false;
 	    set_trie_value_word(wl->table, node, ATOM_trienode);
 	    if ( update_delay_list(wl, node, A2, A3) == UDL_FALSE )
-	      return FALSE;
-	    return TRUE;
+	      return false;
+	    return true;
 	  } else
 	  { return trie_error(rc, gen);
 	  }
@@ -3676,8 +3657,8 @@ PRED_IMPL("$tbl_wkl_add_answer", 4, tbl_wkl_add_answer, 0)
 	{ if ( tbl_wl_tripwire(wl, action, ATOM_max_answers_for_subgoal) )
 	  { goto add_anyway;
 	  } else
-	  { trie_delete(wl->table, node, TRUE);
-	    return FALSE;
+	  { trie_delete(wl->table, node, true);
+	    return false;
 	  }
 	}
       } else
@@ -3685,7 +3666,7 @@ PRED_IMPL("$tbl_wkl_add_answer", 4, tbl_wkl_add_answer, 0)
 	set_trie_value_word(wl->table, node, ATOM_trienode);
 	if ( (idg=wl->table->data.IDG) && idg->reevaluating )
 	{ set(node, TN_IDG_ADDED);
-	  idg->new_answer = TRUE;
+	  idg->new_answer = true;
 	}
 
       update_dl:
@@ -3693,10 +3674,10 @@ PRED_IMPL("$tbl_wkl_add_answer", 4, tbl_wkl_add_answer, 0)
 
 	switch(rc)
 	{ case UDL_FALSE:
-	    return FALSE;
+	    return false;
 	  case UDL_COMPLETE:
 	    if ( !PL_unify_atom(A4, ATOM_cut) )
-	      return FALSE;
+	      return false;
 	  default:
 	    ;
 	}
@@ -3708,7 +3689,7 @@ PRED_IMPL("$tbl_wkl_add_answer", 4, tbl_wkl_add_answer, 0)
     return trie_error(rc, A2);
   }
 
-  return FALSE;
+  return false;
 }
 
 /** wkl_mode_add_answer(DECL_LD worklist *wl, trie *trie, term_t answer, term_t delays)
@@ -3777,14 +3758,14 @@ add_subsuming_answer(DECL_LD worklist *wl, trie *atrie, trie_node *root, term_t 
   int rc;
 
   vp = valTermRef(margs);
-  rc = trie_lookup(atrie, root, &node, vp, TRUE, NULL);
-  if ( rc == TRUE )
-  { if ( false(node, TN_SECONDARY) )
+  rc = trie_lookup(atrie, root, &node, vp, true, NULL);
+  if ( rc == true )
+  { if ( isoff(node, TN_SECONDARY) )
     { node->value = ATOM_trienode;
       set(node, TN_SECONDARY);
 
       if ( old )
-	trie_delete(atrie, old, FALSE);
+	trie_delete(atrie, old, false);
 
       if ( wl )
       { if ( update_delay_list(wl, node, skel, delays) == UDL_FALSE )
@@ -3794,7 +3775,7 @@ add_subsuming_answer(DECL_LD worklist *wl, trie *atrie, trie_node *root, term_t 
       }
       return node;
     } else
-    { if ( true(node, TN_IDG_DELETED) )
+    { if ( ison(node, TN_IDG_DELETED) )
 	clear(node, TN_IDG_DELETED);
 
       if ( wl && answer_is_conditional(node) )
@@ -3806,7 +3787,7 @@ add_subsuming_answer(DECL_LD worklist *wl, trie *atrie, trie_node *root, term_t 
   { term_t trie;
 
     if ( (trie = PL_new_term_ref()) &&
-	 _PL_unify_atomic(trie, atrie->symbol) )
+	 PL_unify_atomic(trie, atrie->symbol) )
       trie_error(rc, trie);
 
     return NULL;
@@ -3825,7 +3806,7 @@ static void *
 update_subsuming_answer(trie_node *node, void *ptr)
 { sa_context *ctx = ptr;
 
-  if ( true(node, TN_SECONDARY) )
+  if ( ison(node, TN_SECONDARY) )
   { GET_LD
     predicate_t PRED_update7;
     term_t av = ctx->argv;
@@ -3965,10 +3946,10 @@ wkl_mode_add_answer(DECL_LD worklist *wl, trie *atrie,
   { return PL_domain_error("moded_answer", answer),NULL;
   }
 
-  rc = trie_lookup(atrie, NULL, &root, kp, TRUE, NULL);
-  if ( rc == TRUE )
-  { if ( true(root, TN_PRIMARY) )
-    { if ( true(root, TN_IDG_DELETED) )
+  rc = trie_lookup(atrie, NULL, &root, kp, true, NULL);
+  if ( rc == true )
+  { if ( ison(root, TN_PRIMARY) )
+    { if ( ison(root, TN_IDG_DELETED) )
       { clear(root, TN_IDG_DELETED);
 	 DEBUG(MSG_TABLING_MODED,
 	       Sdprintf("First answer while re-evaluating\n"));
@@ -4008,7 +3989,7 @@ PRED_IMPL("$tbl_wkl_add_suspension", 2, tbl_wkl_add_suspension, 0)
   if ( tnot_get_worklist(A1, &wl, &is_tnot) )
     return wkl_add_suspension(wl, A2, is_tnot, 0);
 
-  return FALSE;
+  return false;
 }
 
 /** '$tbl_wkl_add_suspension'(+Worklist, +Instance, +Suspension) is det.
@@ -4026,7 +4007,7 @@ PRED_IMPL("$tbl_wkl_add_suspension", 3, tbl_wkl_add_suspension, 0)
   if ( tnot_get_worklist(A1, &wl, &is_tnot) )
     return wkl_add_suspension(wl, A3, is_tnot, A2);
 
-  return FALSE;
+  return false;
 }
 
 
@@ -4061,7 +4042,7 @@ PRED_IMPL("$tbl_wkl_make_follower", 1, tbl_wkl_make_follower, 0)
 	}
       } else
       { if ( scp )
-	{ merge_suspension_cluster(scp, c, TRUE);
+	{ merge_suspension_cluster(scp, c, true);
 	} else
 	{ scp = c;
 	  scp->prev = scp->next = NULL;
@@ -4082,10 +4063,10 @@ PRED_IMPL("$tbl_wkl_make_follower", 1, tbl_wkl_make_follower, 0)
     if ( acp && scp )
       add_global_worklist(wl);
 
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -4136,7 +4117,7 @@ PRED_IMPL("$tbl_wkl_is_false", 1, tbl_wkl_is_false, 0)
     return wl->neg_delayed && !wl->has_answers;
   }
 
-  return FALSE;
+  return false;
 }
 
 /** '$tbl_wkl_answer_trie'(+Worklist, -Trie) is det.
@@ -4168,7 +4149,7 @@ PRED_IMPL("$tbl_wkl_answer_trie", 2, tbl_wkl_answer_trie, 0)
  *
  * If the carthesian product is exhausted it tries to re-start using the
  * possible new RIAC and SCP.  During its execution, worklist->executing
- * is TRUE to avoid the worklist to   become part of the global worklist
+ * is true to avoid the worklist to   become part of the global worklist
  * again.
  *
  * This replaces table_get_work/3 from the pure Prolog implementation.
@@ -4200,7 +4181,7 @@ unify_dependency(DECL_LD term_t a0, term_t dependency,
 
     deRef(dp);
     if ( unlikely(!isTerm(*dp)) )
-      return FALSE;
+      return false;
     f = valueTerm(*dp);
 
     unify_arg_term(srcskel, &f->arguments[0]); /* SrcSkeleton */
@@ -4210,9 +4191,9 @@ unify_dependency(DECL_LD term_t a0, term_t dependency,
     unify_arg_term(a0+4,    &f->arguments[4]); /* Delays */
 
     if ( !PL_unify(srcskel, a0+0) )
-      return FALSE;
+      return false;
     if ( !idg_set_current_wl(a0+3) )
-      return FALSE;
+      return false;
 
     if ( unlikely(!answer) )			    /* negative delay */
     { Word p = allocGlobalNoShift(3);
@@ -4236,10 +4217,10 @@ unify_dependency(DECL_LD term_t a0, term_t dependency,
       push_delay_list(p);
     }
 
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -4252,7 +4233,7 @@ unify_dependency(DECL_LD term_t a0, term_t dependency,
 static int
 tbl_unify_answer(DECL_LD trie_node *node, term_t term)
 { if ( node )
-  { if ( unlikely(true(node, TN_SECONDARY)) )
+  { if ( unlikely(ison(node, TN_SECONDARY)) )
     { term_t av = PL_new_term_refs(2);
 
       return ( unify_trie_term(node, &node, av+1) &&
@@ -4264,20 +4245,20 @@ tbl_unify_answer(DECL_LD trie_node *node, term_t term)
     }
   }
 
-  return TRUE;				/* for negative dummy solutions */
+  return true;				/* for negative dummy solutions */
 }
 
 
 static int
 tbl_put_moded_args(DECL_LD term_t t, trie_node *node)
 { if ( node )
-  { if ( unlikely(true(node, TN_SECONDARY)) )
+  { if ( unlikely(ison(node, TN_SECONDARY)) )
       return unify_trie_term(node, NULL, t);
     else
       return put_trie_value(t, node); /* TBD: Can become ATOM_trienode */
   } else				/* negative dummy solution */
   { *valTermRef(t) = ATOM_trienode;
-    return TRUE;
+    return true;
   }
 }
 
@@ -4295,7 +4276,7 @@ advance_wkl_state(wkl_step_state *state)
       if ( (scp=state->scp)->prev && scp->prev->type == CLUSTER_SUSPENSIONS )
       { scp->prev->next = scp->next;
 	scp->next->prev = scp->prev;
-	merge_suspension_cluster(scp->prev, scp, FALSE);
+	merge_suspension_cluster(scp->prev, scp, false);
 	seekBuffer(&scp->members, 0, record_t);
 	scp->next = state->list->free_clusters;
 	state->list->free_clusters = scp;
@@ -4332,7 +4313,7 @@ advance_wkl_state(wkl_step_state *state)
 	}
       }
 
-      return FALSE;
+      return false;
     } else
     { next_answer:
       state->answer = get_answer_from_cluster(state->acp, state->acp_index-1);
@@ -4340,7 +4321,7 @@ advance_wkl_state(wkl_step_state *state)
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -4348,7 +4329,7 @@ static void
 free_wkl_state(wkl_step_state *state)
 { worklist *wl = state->list;
 
-  wl->executing = FALSE;
+  wl->executing = false;
   freeForeignState(state, sizeof(*state));
   if ( wl->needs_answer_gc )
     prune_answers_worklist(wl);
@@ -4394,14 +4375,14 @@ PRED_IMPL("$tbl_wkl_work", 6, tbl_wkl_work, PL_FA_NONDETERMINISTIC)
 	    state->suspensions.top  = get_suspension_from_cluster(scp, sz_scp-1);
 	    state->suspensions.here = state->suspensions.top;
 	    state->keys_inited      = 0;
-	    wl->executing	    = TRUE;
+	    wl->executing	    = true;
 
 	    break;
 	  }
 	}
       }
 
-      return FALSE;
+      return false;
     }
     case FRG_REDO:
       state = CTX_PTR;
@@ -4409,10 +4390,10 @@ PRED_IMPL("$tbl_wkl_work", 6, tbl_wkl_work, PL_FA_NONDETERMINISTIC)
     case FRG_CUTTED:
       state = CTX_PTR;
       free_wkl_state(state);
-      return TRUE;
+      return true;
     default:
       assert(0);
-      return FALSE;
+      return false;
   }
 
   Mark(fli_context->mark);
@@ -4485,9 +4466,9 @@ PRED_IMPL("$tbl_wkl_work", 6, tbl_wkl_work, PL_FA_NONDETERMINISTIC)
 	  arity = SINDEX_MAX;
 
 	for(i=0; i<arity; i++)
-	  state->keys[i].key = indexOfWord(f->arguments[i]);
+	  state->keys[i].key = (unsigned int)index_of_word(f->arguments[i]);
 
-	state->keys_inited = TRUE;
+	state->keys_inited = true;
       }
 
       const sindex_key *skeys = state->keys;
@@ -4497,8 +4478,8 @@ PRED_IMPL("$tbl_wkl_work", 6, tbl_wkl_work, PL_FA_NONDETERMINISTIC)
       { if ( unlikely((suspension_matches_index(sp, skeys))) )
 	{ rc = suspension_matches(A2, sp);
 
-	  if ( rc == TRUE )  goto match;
-	  if ( rc != FALSE ) goto out_fail;
+	  if ( rc == true )  goto match;
+	  if ( rc != false ) goto out_fail;
 	}
 
 	if ( likely((sp = --state->suspensions.here) >= state->suspensions.base) )
@@ -4536,7 +4517,7 @@ PRED_IMPL("$tbl_wkl_work", 6, tbl_wkl_work, PL_FA_NONDETERMINISTIC)
     { ForeignRedoPtr(state);
     } else
     { free_wkl_state(state);
-      return TRUE;
+      return true;
     }
   next:
     ;
@@ -4544,7 +4525,7 @@ PRED_IMPL("$tbl_wkl_work", 6, tbl_wkl_work, PL_FA_NONDETERMINISTIC)
 
 out_fail:
   free_wkl_state(state);
-  return FALSE;
+  return false;
 }
 
 
@@ -4558,8 +4539,12 @@ out_fail:
  *   - A worklist pointer
  */
 
-#define tbl_variant_table(closure, variant, Trie, abstract, status, ret, is_monotonic, flags) LDFUNC(tbl_variant_table, closure, variant, Trie, abstract, status, ret, is_monotonic, flags)
-static int
+#define tbl_variant_table(closure, variant, Trie, abstract,	    \
+			  status, ret, is_monotonic, flags)	    \
+	LDFUNC(tbl_variant_table, closure, variant, Trie, abstract, \
+	       status, ret, is_monotonic, flags)
+
+static bool
 tbl_variant_table(DECL_LD term_t closure, term_t variant, term_t Trie,
 		  term_t abstract, term_t status, term_t ret,
 		  term_t is_monotonic, int flags)
@@ -4572,36 +4557,38 @@ tbl_variant_table(DECL_LD term_t closure, term_t variant, term_t Trie,
   if ( (atrie=get_answer_table(def, variant, ret, &clref, flags)) )
   { if ( !idg_init_variant(atrie, def, variant)  ||
 	 !idg_add_edge(atrie, NULL) )
-      return FALSE;
+      return false;
 
     if ( is_monotonic &&
-	 def->tabling && true(def->tabling, TP_MONOTONIC) &&
+	 def->tabling && ison(def->tabling, TP_MONOTONIC) &&
 	 ( LD->tabling.in_assert_propagation ||
 	   inner_is_monotonic() ) )
-    { assert(true(environment_frame, FR_INRESET));
-      if ( !PL_unify_bool(is_monotonic, TRUE) )
-	return FALSE;
+    { assert(ison(environment_frame, FR_INRESET));
+      if ( !PL_unify_bool(is_monotonic, true) )
+	return false;
     }
 
     if ( clref )
     { TRIE_STAT_INC(atrie, gen_call);
-      return ( _PL_unify_atomic(Trie, clref) &&
-	       _PL_unify_atomic(status, ATOM_complete) );
+      return ( PL_unify_atomic(Trie, clref) &&
+	       PL_unify_atomic(status, ATOM_complete) );
     } else
-    { return ( _PL_unify_atomic(Trie, atrie->symbol) &&
-	       unify_table_status(status, atrie, def, TRUE) );
+    { return ( PL_unify_atomic(Trie, atrie->symbol) &&
+	       unify_table_status(status, atrie, def, true) );
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 static
 PRED_IMPL("$tbl_variant_table", 6, tbl_variant_table, 0)
 { PRED_LD
 
-  return tbl_variant_table(A1, A2, A3, 0, A4, A5, A6,
-			   AT_CREATE);
+  bool rc = tbl_variant_table(A1, A2, A3, 0, A4, A5, A6,
+			      AT_CREATE);
+  DEBUG(CHK_SECURE, checkStacks(NULL));
+  return rc;
 }
 
 
@@ -4638,12 +4625,12 @@ PRED_IMPL("$tbl_existing_variant_table", 5, tbl_existing_variant_table, 0)
 
   get_closure_predicate(A1, &def);
 
-  if ( (trie=get_answer_table(def, A2, A5, &clref, FALSE)) )
-  { return ( _PL_unify_atomic(A3, trie->symbol) &&
-	     unify_table_status(A4, trie, def, TRUE) );
+  if ( (trie=get_answer_table(def, A2, A5, &clref, false)) )
+  { return ( PL_unify_atomic(A3, trie->symbol) &&
+	     unify_table_status(A4, trie, def, true) );
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -4653,9 +4640,9 @@ PRED_IMPL("$tbl_local_variant_table", 1, tbl_local_variant_table, 0)
   trie *trie = LD->tabling.variant_table;
 
   if ( trie )
-    return _PL_unify_atomic(A1, trie->symbol);
+    return PL_unify_atomic(A1, trie->symbol);
 
-  return FALSE;
+  return false;
 }
 
 
@@ -4667,10 +4654,10 @@ PRED_IMPL("$tbl_global_variant_table", 1, tbl_global_variant_table, 0)
   trie *trie = GD->tabling.variant_table;
 
   if ( trie )
-    return _PL_unify_atomic(A1, trie->symbol);
+    return PL_unify_atomic(A1, trie->symbol);
 #endif
 
-  return FALSE;
+  return false;
 }
 
 
@@ -4694,23 +4681,23 @@ PRED_IMPL("$tbl_variant_table", 1, tbl_variant_table, PL_FA_NONDETERMINISTIC)
   switch( CTX_CNTRL )
   { case FRG_FIRST_CALL:
       if ( (trie=LD->tabling.variant_table) )
-      { if ( _PL_unify_atomic(A1, trie->symbol) )
+      { if ( PL_unify_atomic(A1, trie->symbol) )
 	{ if ( GD->tabling.variant_table )
 	    ForeignRedoInt(1);
 	  else
-	    return TRUE;
+	    return true;
 	}
       }
     /*FALLTHROUGH*/
     case FRG_REDO:
       if ( (trie=GD->tabling.variant_table) )
-	return _PL_unify_atomic(A1, trie->symbol);
-      return FALSE;
+	return PL_unify_atomic(A1, trie->symbol);
+      return false;
     case FRG_CUTTED:
-      return TRUE;
+      return true;
 	default:
       assert(0);
-      return FALSE;
+      return false;
   }
 }
 #endif
@@ -4726,7 +4713,7 @@ PRED_IMPL("$tbl_table_status", 2, tbl_table_status, 0)
   trie *trie;
 
   return ( get_trie(A1, &trie) &&
-	   unify_table_status(A2, trie, NULL, FALSE)
+	   unify_table_status(A2, trie, NULL, false)
 	 );
 }
 
@@ -4743,7 +4730,7 @@ PRED_IMPL("$tbl_table_status", 4, tbl_table_status, 0)
   term_t wv = PL_new_term_ref();
 
   return ( get_trie(A1, &trie) &&
-	   unify_table_status(A2, trie, NULL, FALSE) &&
+	   unify_table_status(A2, trie, NULL, false) &&
 	   unify_skeleton(trie, wv, A4) &&
 	   PL_unify(A3, wv)
 	 );
@@ -4784,7 +4771,7 @@ PRED_IMPL("$tbl_table_pi", 2, tbl_table_pi, 0)
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -4824,7 +4811,7 @@ wls_reeval_complete(worklist **wls, size_t ntables)
       idg_node *n;
 
       if ( (n=atrie->data.IDG) )
-      { n->reevaluating = FALSE;
+      { n->reevaluating = false;
 	assert(n->falsecount == 0);
       }
     }
@@ -4836,13 +4823,13 @@ wls_reeval_complete(worklist **wls, size_t ntables)
 static int
 unify_leader_clause(DECL_LD tbl_component *scc, term_t cl)
 { trie *atrie = scc->leader;
-  Procedure proc = (true(atrie, TRIE_ISMAP)
+  Procedure proc = (ison(atrie, TRIE_ISMAP)
 			     ? GD->procedures.trie_gen_compiled3
 			     : GD->procedures.trie_gen_compiled2);
   atom_t clref = compile_trie(proc->definition, atrie);
 
   TRIE_STAT_INC(atrie, gen_call);
-  return _PL_unify_atomic(cl, clref);
+  return PL_unify_atomic(cl, clref);
 }
 
 
@@ -4862,7 +4849,7 @@ PRED_IMPL("$tbl_table_complete_all", 3, tbl_table_complete_all, 0)
   tbl_component *c;
 
   if ( !get_scc(A1, &c) )
-    return FALSE;
+    return false;
 
   if ( c->status == SCC_ACTIVE )
   { worklist **wls;
@@ -4885,7 +4872,7 @@ PRED_IMPL("$tbl_table_complete_all", 3, tbl_table_complete_all, 0)
 	      PL_write_term(Serror, t, 999, PL_WRT_NEWLINE);
 	    });
 
-      if ( true(atrie, TRIE_ABOLISH_ON_COMPLETE) )
+      if ( ison(atrie, TRIE_ABOLISH_ON_COMPLETE) )
       { atrie->data.worklist = NULL;
 	wl->table = NULL;
 	destroy_answer_trie(atrie);
@@ -4902,10 +4889,10 @@ PRED_IMPL("$tbl_table_complete_all", 3, tbl_table_complete_all, 0)
     if ( c->parent && LD->tabling.component == c )
       LD->tabling.component = c->parent;
     if ( !c->parent )
-      LD->tabling.has_scheduling_component = FALSE;
+      LD->tabling.has_scheduling_component = false;
 
     if ( !rc )
-      return FALSE;
+      return false;
   }
 
   return unify_component_status(A2, c);
@@ -4927,10 +4914,10 @@ PRED_IMPL("$tbl_free_component", 1, tbl_free_component, 0)
     if ( LD->tabling.component == c )
       free_component(c, FC_DESTROY);
     assert(LD->tabling.component == NULL);
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -4957,18 +4944,18 @@ PRED_IMPL("$tbl_table_discard_all", 1, tbl_table_discard_all, 0)
       free_component(c, FC_DESTROY);
 
       if ( !parent )
-	LD->tabling.has_scheduling_component = FALSE;
+	LD->tabling.has_scheduling_component = false;
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 
 static tbl_component *
 tbl_create_subcomponent(DECL_LD trie *leader)
 { if ( !LD->tabling.has_scheduling_component )
-  { LD->tabling.has_scheduling_component = TRUE;
+  { LD->tabling.has_scheduling_component = true;
     if ( !LD->tabling.component || LD->tabling.in_answer_completion )
       LD->tabling.component = new_component();
     else
@@ -5004,7 +4991,7 @@ unify_component_status(DECL_LD term_t t, tbl_component *scc)
     }
     default:
       assert(0);
-      return FALSE;
+      return false;
   }
 
   return PL_unify_atom(t, status);
@@ -5022,10 +5009,10 @@ PRED_IMPL("$tbl_abolish_local_tables", 0, tbl_abolish_local_tables, 0)
 
   if ( !LD->tabling.has_scheduling_component )
   { clearThreadTablingData(LD);
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 /** '$tbl_trienode'(-X) is det.
@@ -5065,7 +5052,7 @@ PRED_IMPL("$tbl_scc", 1, tbl_scc, 0)
   if ( LD->tabling.component )
     return PL_unify_pointer(A1, LD->tabling.component);
 
-  return FALSE;
+  return false;
 }
 
 static int
@@ -5079,7 +5066,7 @@ unify_wl_set(term_t l, worklist_set *wls)
   for(i=0; i<n; i++)
   { if ( !PL_unify_list(tail, head, tail) ||
 	 !PL_unify_pointer(head, p[i]) )
-      return FALSE;
+      return false;
   }
 
   return PL_unify_nil(tail);
@@ -5098,7 +5085,7 @@ unify_scc_set(term_t l, component_set *cs)
     for(; c < top; c++)
     { if ( !PL_unify_list(tail, head, tail) ||
 	   !PL_unify_pointer(head, *c) )
-	return FALSE;
+	return false;
     }
   }
 
@@ -5133,7 +5120,7 @@ PRED_IMPL("$tbl_scc_data", 2, tbl_scc_data, 0)
 	     PL_unify(t, A2) );
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -5145,7 +5132,7 @@ unify_cluster(term_t t, cluster *c, int is_riac)
   { term_t a = PL_new_term_ref();
     if ( !PL_unify_term(t, PL_FUNCTOR_CHARS, "riac", 1,
 			     PL_TERM, a) )
-      return FALSE;
+      return false;
     t = a;
   }
 
@@ -5161,7 +5148,7 @@ unify_cluster(term_t t, cluster *c, int is_riac)
 
       if ( !PL_unify_list(tail, head, tail) ||
 	   !tbl_unify_answer(an, head)  )
-	return FALSE;
+	return false;
     }
     return PL_unify_nil(tail);
   } else
@@ -5175,7 +5162,7 @@ unify_cluster(term_t t, cluster *c, int is_riac)
     { if ( !PL_unify_list(tail, head, tail) ||
 	   !PL_recorded(UNTNOT(sp->term), tmp) ||
 	   !PL_unify(tmp, head) )
-	return FALSE;
+	return false;
     }
     return PL_unify_nil(tail);
   }
@@ -5192,7 +5179,7 @@ unify_clusters(term_t t, worklist *wl)
   for(c=wl->head; c; c=c->next)
   { if ( !PL_unify_list(tail, head, tail) ||
 	 !unify_cluster(head, c, c==wl->riac) )
-      return FALSE;
+      return false;
   }
 
   return PL_unify_nil(tail);
@@ -5209,7 +5196,7 @@ PRED_IMPL("$tbl_worklist_data", 2, tbl_worklist_data, 0)
     term_t t = PL_new_term_ref();
 
     return ( PL_unify_pointer(av+0, wl->component) &&
-	     _PL_unify_atomic(av+1, wl->table->symbol) &&
+	     PL_unify_atomic(av+1, wl->table->symbol) &&
 	     PL_unify_bool(av+2, wl->in_global_wl) &&
 	     PL_unify_bool(av+3, wl->executing) &&
 	     unify_clusters(av+4, wl) &&
@@ -5218,7 +5205,7 @@ PRED_IMPL("$tbl_worklist_data", 2, tbl_worklist_data, 0)
 	   );
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -5228,7 +5215,7 @@ PRED_IMPL("$tbl_wkl_table", 2, tbl_wkl_table, 0)
   worklist *wl;
 
   return ( get_worklist(A1, &wl) &&
-	   _PL_unify_atomic(A2, wl->table->symbol) );
+	   PL_unify_atomic(A2, wl->table->symbol) );
 }
 
 
@@ -5239,8 +5226,10 @@ typedef struct
 /** '$tbl_answer'(+Trie, -Answer, -Condition) is nondet.
  */
 
-#define put_delay_set(cond, di, set, ctx) LDFUNC(put_delay_set, cond, di, set, ctx)
-static int
+#define put_delay_set(cond, di, set, ctx) \
+	LDFUNC(put_delay_set, cond, di, set, ctx)
+
+static bool
 put_delay_set(DECL_LD term_t cond, delay_info *di, delay_set *set,
 	      answer_ctx *ctx)
 { delay *base, *top;
@@ -5262,13 +5251,13 @@ put_delay_set(DECL_LD term_t cond, delay_info *di, delay_set *set,
     r = UNREC_DELAY(top[-1].answer);
     if ( !(gshare = PL_new_term_refs(2)) ||
 	 !PL_recorded(r, gshare) )
-      return FALSE;
+      return false;
     PL_get_name_arity(gshare, NULL, &arity);
     gskel = gshare+1;
     _PL_get_arg(1, gshare, gskel);
     if ( !PL_unify(gskel, ctx->skel) )
     { DEBUG(0, Sdprintf("Oops, global skeleton doesn't unify\n"));
-      return FALSE;
+      return false;
     }
 
     top--;
@@ -5296,23 +5285,23 @@ put_delay_set(DECL_LD term_t cond, delay_info *di, delay_set *set,
       PL_put_variable(ret);
 
       if ( !unify_trie_term(top->variant->data.variant, NULL, c1) )
-	return FALSE;
-      if ( !get_answer_table(NULL, c1, ret, NULL, FALSE) )
+	return false;
+      if ( !get_answer_table(NULL, c1, ret, NULL, false) )
       { Sdprintf("OOPS! could not find variant table\n");
-	return FALSE;
+	return false;
       }
 
-      if ( true(top->answer, TN_SECONDARY) ) /* Ret/ModeArgs */
+      if ( ison(top->answer, TN_SECONDARY) ) /* Ret/ModeArgs */
       { if ( !tbl_unify_answer(top->answer, ans) ||
 	     !PL_get_arg(1, ans, tmp) ||
 	     !PL_unify(tmp, ret) ||
 	     !PL_get_arg(2, ans, tmp) ||
 	     !PL_cons_functor(c1, FUNCTOR_divide2, c1, tmp) )
-	  return FALSE;
+	  return false;
 	uans = ans;
       } else
       { if ( !unify_trie_term(top->answer, NULL, ret) )
-	  return FALSE;
+	  return false;
 	uans = ret;
       }
 
@@ -5324,7 +5313,7 @@ put_delay_set(DECL_LD term_t cond, delay_info *di, delay_set *set,
 	{ DEBUG(0, Sdprintf("Oops, skeleton %zd does not unify\n", arity));
 	  pl_writeln(gskel);
 	  pl_writeln(ans);
-	  return FALSE;
+	  return false;
 	}
 	arity--;
       }
@@ -5332,26 +5321,28 @@ put_delay_set(DECL_LD term_t cond, delay_info *di, delay_set *set,
     { PL_put_variable(c1);
       if ( !unify_trie_term(top->variant->data.variant, NULL, c1) ||
 	   !PL_cons_functor(c1, FUNCTOR_tnot1, c1) )
-	return FALSE;
+	return false;
     }
 
     if ( count++ > 0 )
     { if ( !PL_cons_functor(cond, FUNCTOR_comma2, c1, cond) )
-	return FALSE;
+	return false;
     }
   }
 
   PL_reset_term_refs(av);
 
-  return TRUE;
+  return true;
 }
 
-#define unify_delay_info(t, answer, ctxp) LDFUNC(unify_delay_info, t, answer, ctxp)
-static int
+#define unify_delay_info(t, answer, ctxp) \
+	LDFUNC(unify_delay_info, t, answer, ctxp)
+
+static bool
 unify_delay_info(DECL_LD term_t t, trie_node *answer, void *ctxp)
 { delay_info *di;
 
-  if ( (di=answer_delay_info(NULL, answer, FALSE)) )
+  if ( (di=answer_delay_info(NULL, answer, false)) )
   { if ( DL_IS_DELAY_LIST(di) )
     { term_t av = PL_new_term_refs(2);
       term_t cond = av+1;
@@ -5367,11 +5358,11 @@ unify_delay_info(DECL_LD term_t t, trie_node *answer, void *ctxp)
 	  continue;
 
 	if ( !put_delay_set(c1, di, base, ctx) )
-	  return FALSE;
+	  return false;
 
 	if ( count++ > 0 )
 	{ if ( !PL_cons_functor_v(cond, FUNCTOR_semicolon2, av) )
-	    return FALSE;
+	    return false;
 	}
       }
 
@@ -5385,14 +5376,14 @@ unify_delay_info(DECL_LD term_t t, trie_node *answer, void *ctxp)
 }
 
 #if O_DEBUG
-static int
+static bool
 put_delay_info(term_t t, trie_node *answer)
 { GET_LD
   answer_ctx ctx;
 
-  ctx.skel = PL_new_term_ref();			/* TBD */
-  PL_put_variable(t);
-  return unify_delay_info(t, answer, &ctx);
+  return ( (ctx.skel = PL_new_term_ref()) &&
+	   PL_put_variable(t) &&
+	   unify_delay_info(t, answer, &ctx) );
 }
 #endif
 
@@ -5424,8 +5415,8 @@ PRED_IMPL("$tbl_answer_c", 4, tbl_answer_c, PL_FA_NONDETERMINISTIC)
     int rc;
 
     kp = valTermRef(A2);
-    rc = trie_lookup(trie, NULL, &root, kp, FALSE, NULL);
-    if ( rc == TRUE )
+    rc = trie_lookup(trie, NULL, &root, kp, false, NULL);
+    if ( rc == true )
     { answer_ctx ctx;
 
       ctx.skel = A2;
@@ -5437,17 +5428,19 @@ PRED_IMPL("$tbl_answer_c", 4, tbl_answer_c, PL_FA_NONDETERMINISTIC)
     return rc;
   }
 
-  return FALSE;
+  return false;
 }
 
 
-#define unify_delay_info_dl(t, answer, ctx) LDFUNC(unify_delay_info_dl, t, answer, ctx)
-static int
+#define unify_delay_info_dl(t, answer, ctx) \
+	LDFUNC(unify_delay_info_dl, t, answer, ctx)
+
+static bool
 unify_delay_info_dl(DECL_LD term_t t, trie_node *answer, void *ctx)
 { (void) ctx;
 
   if ( (answer->flags & (TN_IDG_DELETED|TN_IDG_ADDED)) == TN_IDG_DELETED )
-    return FALSE;
+    return false;
 
   if ( answer_is_conditional(answer) )
   { if ( is_ground_trie_node(answer) )
@@ -5481,8 +5474,8 @@ PRED_IMPL("$tbl_answer_dl", 4, tbl_answer_dl, PL_FA_NONDETERMINISTIC)
     int rc;
 
     kp = valTermRef(A2);
-    rc = trie_lookup(trie, NULL, &root, kp, FALSE, NULL);
-    if ( rc == TRUE )
+    rc = trie_lookup(trie, NULL, &root, kp, false, NULL);
+    if ( rc == true )
     { return trie_gen_raw(trie, root, A3, 0, A4, unify_delay_info_dl,
 			  NULL, PL__ctx);
     } else
@@ -5492,7 +5485,7 @@ PRED_IMPL("$tbl_answer_dl", 4, tbl_answer_dl, PL_FA_NONDETERMINISTIC)
     return rc;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -5507,8 +5500,10 @@ typedef struct
 { term_t atrie;
 } update_dl_ctx;
 
-#define answer_update_delay_list(wrapper, answer, vctx) LDFUNC(answer_update_delay_list, wrapper, answer, vctx)
-static int
+#define answer_update_delay_list(wrapper, answer, vctx) \
+	LDFUNC(answer_update_delay_list, wrapper, answer, vctx)
+
+static bool
 answer_update_delay_list(DECL_LD term_t wrapper, trie_node *answer, void *vctx)
 { update_dl_ctx *ctx = vctx;
 
@@ -5516,15 +5511,15 @@ answer_update_delay_list(DECL_LD term_t wrapper, trie_node *answer, void *vctx)
   { Word p;
 
     if ( !ensureStackSpace(10, 2) )
-      return FALSE;
+      return false;
     p = valTermRef(ctx->atrie);
     deRef(p);
     assert(isAtom(*p));
 
-   tbl_push_delay(*p, valTermRef(wrapper), answer);
+    tbl_push_delay(word2atom(*p), valTermRef(wrapper), answer);
   }
 
-  return TRUE;
+  return true;
 }
 
 static
@@ -5556,8 +5551,8 @@ PRED_IMPL("$tbl_answer_update_dl", 3, tbl_answer_update_dl,
     int rc;
 
     kp = valTermRef(A2);
-    rc = trie_lookup(trie, NULL, &root, kp, FALSE, NULL);
-    if ( rc == TRUE )
+    rc = trie_lookup(trie, NULL, &root, kp, false, NULL);
+    if ( rc == true )
     { update_dl_ctx ctx;
 
       ctx.atrie = A1;
@@ -5570,7 +5565,7 @@ PRED_IMPL("$tbl_answer_update_dl", 3, tbl_answer_update_dl,
     return rc;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -5584,7 +5579,7 @@ static int
 is_tabled(Definition def)
 { table_props *props;
 
-  return (props=def->tabling) && true(props, TP_TABLED);
+  return (props=def->tabling) && ison(props, TP_TABLED);
 }
 
 
@@ -5598,11 +5593,11 @@ tbl_implementation(DECL_LD term_t g0, term_t g, int must_be_tabled)
   Definition def;
 
   if ( !PL_strip_module(g0, &m, t) )
-    return FALSE;
+    return false;
   if ( !PL_get_functor(t, &f) )
     return PL_type_error("callable", g0);
   if ( !(proc = resolveProcedure(f, m)) )
-    return FALSE;				/* should not happen */
+    return false;				/* should not happen */
 
   if ( !isDefinedProcedure(proc) )
     trapUndefined(getProcDefinition(proc));
@@ -5627,14 +5622,14 @@ static
 PRED_IMPL("$tnot_implementation", 2, tnot_implementation, PL_FA_TRANSPARENT)
 { PRED_LD
 
-  return tbl_implementation(A1, A2, TRUE);
+  return tbl_implementation(A1, A2, true);
 }
 
 static
 PRED_IMPL("$tbl_implementation", 2, tbl_implementation, PL_FA_TRANSPARENT)
 { PRED_LD
 
-  return tbl_implementation(A1, A2, FALSE);
+  return tbl_implementation(A1, A2, false);
 }
 
 /**
@@ -5671,7 +5666,7 @@ PRED_IMPL("$is_answer_trie", 2, is_answer_trie, 0)
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -5697,24 +5692,24 @@ rollback of the transaction.  More precisely:
 static int
 tt_has_modified_dependencies(DECL_LD trie *atrie)
 { idg_node *n;
-  int found = FALSE;
+  int found = false;
 
   if ( (n=atrie->data.IDG) &&
        LD->transaction.predicates )
-  { Table deps;
+  { TablePP deps;
 
     if ( (deps=n->dependent) )
-    { for_table(deps, n, v,
-		{ idg_node *dep = n;
-		  trie *strie = dep->atrie;
+    { FOR_TABLE(deps, n, v)
+      { idg_node *dep = key2ptr(n);
+	trie *strie = dep->atrie;
 
-		  if ( strie->data.worklist == WL_DYNAMIC &&
-		       lookupHTable(LD->transaction.predicates,
-				    strie->data.predicate) )
-		  { found = TRUE;
-		    break;
-		  }
-		});
+	if ( strie->data.worklist == WL_DYNAMIC &&
+	     lookupHTablePW(LD->transaction.predicates,
+			    strie->data.predicate) )
+	{ found = true;
+	  break;
+	}
+      }
     }
   }
 
@@ -5758,10 +5753,10 @@ lg_clauses(DECL_LD idg_mdep *mdep, mono_dep_status *s)
 
     for(; base < top; base++)
     { if ( isAtom(*base) )
-      { ClauseRef cref = clause_clref(*base);
+      { ClauseRef cref = clause_clref(word2atom(*base));
 	Clause cl = cref->value.clause;
 
-	if ( !true(cl, CL_ERASED) )
+	if ( !ison(cl, CL_ERASED) )
 	{ if ( cl->generation.created < GEN_TRANSACTION_BASE )
 	    s->global_clauses++;
 	  else if ( cl->generation.created >= LD->transaction.gen_base &&
@@ -5789,33 +5784,33 @@ tt_mono_status(DECL_LD trie *atrie)
   mono_dep_status status = {0};
 
   if ( (an=atrie->data.IDG) )
-  { Table deps;
+  { TablePP deps;
 
     DEBUG(MSG_TABLING_TRANSACTION,
 	  print_answer_table(atrie, "tt_mono_status()"));
 
     if ( (deps=an->dependent) )
-    { for_table(deps, dn, v,
-		{ idg_node *dep = dn;
-		  trie *strie = dep->atrie;
+    { FOR_TABLE(deps, dn, v)
+      { idg_node *dep = key2ptr(dn);
+	trie *strie = (trie *)dep->atrie;
 
-		  if ( strie->data.worklist == WL_DYNAMIC )
-		  { idg_mdep *mdep;
+	if ( strie->data.worklist == WL_DYNAMIC )
+	{ idg_mdep *mdep;
 
-		    DEBUG(MSG_TABLING_TRANSACTION,
-			  print_answer_table(strie, "Dynamic dependency"));
+	  DEBUG(MSG_TABLING_TRANSACTION,
+		print_answer_table(strie, "Dynamic dependency"));
 
-		    if ( (mdep=lookupHTable(dep->affected, an)) )
-		      lg_clauses(mdep, &status);
-		  } else
-		  { if ( dep->falsecount > 0 ||
-			 dep->force_reeval )
-		      status.invalid_dep_tables++;
-		  }
+	  if ( (mdep=lookupHTablePP(dep->affected, an)) )
+	    lg_clauses(mdep, &status);
+	} else
+	{ if ( dep->falsecount > 0 ||
+	       dep->force_reeval )
+	    status.invalid_dep_tables++;
+	}
 
-		  if ( status.invalid_dep_tables )
-		    break;
-		});
+	if ( status.invalid_dep_tables )
+	  break;
+      };
     }
   }
 
@@ -5831,7 +5826,7 @@ tt_mono_status(DECL_LD trie *atrie)
 
 
 static void
-tt_free_table_symbol(void *k, void *v)
+tt_free_table_symbol(table_key_t k, table_value_t v)
 { atom_t symbol = (atom_t)k;
   (void)v;
 
@@ -5886,7 +5881,7 @@ tt_add_table(DECL_LD trie *atrie, int flags)
   { tbl_trail *tt = tt_trail();
     atom_t symbol = trie_symbol(atrie);
 
-    updateHTable(tt->tables, (void*)symbol, (void*)(uintptr_t)flags);
+    updateHTable(tt->tables, (table_key_t)symbol, (table_value_t)flags);
     PL_register_atom(symbol);
   }
 }
@@ -5907,13 +5902,13 @@ tt_add_answer(DECL_LD trie *atrie, trie_node *node)
     if ( !((idg=atrie->data.IDG) && idg->tt_notrail) )
     { tbl_trail *tt = tt_trail();
 
-      if ( !lookupHTable(tt->tables, (void*)trie_symbol(atrie)) )
+      if ( !lookupHTable(tt->tables, (table_key_t)trie_symbol(atrie)) )
       { tbl_trail_answer *a = tt_alloc(sizeof(*a));
 	a->type   = TT_ANSWER;
 	a->atrie  = atrie;
 	a->answer = node;
 
-	if ( false(atrie, TRIE_ISTRACKED) )
+	if ( isoff(atrie, TRIE_ISTRACKED) )
 	  set(atrie, TRIE_ISTRACKED);
       }
     }
@@ -5989,7 +5984,7 @@ transaction_commit_tables(DECL_LD)
     tbl_trail_free(tt);
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -6014,13 +6009,13 @@ tt_rollback_answer(trie *atrie, trie_node *answer)
     answer->value = v;
   }
 
-  trie_delete(atrie, answer, TRUE);
+  trie_delete(atrie, answer, true);
 }
 
 
 static int
 tt_rollback_tables(Table affected)
-{ int rc = TRUE;
+{ int rc = true;
 
   FOR_TABLE(affected, n, v)
   { atom_t symbol = (atom_t)n;
@@ -6038,9 +6033,9 @@ tt_rollback_tables(Table affected)
 	flags |= IDG_CHANGED_MONO;
 
       if ( !idg_changed(atrie, flags) )
-	rc = FALSE;		/* can this happen? */
+	rc = false;		/* can this happen? */
       if ( n->monotonic && !n->force_reeval )
-	n->force_reeval = TRUE;
+	n->force_reeval = true;
     }
   }
 
@@ -6073,14 +6068,14 @@ tt_rollback_actions(Buffer b)
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 
 int
 transaction_rollback_tables(DECL_LD)
 { tbl_trail *tt;
-  int rc = TRUE;
+  int rc = true;
 
   if ( (tt=LD->transaction.table_trail) )
   { LD->transaction.table_trail = NULL;
@@ -6122,18 +6117,18 @@ idg_new(trie *atrie)
 
 static void
 idg_clean_affected(idg_node *node)
-{ Table table;
+{ TablePP table;
 
   if ( (table=node->affected) )
-    clearHTable(table);
+    clearHTablePP(table);
 }
 
 static void
 idg_clean_dependent(idg_node *node)
-{ Table table;
+{ TablePP table;
 
   if ( (table=node->dependent) )
-    clearHTable(table);
+    clearHTablePP(table);
 }
 
 
@@ -6142,22 +6137,22 @@ idg_reset(idg_node *node)
 { idg_clean_affected(node);
   idg_clean_dependent(node);
   node->answer_count = 0;
-  node->new_answer   = FALSE;
-  node->reevaluating = FALSE;
+  node->new_answer   = false;
+  node->reevaluating = false;
   node->falsecount   = 0;
 }
 
 static void
 idg_destroy(idg_node *node)
-{ Table table;
+{ TablePP table;
 
   if ( (table=node->affected) )
   { node->affected = NULL;
-    destroyHTable(table);
+    destroyHTablePP(table);
   }
   if ( (table=node->dependent) )
   { node->dependent = NULL;
-    destroyHTable(table);
+    destroyHTablePP(table);
   }
 
   PL_free(node);
@@ -6176,24 +6171,24 @@ free_mdep_chain(idg_node *child)
 }
 
 static void
-idg_free_affected(void *n, void *v)
-{ idg_node *child  = v;
-  idg_node *parent = n;
+idg_free_affected(table_key_t n, table_value_t v)
+{ idg_node *child  = val2ptr(v);
+  idg_node *parent = key2ptr(n);
 
   child = free_mdep_chain(child);
 
   assert(parent->dependent);
-  if ( !deleteHTable(parent->dependent, child) )
+  if ( !deleteHTablePP(parent->dependent, child) )
     Sdprintf("OOPS: idg_free_affected() failed to delete backlink\n");
 }
 
 static void
-idg_free_dependent(void *n, void *v)
-{ idg_node *parent = v;
-  idg_node *child  = n;
+idg_free_dependent(table_key_t n, table_value_t v)
+{ idg_node *parent = val2ptr(v);
+  idg_node *child  = key2ptr(n);
 
   assert(child->affected);
-  if ( (child=deleteHTable(child->affected, parent)) )
+  if ( (child=deleteHTablePP(child->affected, parent)) )
     free_mdep_chain(child);
   else
     Sdprintf("OOPS: idg_free_dependent() failed to delete backlink\n");
@@ -6271,7 +6266,7 @@ pointer to an `mdep` structure. See new_mdep().
 #define idg_add_child(parent, child, dep, flags) LDFUNC(idg_add_child, parent, child, dep, flags)
 static int
 idg_add_child(DECL_LD idg_node *parent, idg_node *child, term_t dep, int flags)
-{ volatile Table t;
+{ volatile TablePP t;
 
   DEBUG(MSG_TABLING_IDG,
 	{ term_t f = PL_new_term_ref();
@@ -6285,62 +6280,62 @@ idg_add_child(DECL_LD idg_node *parent, idg_node *child, term_t dep, int flags)
 	  Sdprintf(" [fc=%d]\n", parent->falsecount);
 	});
 
-  if ( true(parent->atrie, TRIE_ISSHARED) &&
-       false(child->atrie, TRIE_ISSHARED) )
+  if ( ison(parent->atrie, TRIE_ISSHARED) &&
+       isoff(child->atrie, TRIE_ISSHARED) )
     return idg_dependency_error(parent, child);
 
   if ( !(t=child->affected) )
-  { t = newHTable(4);
+  { t = newHTablePP(4);
     t->free_symbol = idg_free_affected;
     if ( !COMPARE_AND_SWAP_PTR(&child->affected, NULL, t) )
-    { destroyHTable(t);
+    { destroyHTablePP(t);
       t = child->affected;
     }
   }
   if ( dep )
-  { idg_mdep *mdep0 = addHTable(t, parent, child); /* chain old dependency */
+  { idg_mdep *mdep0 = addHTablePP(t, parent, child); /* chain old dependency */
     idg_mdep *mdep;
 
     switch( find_dep(mdep0, dep, &mdep) )
-    { case TRUE:
+    { case true:
 	break;
-      case FALSE:
+      case false:
 	DEBUG(MSG_TABLING_IDG,
 	      Sdprintf("  New dependency\n"));
 	if ( !(mdep=new_mdep(dep)) )
-	  return FALSE;
+	  return false;
 	if ( child->lazy )
-	  parent->lazy = TRUE;
+	  parent->lazy = true;
 	if ( parent->lazy )
-	  mdep->lazy = TRUE;
+	  mdep->lazy = true;
 	mdep->next.any = mdep0;
-	updateHTable(t, parent, mdep);
+	updateHTablePP(t, parent, mdep);
 	break;
       default:
-	return FALSE;				   /* resource error */
+	return false;				   /* resource error */
     }
 
     if ( mdep->lazy && LD->transaction.generation &&
 	 child->atrie->data.worklist == WL_DYNAMIC &&
 	 LD->transaction.predicates &&
-	 lookupHTable(LD->transaction.predicates,
-		      child->atrie->data.predicate) )
-      parent->tt_new_dep = TRUE;
+	 lookupHTablePW(LD->transaction.predicates,
+			child->atrie->data.predicate) )
+      parent->tt_new_dep = true;
   } else
-  { addHTable(t, parent, child);
+  { addHTablePP(t, parent, child);
   }
 
   if ( !(t=parent->dependent) )
-  { t = newHTable(4);
+  { t = newHTablePP(4);
     t->free_symbol = idg_free_dependent;
     if ( !COMPARE_AND_SWAP_PTR(&parent->dependent, NULL, t) )
-    { destroyHTable(t);
+    { destroyHTablePP(t);
       t = parent->dependent;
     }
   }
-  addHTable(t, child, parent);
+  addHTablePP(t, child, parent);
 
-  return TRUE;
+  return true;
 }
 
 
@@ -6353,17 +6348,17 @@ idg_init_variant(DECL_LD trie *atrie, Definition def, term_t variant)
       if ( get_procedure(variant, &proc, 0, GP_RESOLVE|GP_EXISTENCE_ERROR) )
 	def = proc->definition;
       else
-	return FALSE;
+	return false;
     }
 
-    if ( (def->tabling && true(def->tabling, TP_MONOTONIC|TP_INCREMENTAL)) )
+    if ( (def->tabling && ison(def->tabling, TP_MONOTONIC|TP_INCREMENTAL)) )
     { idg_node *n = idg_new(atrie);
 
       if ( def->tabling )
-      { if ( true(def->tabling, TP_MONOTONIC) )
-	  n->monotonic = TRUE;
-	if ( true(def->tabling, TP_LAZY) )
-	  n->lazy = TRUE;
+      { if ( ison(def->tabling, TP_MONOTONIC) )
+	  n->monotonic = true;
+	if ( ison(def->tabling, TP_LAZY) )
+	  n->lazy = true;
       }
 
       if ( !COMPARE_AND_SWAP_PTR(&atrie->data.IDG, NULL, n) )
@@ -6371,7 +6366,7 @@ idg_init_variant(DECL_LD trie *atrie, Definition def, term_t variant)
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -6381,7 +6376,7 @@ set_idg_current(DECL_LD trie *atrie)
 { int rc;
   Word p;
 
-  if ( (rc=ensureGlobalSpace(0, ALLOW_GC)) != TRUE )
+  if ( (rc=ensureGlobalSpace(0, ALLOW_GC)) != true )
     return raiseStackOverflow(rc);
   p = valTermRef(LD->tabling.idg_current);
   TrailAssignment(p);
@@ -6390,16 +6385,18 @@ set_idg_current(DECL_LD trie *atrie)
   else
     setVar(*p);
 
-  return TRUE;
+  return true;
 }
 
 #define idg_current(_) LDFUNC(idg_current, _)
 static trie *
 idg_current(DECL_LD)
-{ atom_t current = *valTermRef(LD->tabling.idg_current);
+{ word current = *valTermRef(LD->tabling.idg_current);
 
   if ( current )
-    return symbol_trie(current);
+  { DEBUG(0, assert(isAtom(current)));
+    return symbol_trie(word2atom(current));
+  }
 
   return NULL;
 }
@@ -6410,8 +6407,8 @@ idg_current(DECL_LD)
  * by `atrie`.  If `ctrie` is given it is used.  Otherwise idg_current()
  * is used.
  *
- *   - TRUE:  created a dependency
- *   - FALSE: something is wrong
+ *   - true:  created a dependency
+ *   - false: something is wrong
  *   - -1:    there is no current node
  */
 
@@ -6445,10 +6442,10 @@ PRED_IMPL("$idg_add_edge", 1, idg_add_edge, 0)
     if ( get_trie(A1, &atrie) )
       return !!idg_add_edge(atrie, ctrie);
 
-    return FALSE;
+    return false;
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -6465,14 +6462,14 @@ PRED_IMPL("$idg_set_current", 2, idg_set_current, 0)
   if ( get_trie(A2, &atrie) )
   { atom_t current;
 
-    if ( (current = *valTermRef(LD->tabling.idg_current)) )
+    if ( (current = word2atom(*valTermRef(LD->tabling.idg_current))) )
     { if ( !PL_unify_atom(A1, current) )
-	return FALSE;
+	return false;
     }
     return set_idg_current(atrie);
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -6495,7 +6492,7 @@ trie_for_dynamic_predicate(DECL_LD Definition def, trie *ctrie, term_t variant)
 { trie *atrie;
   int flags = (AT_CREATE|AT_NOCLAIM);
 
-  if ( true(ctrie, TRIE_ISSHARED) )
+  if ( ison(ctrie, TRIE_ISSHARED) )
   { flags |= AT_SHARED;
 
     /* a shared table cannot depend on a thread-local predicate */
@@ -6504,11 +6501,11 @@ trie_for_dynamic_predicate(DECL_LD Definition def, trie *ctrie, term_t variant)
     { Procedure proc;
 
       if ( get_procedure(variant, &proc, 0, GP_RESOLVE) &&
-	   true(proc->definition, P_THREAD_LOCAL) )
+	   ison(proc->definition, P_THREAD_LOCAL) )
       { return idg_dependency_error_dyncall(ctrie->data.IDG,
 					    variant),NULL;
       }
-    } else if ( true(def, P_THREAD_LOCAL) )
+    } else if ( ison(def, P_THREAD_LOCAL) )
     { return idg_dependency_error_dyncall(ctrie->data.IDG, variant),NULL;
     }
   } else
@@ -6542,10 +6539,10 @@ idg_add_dyncall(DECL_LD Definition def, trie *ctrie, term_t variant)
 
   if ( (atrie=trie_for_dynamic_predicate(def, ctrie, variant)) )
   { idg_add_edge(atrie, ctrie);
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -6557,7 +6554,7 @@ PRED_IMPL("$idg_add_dyncall", 1, idg_add_dyncall, 0)
   if ( ctrie && ctrie->data.IDG )
     return idg_add_dyncall(NULL, ctrie, A1);
 
-  return TRUE;
+  return true;
 }
 
 
@@ -6578,7 +6575,7 @@ idg_set_current_wl(DECL_LD term_t wlref)
     return set_idg_current(atrie);
   }
 
-  return FALSE;
+  return false;
 }
 
 static
@@ -6599,7 +6596,7 @@ PRED_IMPL("$idg_set_current", 1, idg_set_current, 0)
   { return set_idg_current(NULL);
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -6617,7 +6614,7 @@ PRED_IMPL("$idg_reset_current", 0, idg_reset_current, 0)
 
 typedef struct idg_edge_state
 { trie *	atrie;
-  Table		table;
+  TablePP	table;
   TableEnum	tenum;
   atom_t	dir;
   int		fixed_dir;
@@ -6633,26 +6630,27 @@ typedef struct idg_edge_state
 
 static int
 advance_idg_edge_state(idg_edge_state *state)
-{ void *k, *v;
-
+{
 retry:
   if ( state->monotonic &&
        state->dependencies &&
        state->dependencies->next.any &&
        state->dependencies->next.dep->magic == IDG_MDEP_MAGIC )
   { state->dependencies = state->dependencies->next.dep;
-    return TRUE;
+    return true;
   }
 
+  table_key_t k;
+  table_value_t v;
   if ( advanceTableEnum(state->tenum, &k, &v) )
-  { idg_node *n = k;
+  { idg_node *n = key2ptr(k);
     idg_mdep *mdep;
 
     if ( state->lazy )			/* Lazy requires reverse lookup */
     { GET_LD
-      mdep = lookupHTable(n->affected, state->atrie->data.IDG);
+      mdep = lookupHTablePP(n->affected, state->atrie->data.IDG);
     } else
-    { mdep = v;
+    { mdep = val2ptr(v);
     }
 
     state->dependencies = NULL;
@@ -6662,7 +6660,7 @@ retry:
     }
 
     state->deptrie_symbol = trie_symbol(n->atrie);
-    return TRUE;
+    return true;
   } else
   { freeTableEnum(state->tenum);
     state->tenum = NULL;
@@ -6670,13 +6668,13 @@ retry:
     if ( !state->fixed_dir && state->dir == ATOM_affected )
     { if ( (state->table = state->atrie->data.IDG->dependent) )
       { state->dir = ATOM_dependent;
-	state->tenum = newTableEnum(state->table);
+	state->tenum = newTableEnumPP(state->table);
 	goto retry;
       }
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 static void
@@ -6693,7 +6691,7 @@ save_idg_edge_state(idg_edge_state *state)
   { idg_edge_state *n = allocForeignState(sizeof(*n));
 
     *n = *state;
-    n->allocated = TRUE;
+    n->allocated = true;
     return n;
   }
 
@@ -6718,26 +6716,26 @@ idg_edge_gen(term_t from, term_t dir, term_t To, term_t dep, term_t depref,
       memset(state, 0, sizeof(*state));
 
       if ( !get_trie(from, &state->atrie) )
-	return FALSE;
+	return false;
       if ( !state->atrie->data.IDG )
-	return FALSE;
+	return false;
 
       if ( !dir )
-      { state->fixed_dir = TRUE;
+      { state->fixed_dir = true;
 	if ( status )			/* '$idg_false_edge'/3 */
-	{ state->lazy    = FALSE;
+	{ state->lazy    = false;
 	  state->dir     = ATOM_dependent;
 	  state->table   = state->atrie->data.IDG->dependent;
 	} else
-	{ state->monotonic = TRUE;
+	{ state->monotonic = true;
 	  if ( answers )		/* '$idg_mono_affects_lazy'/5 */
 	  { if ( !state->atrie->data.IDG->lazy )
-	      return FALSE;
-	    state->lazy    = TRUE;
+	      return false;
+	    state->lazy    = true;
 	    state->dir     = ATOM_dependent;
 	    state->table   = state->atrie->data.IDG->dependent;
 	  } else			/* '$idg_mono_affects[_eager]'/3 */
-	  { state->lazy    = FALSE;
+	  { state->lazy    = false;
 	    state->dir     = ATOM_affected;
 	    state->table   = state->atrie->data.IDG->affected;
 	  }
@@ -6748,12 +6746,12 @@ idg_edge_gen(term_t from, term_t dir, term_t To, term_t dep, term_t depref,
 	} else if ( (state->table = state->atrie->data.IDG->dependent) )
 	{ state->dir = ATOM_dependent;
 	  if ( !PL_unify_atom(dir, ATOM_dependent) )
-	    return FALSE;
-	  state->fixed_dir = TRUE;
+	    return false;
+	  state->fixed_dir = true;
 	} else
-	  return FALSE;
+	  return false;
       } else if ( PL_get_atom_ex(dir, &state->dir) )
-      { state->fixed_dir = TRUE;
+      { state->fixed_dir = true;
 	if ( state->dir == ATOM_affected )
 	  state->table = state->atrie->data.IDG->affected;
 	else if ( state->dir == ATOM_dependent )
@@ -6763,16 +6761,16 @@ idg_edge_gen(term_t from, term_t dir, term_t To, term_t dep, term_t depref,
       }
 
       if ( !state->table )
-	return FALSE;
+	return false;
 
       if ( PL_is_variable(To) )
-      { state->tenum = newTableEnum(state->table);
+      { state->tenum = newTableEnumPP(state->table);
 	if ( advance_idg_edge_state(state) )
 	  break;
 	free_idg_edge_state(state);
-	return FALSE;
+	return false;
       } else if ( get_trie(To, &to) )
-      { return lookupHTable(state->table, to->data.IDG) != NULL;
+      { return !!lookupHTablePP(state->table, to->data.IDG);
       }
     }
     case FRG_REDO:
@@ -6781,10 +6779,10 @@ idg_edge_gen(term_t from, term_t dir, term_t To, term_t dep, term_t depref,
     case FRG_CUTTED:
       state = CTX_PTR;
       free_idg_edge_state(state);
-      return TRUE;
+      return true;
     default:
       assert(0);
-      return FALSE;
+      return false;
   }
 
   Mark(fli_context->mark);
@@ -6817,7 +6815,7 @@ idg_edge_gen(term_t from, term_t dir, term_t To, term_t dep, term_t depref,
 	if ( !(t = PL_new_term_ref()) ||
 	     !put_fastheap(mdep->dependency, t) ||
 	     !PL_unify(t, dep) )
-	  return FALSE;
+	  return false;
       } else
       { goto next;
       }
@@ -6832,7 +6830,7 @@ idg_edge_gen(term_t from, term_t dir, term_t To, term_t dep, term_t depref,
 	{ if ( state->dyn_or_complete )
 	    goto next;
 	  else
-	    state->dyn_or_complete = TRUE;
+	    state->dyn_or_complete = true;
 	}
 
 	if ( !PL_unify_atom(status, astat) )
@@ -6848,7 +6846,7 @@ idg_edge_gen(term_t from, term_t dir, term_t To, term_t dep, term_t depref,
       { if ( advance_idg_edge_state(state) )
 	  ForeignRedoPtr(save_idg_edge_state(state));
 	free_idg_edge_state(state);
-	return TRUE;
+	return true;
       }
     }
 
@@ -6861,7 +6859,7 @@ idg_edge_gen(term_t from, term_t dir, term_t To, term_t dep, term_t depref,
 
 out_fail:
   free_idg_edge_state(state);
-  return FALSE;
+  return false;
 
 out_error:
   assert(PL_exception(0));
@@ -6996,11 +6994,12 @@ idg_changed_loop(DECL_LD idg_propagate_state *state, int flags)
 { typedef struct idg_node *IDGNode;
 
   for(;;)
-  { void *k, *v;
+  { table_key_t k;
+    table_value_t v;
     idg_node *next;
 
     while( advanceTableEnum(state->en, &k, &v) )
-    { idg_node *n = k;
+    { idg_node *n = key2ptr(k);
 
       DEBUG(MSG_TABLING_IDG_CHANGED,
 	    print_answer_table(
@@ -7020,7 +7019,7 @@ idg_changed_loop(DECL_LD idg_propagate_state *state, int flags)
 		  "  Monotonic to incremental evaluation (I)"));
 
 	if ( n->monotonic && !n->force_reeval )
-	{ mdep_empty_queues(v);
+	{ mdep_empty_queues(val2ptr(v));
 	  force_reeval(n);
 	}
 	continue;
@@ -7036,7 +7035,7 @@ idg_changed_loop(DECL_LD idg_propagate_state *state, int flags)
 		  n->atrie,
 		  "  Monotonic to incremental evaluation (II)"));
 
-	  mdep_empty_queues(v);
+	  mdep_empty_queues(val2ptr(v));
 	  force_reeval(n);
 	  idg_propagate_change(n, IDG_PROPAGATE_FORCE);
 	}
@@ -7050,15 +7049,15 @@ idg_changed_loop(DECL_LD idg_propagate_state *state, int flags)
 	}
       } else if ( !table_is_incomplete(n->atrie) &&
 		  !n->mono_reevaluating &&
-		  (n->monotonic ? n->falsecount > 0 : TRUE /* see (***) */) )
+		  (n->monotonic ? n->falsecount > 0 : true /* see (***) */) )
       { int fc = ATOMIC_DEC(&n->falsecount);	/* Decrement falsecount */
 
 	assert(fc >= 0);
 	if ( fc == 0 )
-	{ n->force_reeval = FALSE;
+	{ n->force_reeval = false;
 
 #ifdef O_PLMT
-	  if ( true(n->atrie, TRIE_ISSHARED) && n->atrie->tid )
+	  if ( ison(n->atrie, TRIE_ISSHARED) && n->atrie->tid )
 	  { if ( n->atrie->tid == PL_thread_self() ) /* See (*) */
 	      COMPLETE_WORKLIST(n->atrie, (void)0);
 	    else
@@ -7077,7 +7076,7 @@ idg_changed_loop(DECL_LD idg_propagate_state *state, int flags)
 
     if ( popSegStack(&state->stack, &next, IDGNode) )
     { assert(next->affected);
-      state->en = newTableEnum(next->affected);
+      state->en = newTableEnumPP(next->affected);
     } else
       break;
   }
@@ -7097,7 +7096,7 @@ idg_propagate_change(idg_node *n, int flags)
     state.modified = 0;
     state.incomplete = NULL;
     initSegStack(&state.stack, sizeof(idg_node*), sizeof(state.buf), state.buf);
-    state.en = newTableEnum(n->affected);
+    state.en = newTableEnumPP(n->affected);
     idg_changed_loop(&state, flags);
     clearSegStack(&state.stack);
 
@@ -7121,13 +7120,13 @@ change_incomplete_error(trie *atrie)
 
 static int
 idg_need_invalidated(idg_node *n)
-{ Table t;
+{ TablePP t;
 
   if ( n->atrie->data.worklist == WL_DYNAMIC ||
        (n->monotonic && !n->lazy) )
     return (t=n->affected) && t->size > 0;
 
-  return TRUE;
+  return true;
 }
 
 
@@ -7149,7 +7148,7 @@ idg_changed(trie *atrie, int flags)
     { if ( flags&IDG_CHANGED_MONO )
       { DEBUG(MSG_TABLING_IDG_CHANGED,
 	      Sdprintf("Incomplete table: stopping propagation\n"));
-	return TRUE;
+	return true;
       }
       return change_incomplete_error(atrie);
     }
@@ -7167,7 +7166,7 @@ idg_changed(trie *atrie, int flags)
 	  else Sdprintf(" (no IDG)\n"));
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -7178,7 +7177,7 @@ PRED_IMPL("$idg_changed", 1, idg_changed, 0)
   if ( get_trie(A1, &atrie) )
     return idg_changed(atrie, IDG_CHANGED_NODE);
 
-  return FALSE;
+  return false;
 }
 
 
@@ -7193,10 +7192,10 @@ PRED_IMPL("$idg_falsecount", 2, idg_falsecount, 0)
     if ( (n=atrie->data.IDG) )
       return PL_unify_integer(A2, n->falsecount);
 
-    return FALSE;
+    return false;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -7210,10 +7209,10 @@ PRED_IMPL("$idg_set_falsecount", 2, idg_set_falsecount, 0)
     if ( (n=atrie->data.IDG) )
       return PL_get_integer_ex(A2, &n->falsecount);
 
-    return FALSE;
+    return false;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -7233,7 +7232,7 @@ mdep_hash(DECL_LD term_t dep)
     return hash.murmur;
 
   assert(0);
-  return FALSE;
+  return false;
 }
 
 
@@ -7257,7 +7256,7 @@ new_mdep(DECL_LD term_t dep)
     PL_resource_error("memory");
   }
 
-  return FALSE;
+  return false;
 }
 
 static int
@@ -7275,7 +7274,7 @@ find_dep(DECL_LD idg_mdep *mdep, term_t dep, idg_mdep **found)
 	       put_fastheap(mdep->dependency, dep2) )
 	  { if ( is_variant_ptr(valTermRef(dep), valTermRef(dep2)) )
 	    { *found = mdep;
-	      return TRUE;
+	      return true;
 	    }
 	    PL_discard_foreign_frame(fid);
 	    continue;
@@ -7287,7 +7286,7 @@ find_dep(DECL_LD idg_mdep *mdep, term_t dep, idg_mdep **found)
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -7302,7 +7301,7 @@ PRED_IMPL("$idg_forced", 1, idg_forced, 0)
       return !!n->force_reeval;
   }
 
-  return FALSE;
+  return false;
 }
 
 static void
@@ -7314,7 +7313,7 @@ free_mdep(idg_mdep *mdep)
 }
 
 
-/* Returns TRUE if the queue went from empty to non-empty,
+/* Returns true if the queue went from empty to non-empty,
  * so we must propagate the IDG change event,
  */
 
@@ -7328,7 +7327,7 @@ mdep_queue_answer(idg_mdep *mdep, word ans)
   }
 
   if ( isAtom(ans) )
-    PL_register_atom(ans);
+    PL_register_atom(word2atom(ans));
 
   rc = !isEmptyBuffer(mdep->queue);
   addBuffer(mdep->queue, ans, word);
@@ -7348,16 +7347,16 @@ mdep_unify_answers(term_t t, idg_mdep *mdep)
 
   for(; base < top; base++)
   { if ( isAtom(*base) )
-    { ClauseRef cref = clause_clref(*base);
+    { ClauseRef cref = clause_clref(word2atom(*base));
 
-      if ( !true(cref->value.clause, CL_ERASED) )
+      if ( !ison(cref->value.clause, CL_ERASED) )
       { if ( !PL_unify_list(tail, head, tail) ||
-	     !PL_unify_atom(head, *base) )
+	     !PL_unify_atom(head, word2atom(*base)) )
 	  return -1;
 	count++;
       }
     } else
-    { trie_node *an = (trie_node *)*base;
+    { trie_node *an = word2ptr(trie_node*, *base);
 
       if ( an->value )
       { if ( !PL_unify_list(tail, head, tail) ||
@@ -7389,7 +7388,7 @@ mdep_empty_queue(idg_mdep *mdep, size_t del)
 
     for(; base < top; base++)
     { if ( isAtom(*base) )
-	PL_unregister_atom(*base);
+	PL_unregister_atom(word2atom(*base));
     }
 
     left = topBuffer(mdep->queue, word) - top;
@@ -7422,7 +7421,7 @@ dep_free_queue(Buffer queue)
 
     for(; base < top; base++)
     { if ( isAtom(*base) )
-	PL_unregister_atom(*base);
+	PL_unregister_atom(word2atom(*base));
     }
 
     discardBuffer(queue);
@@ -7447,15 +7446,15 @@ idg_add_monotonic_edge(DECL_LD trie *src_trie, trie *dst_trie, term_t dep)
   { if ( sn->monotonic && !sn->lazy )
       sn->falsecount = 0;			/* (*) */
 
-    if ( def->tabling && true(def->tabling, TP_MONOTONIC) )
+    if ( def->tabling && ison(def->tabling, TP_MONOTONIC) )
       return idg_add_child(dn, sn, dep, def->tabling->flags);
     else
-      return TRUE;				/* monotonic --> incremental */
+      return true;				/* monotonic --> incremental */
   }
 
   if ( def->tabling &&
-       true(def->tabling, TP_OPAQUE) )
-    return TRUE;				/* monotonic --> opaque */
+       ison(def->tabling, TP_OPAQUE) )
+    return true;				/* monotonic --> opaque */
 
   return idg_dependency_error_mono(src_trie, dst_trie);
 }
@@ -7493,7 +7492,7 @@ PRED_IMPL("$idg_add_mono_dyn_dep", 3, idg_add_mono_dyn_dep, 0)
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -7506,16 +7505,17 @@ affected table is not updated.
 static int
 mono_idg_changed(trie *atrie, word answer)
 { idg_node *sn = atrie->data.IDG;
-  Table aff;
+  TablePP aff;
 
   if ( sn && (aff=sn->affected) )
-  { void *k, *v;
+  { table_key_t k;
+    table_value_t v;
     TableEnum en;
 
-    en = newTableEnum(aff);
+    en = newTableEnumPP(aff);
     while( advanceTableEnum(en, &k, &v) )
-    { idg_node *dn = k;
-      idg_mdep *mdep = v;
+    { idg_node *dn = key2ptr(k);
+      idg_mdep *mdep = val2ptr(v);
       int nonempty = 0;
 
       if ( dn->force_reeval )		/* Already marked as invalid */
@@ -7526,7 +7526,7 @@ mono_idg_changed(trie *atrie, word answer)
       while ( mdep && mdep->magic == IDG_MDEP_MAGIC )
       { if ( mdep->lazy )
 	{ nonempty += mdep_queue_answer(mdep, answer);
-	  dn->lazy_queued = TRUE;
+	  dn->lazy_queued = true;
 	  DEBUG(MSG_TABLING_MONOTONIC,
 		print_answer_table(dn->atrie,
 				   "queued answer (nonempty=%d)", nonempty));
@@ -7539,19 +7539,19 @@ mono_idg_changed(trie *atrie, word answer)
 	if ( dn->lazy )
 	  flags |= IDG_CHANGED_MONO;
 	if ( !idg_changed(dn->atrie, flags) )
-	  return FALSE;
+	  return false;
       }
     }
     freeTableEnum(en);
   }
 
-  return TRUE;
+  return true;
 }
 
 
 static void
 force_reeval(DECL_LD idg_node *n)
-{ n->force_reeval = TRUE;
+{ n->force_reeval = true;
 
   if ( LD->transaction.generation )
   { tt_add_table(n->atrie, TT_TBL_INVALIDATE);
@@ -7578,39 +7578,39 @@ PRED_IMPL("$tbl_monotonic_add_answer", 2, tbl_monotonic_add_answer, 0)
   { if ( atrie->data.IDG && !atrie->data.IDG->monotonic )
     { Sdprintf("Monotonic propagation to non-monotonic table??\n");
       idg_changed(atrie, IDG_CHANGED_NODE);
-      return FALSE;
-    } else if ( true(atrie, TRIE_ISMAP) )	/* answer subsumption */
+      return false;
+    } else if ( ison(atrie, TRIE_ISMAP) )	/* answer subsumption */
     { trie_node *node = wkl_mode_add_answer(NULL, atrie, A2, 0);
 
       if ( node )
-      { mono_idg_changed(atrie, (word)node);
-	return TRUE;
+      { mono_idg_changed(atrie, ptr2word(node));
+	return true;
       }
     } else					/* normal tabling */
     { trie_node *node;
       Word kp = valTermRef(A2);
       int rc = trie_lookup_abstract(atrie, NULL, &node, kp,
-				    TRUE, NULL, NULL);
+				    true, NULL, NULL);
 
       if ( rc > 0 )
       { if ( node->value )
-	  return FALSE;
+	  return false;
 	tt_add_answer(atrie, node);
 	set_trie_value_word(atrie, node, ATOM_trienode);
 
-	if ( !mono_idg_changed(atrie, (word)node) )
-	  return FALSE;
+	if ( !mono_idg_changed(atrie, ptr2word(node)) )
+	  return false;
 	if ( !atrie_answer_event(atrie, node) )
-	  return FALSE;
+	  return false;
 
-	return TRUE;
+	return true;
       } else
       { return trie_error(rc, A1);
       }
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 static
@@ -7642,11 +7642,11 @@ inner_is_monotonic(DECL_LD)
        (dep=idg_current()) )
   { Definition def = dep->data.predicate;
 
-    if ( def->tabling && true(def->tabling, TP_MONOTONIC) )
-      return TRUE;
+    if ( def->tabling && ison(def->tabling, TP_MONOTONIC) )
+      return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -7655,7 +7655,7 @@ PRED_IMPL("$tbl_collect_mono_dep", 0, tbl_collect_mono_dep, 0)
 { PRED_LD
 
   if ( LD->tabling.in_assert_propagation )
-    return TRUE;
+    return true;
 
   return inner_is_monotonic();
 }
@@ -7679,7 +7679,7 @@ PRED_IMPL("$tbl_collect_mono_dep", 0, tbl_collect_mono_dep, 0)
 
 static void *
 mono_reeval_prep_node(trie_node *n, void *ctx)
-{ if ( n->value && true(n, TN_SECONDARY) )
+{ if ( n->value && ison(n, TN_SECONDARY) )
     set(n, TN_IDG_AS_LAST);
   else
     clear(n, TN_IDG_AS_LAST);
@@ -7703,25 +7703,25 @@ PRED_IMPL("$mono_reeval_prepare", 2, mono_reeval_prepare, 0)
 	    tt_add_table(atrie, TT_TBL_INVALIDATE);
 	    break;
 	  case M_OLD_CLAUSES:
-	    idg->tt_notrail = TRUE;
+	    idg->tt_notrail = true;
 	    break;
 	  case M_NEW_CLAUSES:
-	    idg->tt_notrail = FALSE;
+	    idg->tt_notrail = false;
 	    break;
 	}
       }
 
-      idg->lazy_queued = FALSE;		/* trap that new answers are queued */
-      idg->mono_reevaluating = TRUE;
-      idg->tt_new_dep = FALSE;		/* see idg_add_child() */
-      if ( true(atrie, TRIE_ISMAP) )
+      idg->lazy_queued = false;		/* trap that new answers are queued */
+      idg->mono_reevaluating = true;
+      idg->tt_new_dep = false;		/* see idg_add_child() */
+      if ( ison(atrie, TRIE_ISMAP) )
 	map_trie_node(&atrie->root, mono_reeval_prep_node, atrie);
 
       return PL_unify_integer(A2, atrie->value_count);
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -7733,12 +7733,13 @@ that have already been deleted.
 static void
 prune_deleted_mdeps(idg_node *idg)
 { if ( idg->affected )
-  { TableEnum en = newTableEnum(idg->affected);
-    void *k, *v;
+  { TableEnum en = newTableEnumPP(idg->affected);
+    table_key_t k;
+    table_value_t v;
 
     while(advanceTableEnum(en, &k, &v))
-    { idg_node *dn = k;
-      idg_mdep *mdep = v;
+    { idg_node *dn = key2ptr(k);
+      idg_mdep *mdep = val2ptr(v);
 
       if ( dn->force_reeval )			/* Invalidated; no queue */
       { dn->falsecount++;			/* see mono_idg_changed() */
@@ -7757,7 +7758,7 @@ prune_deleted_mdeps(idg_node *idg)
 	  { if ( isAtom(*base) )
 	    { *out++ = *base;
 	    } else
-	    { trie_node *an = (trie_node *)*base;
+	    { trie_node *an = word2ptr(trie_node *, *base);
 
 	      if ( an->value )
 		*out++ = *base;
@@ -7779,14 +7780,14 @@ static void *
 mono_reeval_done_node(trie_node *n, void *ctx)
 { int *gc = ctx;
 
-  if ( n->value && true(n, TN_SECONDARY) )
-  { if ( true(n, TN_IDG_AS_LAST) )
+  if ( n->value && ison(n, TN_SECONDARY) )
+  { if ( ison(n, TN_IDG_AS_LAST) )
     { clear(n, TN_IDG_AS_LAST);
       return NULL;				/* same aggregated value */
     }
     return n;					/* new aggregated value */
   }
-  if ( true(n, TN_IDG_AS_LAST) )
+  if ( ison(n, TN_IDG_AS_LAST) )
   { clear(n, TN_IDG_AS_LAST);			/* deleted aggregated value */
     return n;
   }
@@ -7811,7 +7812,7 @@ Otherwise it returns the found invalid dependency.
 typedef struct mono_scc_state
 { idg_node *idg;				/* current node */
   TableEnum en;					/* Enum on its dependencies */
-  Table visited;				/* Nodes we have seen */
+  TablePW visited;				/* IDGNode -> bool */
   segstack  stack;				/* agenda */
   idg_node  *buf[100];
 } mono_scc_state;
@@ -7828,15 +7829,15 @@ mdep_is_empty(idg_mdep *mdep)
       /* see also mdep_unify_answers() */
       for(; base < top; base++)
       { if ( isAtom(*base) )
-	{ ClauseRef cref = clause_clref(*base);
+	{ ClauseRef cref = clause_clref(word2atom(*base));
 
-	  if ( !true(cref->value.clause, CL_ERASED) )
-	    return FALSE;
+	  if ( !ison(cref->value.clause, CL_ERASED) )
+	    return false;
 	} else
-	{ trie_node *an = (trie_node *)*base;
+	{ trie_node *an = word2ptr(trie_node *, *base);
 
 	  if ( an->value )
-	    return FALSE;
+	    return false;
 	}
       }
     }
@@ -7844,7 +7845,7 @@ mdep_is_empty(idg_mdep *mdep)
     mdep = mdep->next.any;
   }
 
-  return TRUE;
+  return true;
 }
 
 #define mono_scc_is_complete_loop(state) \
@@ -7855,13 +7856,14 @@ mono_scc_is_complete_loop(DECL_LD mono_scc_state *state)
 { typedef struct idg_node *IDGNode;
 
   for(;;)
-  { void *k, *v;
+  { table_key_t k;
+    table_value_t v;
 
     while(advanceTableEnum(state->en, &k, &v))
-    { idg_node *dep = k;
+    { idg_node *dep = key2ptr(k);
       idg_mdep *mdep;
 
-      if ( (mdep=lookupHTable(dep->affected, state->idg)) &&
+      if ( (mdep=lookupHTablePP(dep->affected, state->idg)) &&
 	   !mdep_is_empty(mdep) )
       { DEBUG(MSG_TABLING_MONOTONIC,
 	      print_answer_table(dep->atrie, "  queued answers"));
@@ -7876,10 +7878,10 @@ mono_scc_is_complete_loop(DECL_LD mono_scc_state *state)
 	}
 
 	if ( dep->lazy && dep->dependent && dep->dependent->size > 0 &&
-	     !lookupHTable(state->visited, dep) )
+	     !lookupHTablePW(state->visited, dep) )
 	{ if ( !pushSegStack(&state->stack, dep, IDGNode) )
 	    outOfCore();
-	  addHTable(state->visited, dep, (void*)TRUE);
+	  addHTablePW(state->visited, dep, true);
 	}
       }
     }
@@ -7888,7 +7890,7 @@ mono_scc_is_complete_loop(DECL_LD mono_scc_state *state)
     state->en = NULL;
 
     if ( popSegStack(&state->stack, &state->idg, IDGNode) )
-    { state->en = newTableEnum(state->idg->dependent);
+    { state->en = newTableEnumPP(state->idg->dependent);
     } else
       break;
   }
@@ -7910,11 +7912,11 @@ mono_scc_is_complete(DECL_LD idg_node *idg)
     idg_node *invalid;
 
     state.idg = idg;
-    state.visited = newHTable(4);
-    addHTable(state.visited, idg, (void*)TRUE);
+    state.visited = newHTablePW(4);
+    addHTablePW(state.visited, idg, true);
     initSegStack(&state.stack, sizeof(idg_node*), sizeof(state.buf), state.buf);
 
-    state.en = newTableEnum(idg->dependent);
+    state.en = newTableEnumPP(idg->dependent);
     invalid = mono_scc_is_complete_loop(&state);
     if ( state.en )
       freeTableEnum(state.en);
@@ -7922,14 +7924,14 @@ mono_scc_is_complete(DECL_LD idg_node *idg)
     clearSegStack(&state.stack);
     if ( !invalid )
     { FOR_TABLE(state.visited, k, v)
-      { idg_node *dep = k;
+      { idg_node *dep = key2ptr(k);
 	(void) v;
 
 	dep->falsecount = 0;
-	dep->tt_notrail = FALSE;
+	dep->tt_notrail = false;
       }
     }
-    destroyHTable(state.visited);
+    destroyHTablePW(state.visited);
 
     return invalid;
   }
@@ -7940,19 +7942,20 @@ mono_scc_is_complete(DECL_LD idg_node *idg)
 #define has_queued_answers(idg) LDFUNC(has_queued_answers, idg)
 static int
 has_queued_answers(DECL_LD idg_node *idg)
-{ int queued = FALSE;
+{ int queued = false;
 
   if ( idg->dependent && idg->dependent->size > 0 )
-  { TableEnum en = newTableEnum(idg->dependent);
-    void *k, *v;
+  { TableEnum en = newTableEnumPP(idg->dependent);
+    table_key_t k;
+    table_value_t v;
 
     while( !queued && advanceTableEnum(en, &k, &v) )
-    { idg_node *dep = k;
+    { idg_node *dep = key2ptr(k);
       idg_mdep *mdep;
 
-      if ( (mdep=lookupHTable(dep->affected, idg)) &&
+      if ( (mdep=lookupHTablePP(dep->affected, idg)) &&
 	   !mdep_is_empty(mdep) )
-	queued = TRUE;
+	queued = true;
     }
 
     freeTableEnum(en);
@@ -7978,11 +7981,12 @@ invalid_dependencies(DECL_LD term_t deps, idg_node *idg, size_t *count)
   size_t cnt = 0;
 
   if ( idg->dependent && idg->dependent->size > 0 )
-  { TableEnum en = newTableEnum(idg->dependent);
-    void *k, *v;
+  { TableEnum en = newTableEnumPP(idg->dependent);
+    table_key_t k;
+    table_value_t v;
 
     while(advanceTableEnum(en, &k, &v))
-    { idg_node *dep = k;
+    { idg_node *dep = key2ptr(k);
 
       if ( dep->falsecount > 0 )
       { cnt++;
@@ -7997,7 +8001,7 @@ invalid_dependencies(DECL_LD term_t deps, idg_node *idg, size_t *count)
 	  if ( !PL_unify_list(tail, head, tail) ||
 	       !PL_unify_atom(head, trie_symbol(dep->atrie)) )
 	  { freeTableEnum(en);
-	    return FALSE;
+	    return false;
 	  }
 	}
       }
@@ -8035,17 +8039,17 @@ PRED_IMPL("$mono_reeval_done", 3, mono_reeval_done, 0)
   if ( get_trie(A1, &atrie) &&
        PL_get_integer(A2, &vc) )
   { idg_node *idg;
-    int rc = TRUE;
+    int rc = true;
 
     if ( (idg=atrie->data.IDG) )
     { size_t invalid_deps;
       term_t deps_t = PL_new_term_ref();
 
-      idg->mono_reevaluating = FALSE;
+      idg->mono_reevaluating = false;
       if ( idg->tt_new_dep )
 	tt_add_table(atrie, TT_TBL_INVALIDATE);
       if ( !invalid_dependencies(deps_t, idg, &invalid_deps) )
-	return FALSE;
+	return false;
 
       if ( atrie->value_count == vc )
       { trie_node *n = NULL;
@@ -8053,7 +8057,7 @@ PRED_IMPL("$mono_reeval_done", 3, mono_reeval_done, 0)
 	DEBUG(MSG_TABLING_MONOTONIC,
 	      print_answer_table(atrie, "%d answers (same)", vc));
 
-	if ( true(atrie, TRIE_ISMAP) )
+	if ( ison(atrie, TRIE_ISMAP) )
 	{ int gc = 0;
 	  int queue;
 
@@ -8064,7 +8068,7 @@ PRED_IMPL("$mono_reeval_done", 3, mono_reeval_done, 0)
 	    prune_trie(atrie, &atrie->root, NULL, NULL);
 	  }
 	  if ( queue )
-	    rc = mono_idg_changed(atrie, (word)n);
+	    rc = mono_idg_changed(atrie, ptr2word(n));
 	}
 
 	if ( !n && rc && !invalid_deps )
@@ -8095,7 +8099,7 @@ PRED_IMPL("$mono_reeval_done", 3, mono_reeval_done, 0)
 	}
       } else
       { idg->falsecount = 0;
-	idg->tt_notrail = FALSE;
+	idg->tt_notrail = false;
 	rc = PL_unify_nil(A3);
       }
     }
@@ -8103,7 +8107,7 @@ PRED_IMPL("$mono_reeval_done", 3, mono_reeval_done, 0)
     return rc;
   }
 
-  return FALSE;
+  return false;
 }
 
 static
@@ -8117,10 +8121,10 @@ PRED_IMPL("$idg_mono_empty_queue", 2, idg_mono_empty_queue, 0)
        PL_get_size_ex(A2, &del) )
   { mdep_empty_queue(mdep, del);
 
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -8140,7 +8144,7 @@ PRED_IMPL("$idg_mono_invalidate", 1, idg_mono_invalidate, 0)
   if ( get_trie(A1, &atrie) )
     return idg_changed(atrie, IDG_CHANGED_NODE);
 
-  return FALSE;
+  return false;
 }
 
 
@@ -8170,7 +8174,7 @@ get_mono_answer(DECL_LD term_t t, word *ap)
     if ( isAtom(*p) )			/* clause reference */
     { *ap = *p;
     } else if ( isInteger(*p) )		/* trie node */
-    { *ap = (word) word_to_answer(*p);
+    { *ap = ptr2word(word_to_answer(*p));
     } else
       return PL_type_error("tbl_answer", t);
   }
@@ -8195,7 +8199,7 @@ PRED_IMPL("$mono_idg_changed", 2, mono_idg_changed, 0)
   if ( get_trie(A1, &atrie) )
     return mono_queue_answer(atrie, A2, 0);
 
-  return FALSE;
+  return false;
 }
 
 
@@ -8233,7 +8237,7 @@ table_status_reeval_wait(DECL_LD trie *atrie)
       { atom_t status;
 
 	if ( !claim_answer_table(atrie, NULL, 0) )
-	  return FALSE;				/* deadlock */
+	  return false;				/* deadlock */
 
 	status = table_status(atrie);
 	COMPLETE_WORKLIST(atrie, (void)0);
@@ -8260,7 +8264,7 @@ PRED_IMPL("$tbl_reeval_wait", 2, tbl_reeval_wait, 0)
        (status=table_status_reeval_wait(atrie)) )
     return PL_unify_atom(A2, status);
 
-  return FALSE;
+  return false;
 }
 
 
@@ -8287,7 +8291,7 @@ reeval_prep_node(trie_node *n, void *ctx)
     clear(n, TN_IDG_ADDED);
 
     if ( answer_is_conditional(n) )
-    { destroy_delay_info(atrie, n, TRUE);
+    { destroy_delay_info(atrie, n, true);
       n->data.delayinfo = NULL;
       clear(n, TN_IDG_UNCONDITIONAL);
     } else
@@ -8319,20 +8323,20 @@ prepare_reeval(DECL_LD trie *atrie)
     tt_add_table(atrie, TT_TBL_INVALIDATE);
 
   idg->answer_count = atrie->value_count;
-  idg->new_answer = FALSE;
+  idg->new_answer = false;
   idg->falsecount = 0;
   idg_clean_dependent(idg);
   if ( !idg->aborted )
     map_trie_node(&atrie->root, reeval_prep_node, atrie);
-  idg->reevaluating = TRUE;
+  idg->reevaluating = true;
 
   if ( WL_IS_WORKLIST(wl) )
-  { wl->negative    = FALSE;
-    wl->has_answers = FALSE;
-    wl->neg_delayed = FALSE;
+  { wl->negative    = false;
+    wl->has_answers = false;
+    wl->neg_delayed = false;
   }
 
-  return TRUE;
+  return true;
 }
 
 static
@@ -8344,18 +8348,18 @@ PRED_IMPL("$tbl_reeval_prepare_top", 2, tbl_reeval_prepare_top, 0)
   { idg_node *idg = atrie->data.IDG;
 
 #ifdef O_PLMT
-    if ( true(atrie, TRIE_ISSHARED) )
+    if ( ison(atrie, TRIE_ISSHARED) )
     { atom_t cref = 0;
 
       if ( !claim_answer_table(atrie, &cref, 0) )
-	return FALSE;				/* deadlock */
+	return false;				/* deadlock */
       if ( cref )
 	return PL_unify_atom(A2, cref);
     }
 #endif
 
     if ( idg->falsecount == 0 && !idg->force_reeval) /* someone else re-evaluated it */
-    { if ( true(atrie, TRIE_ISMAP) )
+    { if ( ison(atrie, TRIE_ISMAP) )
 	return PL_unify_integer(A2, 0);
       else
 	return PL_unify_atom(A2, trie_symbol(atrie));
@@ -8364,7 +8368,7 @@ PRED_IMPL("$tbl_reeval_prepare_top", 2, tbl_reeval_prepare_top, 0)
     return prepare_reeval(atrie);
   }
 
-  return FALSE;
+  return false;
 }
 
 /** '$tbl_reeval_prepare'(+Atrie, -Variant) is semidet.
@@ -8383,29 +8387,29 @@ PRED_IMPL("$tbl_reeval_prepare", 2, tbl_reeval_prepare, 0)
   { idg_node *idg = atrie->data.IDG;
 
     if ( idg->monotonic && !idg->force_reeval )
-      return FALSE;
+      return false;
 
 #ifdef O_PLMT
-    if ( true(atrie, TRIE_ISSHARED) )
+    if ( ison(atrie, TRIE_ISSHARED) )
     { atom_t cref = 0;
 
       if ( !claim_answer_table(atrie, &cref, 0) )
-	return FALSE;				/* deadlock */
+	return false;				/* deadlock */
       if ( cref )
 	return PL_unify_atom(A3, cref);
     }
 #endif
 
     if ( idg->falsecount == 0 )			/* someone else re-evaluated it */
-      return FALSE;
+      return false;
 
     if ( !unify_trie_term(atrie->data.variant, NULL, A2) )
-      return FALSE;
+      return false;
 
     return prepare_reeval(atrie);
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -8423,10 +8427,10 @@ PRED_IMPL("$tbl_reeval_abandon", 1, tbl_reeval_abandon, 0)
 	  print_answer_table(atrie, "Abondon re-evaluation"));
     COMPLETE_WORKLIST(atrie, (void)0);
 
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -8442,19 +8446,19 @@ reeval_complete_node(trie_node *n, void *ctx)
     return NULL;
   }
 
-  if ( true(n, TN_IDG_DELETED) )
+  if ( ison(n, TN_IDG_DELETED) )
   { clear(n, TN_IDG_DELETED);		/* not used by trie admin */
-    trie_delete(atrie, n, FALSE);	/* TBD: can we prune? */
-    if ( false(n, TN_IDG_UNCONDITIONAL) )
-      simplify_answer(atrie->data.worklist, n, FALSE);
+    trie_delete(atrie, n, false);	/* TBD: can we prune? */
+    if ( isoff(n, TN_IDG_UNCONDITIONAL) )
+      simplify_answer(atrie->data.worklist, n, false);
     DEBUG(MSG_TABLING_IDG_REEVAL_NODE, action = "Not reappeared");
-  } else if ( true(n, TN_IDG_UNCONDITIONAL) &&
+  } else if ( ison(n, TN_IDG_UNCONDITIONAL) &&
 	      answer_is_conditional(n) )
-  { atrie->data.IDG->new_answer = TRUE;
+  { atrie->data.IDG->new_answer = true;
     DEBUG(MSG_TABLING_IDG_REEVAL_NODE, action = "Got conditional");
-  } else if ( false(n, TN_IDG_UNCONDITIONAL) &&
+  } else if ( isoff(n, TN_IDG_UNCONDITIONAL) &&
 	      !answer_is_conditional(n) )
-  { atrie->data.IDG->new_answer = TRUE;
+  { atrie->data.IDG->new_answer = true;
     DEBUG(MSG_TABLING_IDG_REEVAL_NODE, action = "Got UNconditional");
   } else
   { DEBUG(MSG_TABLING_IDG_REEVAL_NODE, action = "Not modified");
@@ -8477,14 +8481,14 @@ reeval_complete(trie *atrie)
   { int same_answers;
     map_trie_node(&atrie->root, reeval_complete_node, atrie);
 
-    same_answers = ( n->new_answer == FALSE &&
+    same_answers = ( n->new_answer == false &&
 		     n->answer_count == atrie->value_count );
 
     DEBUG(MSG_TABLING_IDG_REEVAL,
 	  print_answer_table(atrie,
 			     "Completed reeval of (modified: %s (new: %s, Danswers = %zd))",
-			     same_answers ? "FALSE" : "TRUE",
-			     n->new_answer ? "TRUE" : "FALSE",
+			     same_answers ? "false" : "true",
+			     n->new_answer ? "true" : "false",
 			     (size_t)(atrie->value_count - n->answer_count)));
 
     if ( same_answers )
@@ -8494,8 +8498,8 @@ reeval_complete(trie *atrie)
 
     TRIE_STAT_INC(n, reevaluated);
 
-    n->force_reeval = FALSE;
-    n->aborted      = FALSE;
+    n->force_reeval = false;
+    n->aborted      = false;
   }
 }
 
@@ -8526,12 +8530,12 @@ reset_evaluate_node(trie_node *n, void *ctx)
 { trie *atrie = ctx;
 
   if ( answer_is_conditional(n) )
-  { destroy_delay_info(atrie, n, TRUE);
+  { destroy_delay_info(atrie, n, true);
     n->data.delayinfo = NULL;
   }
 
-  if ( true(n, TN_IDG_ADDED) )
-  { trie_delete(atrie, n, FALSE);	/* we are enumerating this node */
+  if ( ison(n, TN_IDG_ADDED) )
+  { trie_delete(atrie, n, false);	/* we are enumerating this node */
   } else				/* and cannot delete it (now) */
   { set(n, TN_IDG_DELETED);
   }
@@ -8551,11 +8555,11 @@ reset_reevaluation(trie *atrie)
   map_trie_node(&atrie->root, reset_evaluate_node, atrie);
   assert(n->answer_count == atrie->value_count);
 
-  n->new_answer = FALSE;
-  n->aborted = TRUE;
+  n->new_answer = false;
+  n->aborted = true;
   n->falsecount = 1;
   set(atrie, TRIE_COMPLETE);
-  COMPLETE_WORKLIST(atrie, n->reevaluating = FALSE);
+  COMPLETE_WORKLIST(atrie, n->reevaluating = false);
 }
 
 
@@ -8564,7 +8568,7 @@ reset_reevaluation(trie *atrie)
 		 *******************************/
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-Send an event for a new answer. Returns  FALSE if the event hooks raised
+Send an event for a new answer. Returns  false if the event hooks raised
 an exception, i.e., failure is silently ignored.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
@@ -8582,13 +8586,13 @@ atrie_answer_event(DECL_LD trie *atrie, trie_node *answer)
 	 unify_trie_term(answer, NULL, skel) )
     { if ( table_answer_event(atrie->data.predicate,
 			      ATOM_new_answer, wrapper) )
-	return TRUE;
+	return true;
       else
 	return !PL_exception(0);
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -8611,7 +8615,7 @@ setMonotonicMode(atom_t a)
     return PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_table_monotonic, value);
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -8664,17 +8668,17 @@ tbl_get_predicate_attribute(Definition def, atom_t att, term_t value)
   { GET_LD
 
     if ( att == ATOM_monotonic )
-    { return PL_unify_integer(value, !!true(p, TP_MONOTONIC));
+    { return PL_unify_integer(value, !!ison(p, TP_MONOTONIC));
     } else if ( att == ATOM_incremental )
-    { return PL_unify_integer(value, !!true(p, TP_INCREMENTAL));
+    { return PL_unify_integer(value, !!ison(p, TP_INCREMENTAL));
     } else if ( att == ATOM_tshared )
-    { return PL_unify_integer(value, !!true(p, TP_SHARED));
+    { return PL_unify_integer(value, !!ison(p, TP_SHARED));
     } else if ( att == ATOM_opaque )
-    { return PL_unify_integer(value, !!true(p, TP_OPAQUE));
+    { return PL_unify_integer(value, !!ison(p, TP_OPAQUE));
     } else if ( att == ATOM_lazy )
-    { return PL_unify_integer(value, !!true(p, TP_LAZY));
+    { return PL_unify_integer(value, !!ison(p, TP_LAZY));
     } else if ( att == ATOM_tabled )
-    { return PL_unify_integer(value, !!true(p, TP_TABLED));
+    { return PL_unify_integer(value, !!ison(p, TP_TABLED));
     } else
     { size_t v0;
 
@@ -8694,7 +8698,7 @@ tbl_get_predicate_attribute(Definition def, atom_t att, term_t value)
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -8707,17 +8711,17 @@ get_size_or_inf(DECL_LD term_t t, size_t *vp)
   if ( PL_get_atom(t, &inf) && inf == ATOM_infinite )
     v	= (size_t)-1;
   else if ( !PL_get_size_ex(t, &v) )
-    return FALSE;
+    return false;
 
   *vp = v;
-  return TRUE;
+  return true;
 }
 
 
 void
 tbl_set_incremental_predicate(Definition def, int val)
 { table_props *p = get_predicate_table_props(def);
-  int now = !!true(p, TP_INCREMENTAL);
+  int now = !!ison(p, TP_INCREMENTAL);
 
   if ( !!val != now )
   { if ( val )
@@ -8725,7 +8729,7 @@ tbl_set_incremental_predicate(Definition def, int val)
     else
       clear(p, TP_INCREMENTAL);
 
-    freeCodesDefinition(def, TRUE);
+    freeCodesDefinition(def, true);
   }
 }
 
@@ -8738,7 +8742,7 @@ set_bool_attr(Definition def, unsigned int flag, term_t value)
   { if ( flag == TP_INCREMENTAL )
     { tbl_set_incremental_predicate(def, v);
 
-      return TRUE;
+      return true;
     } else
     { table_props *props = get_predicate_table_props(def);
 
@@ -8747,11 +8751,11 @@ set_bool_attr(Definition def, unsigned int flag, term_t value)
       else
 	clear(props, flag);
 
-      return TRUE;
+      return true;
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -8794,7 +8798,7 @@ tbl_set_predicate_attribute(Definition def, atom_t att, term_t value)
     size_t v;
 
     if ( !get_size_or_inf(value, &v) )
-      return FALSE;
+      return false;
 
     if ( att == ATOM_abstract )
       p->abstract = v;
@@ -8805,10 +8809,10 @@ tbl_set_predicate_attribute(Definition def, atom_t att, term_t value)
     else if ( att == ATOM_max_answers )
       p->max_answers = v;
     else
-      return FALSE;
+      return false;
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -8826,7 +8830,7 @@ tbl_is_restraint_flag(atom_t key)
 static int
 unify_restraint(term_t t, size_t val)
 { if ( val == (size_t)-1 )
-    return FALSE;
+    return false;
   else
     return PL_unify_uint64(t, val);
 }
@@ -8860,7 +8864,7 @@ set_restraint_action(DECL_LD term_t t, atom_t key, atom_t *valp)
   { if ( act == ATOM_error || act == ATOM_warning || act == ATOM_suspend )
     { ok:
       *valp = act;
-      return TRUE;
+      return true;
     }
 
     if ( act == ATOM_complete_soundly )	/* XSB compatibility */
@@ -8880,7 +8884,7 @@ set_restraint_action(DECL_LD term_t t, atom_t key, atom_t *valp)
     return PL_domain_error("restraint_action", t);
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -8891,7 +8895,7 @@ set_restraint(term_t t, size_t *valp)
 
   if ( PL_get_atom(t, &inf) && inf == ATOM_infinite )
   { *valp = (size_t)-1;
-    return TRUE;
+    return true;
   }
   return PL_get_size_ex(t, valp);
 }
@@ -9040,19 +9044,19 @@ tbl_pred_tripwire(Definition def, atom_t action, atom_t wire)
 
 static int
 table_needs_work(trie *atrie)
-{ if ( true(atrie, TRIE_COMPLETE) )
+{ if ( ison(atrie, TRIE_COMPLETE) )
   { idg_node *n;
 
     if ( (n=atrie->data.IDG) )
     { if ( n->falsecount > 0 ||		/* invalid */
 	   n->reevaluating )		/* fresh (re-evaluating) */
-	return TRUE;
+	return true;
     }
 
-    return FALSE;
+    return false;
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -9075,7 +9079,7 @@ reduce contention.
 
 static int
 claim_answer_table(DECL_LD trie *atrie, atom_t *clrefp, int flags)
-{ if ( true(atrie, TRIE_ISSHARED) && !(flags&AT_NOCLAIM) )
+{ if ( ison(atrie, TRIE_ISSHARED) && !(flags&AT_NOCLAIM) )
   { int mytid = PL_thread_self();
     volatile atom_t clref = 0;
 
@@ -9094,12 +9098,12 @@ claim_answer_table(DECL_LD trie *atrie, atom_t *clrefp, int flags)
 	       PL_put_atom(ex, ATOM_deadlock) )
 	    PL_raise_exception(ex);
 	  UNLOCK_SHARED_TABLE(atrie);
-	  return FALSE;
+	  return false;
 	}
 	TRIE_STAT_INC(atrie, wait);
 	if ( !wait_for_table_to_complete(atrie) )
 	{ UNLOCK_SHARED_TABLE(atrie);
-	  return FALSE;
+	  return false;
 	}
 	unregister_waiting(mytid, atrie);
 	if ( !atrie->tid && table_needs_work(atrie) )
@@ -9133,7 +9137,7 @@ claim_answer_table(DECL_LD trie *atrie, atom_t *clrefp, int flags)
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -9225,7 +9229,7 @@ deadlock.
 static void
 stat_deadlock(trie *atrie)
 {
-#ifdef O_TRIE_STATS
+#if O_TRIE_STATS
   int mytid = atrie->tid;
   trie *t = NULL;
   int tid = mytid;
@@ -9260,10 +9264,10 @@ is_deadlock(trie *atrie)
       tid = t->tid;
 
     if ( !t || !tid )
-      return FALSE;
+      return false;
     if ( tid == mytid )
     { stat_deadlock(atrie);
-      return TRUE;
+      return true;
     }
   }
 }
@@ -9279,7 +9283,7 @@ wait_for_table_to_complete(trie *atrie)
     { if ( PL_handle_signals() < 0 )
       { DEBUG(MSG_TABLING_SHARED,
 	      print_answer_table(atrie, "Ready (interrupted"));
-	return FALSE;
+	return false;
       }
     }
   } while( atrie->tid != 0 );
@@ -9289,7 +9293,7 @@ wait_for_table_to_complete(trie *atrie)
 			   table_needs_work(atrie) ? "Ready (abandonned)"
 						   : "Ready (completed)"));
 
-  return TRUE;
+  return true;
 }
 #endif /*O_PLMT*/
 
@@ -9339,7 +9343,7 @@ initTabling(void)
   LD->tabling.restraint.max_answers_for_subgoal_action = ATOM_error;
   LD->tabling.restraint.max_answers_for_subgoal	       = (size_t)-1;
 
-  LD->tabling.in_assert_propagation = FALSE;
+  LD->tabling.in_assert_propagation = false;
 
   setPrologFlag("max_table_subgoal_size_action",  FT_ATOM,    "error");
   setPrologFlag("max_table_answer_size_action",	  FT_ATOM,    "error");

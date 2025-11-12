@@ -75,12 +75,12 @@ qcompile_([H|T], M, Options) :-
     qcompile_(H, M, Options),
     qcompile_(T, M, Options).
 qcompile_(FileName, Module, Options) :-
-    absolute_file_name(FileName,
-                       [ file_type(prolog),
+    absolute_file_name(FileName, Absolute,
+                       [ file_type(source),
                          access(read),
                          file_errors(fail),
                          solutions(all)
-                       ], Absolute),
+                       ]),
     file_name_extension(ABase, PlExt, Absolute),
     \+ user:prolog_file_type(PlExt, qlf),
     !,
@@ -88,10 +88,10 @@ qcompile_(FileName, Module, Options) :-
     file_name_extension(ABase, QlfExt, Qlf),
     load_files(Module:Absolute, ['$qlf'(Qlf)|Options]).
 qcompile_(FileName, _Module, _Options) :-
-    absolute_file_name(FileName,
+    absolute_file_name(FileName, Absolute,
                        [ file_type(prolog),
                          access(read)
-                       ], Absolute),
+                       ]),
     file_name_extension(_ABase, PlExt, Absolute),
     user:prolog_file_type(PlExt, qlf),
     throw(error(permission_error(compile, qlf, Absolute),
@@ -103,13 +103,26 @@ qcompile_(FileName, _Module, _Options) :-
 
 '$qload_file'(File, Module, Action, LoadedModule, Options) :-
     setup_call_cleanup(
-        open(File, read, In, [type(binary)]),
+        qopen(File, In, Ref),
         setup_call_cleanup(
             '$save_lex_state'(LexState, Options),
             '$qload_stream'(In, Module,
                             Action, LoadedModule, Options),
             '$restore_lex_state'(LexState)),
-        close(In)).
+        qclose(In, Ref)).
+
+%!  qopen(+File, -Stream, -Ref) is det.
+%
+%   Open  a  .qlf  file  and   push    '$load_input'/2   to   make  sure
+%   prolog_load_context(file, File) works correctly.
+
+qopen(File, In, Ref) :-
+    open(File, read, In, [type(binary)]),
+    asserta(system:'$load_input'(File, In), Ref).
+
+qclose(In, Ref) :-
+    erase(Ref),
+    close(In).
 
 '$qload_stream'(In, Module, loaded, LoadedModule, Options) :-
     '$qlf_load'(Module:In, LM),

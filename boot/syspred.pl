@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2022, University of Amsterdam
+    Copyright (c)  1985-2025, University of Amsterdam
                               VU University Amsterdam
                               CWI, Amsterdam
                               SWI-Prolog Solutions b.v.
@@ -77,7 +77,6 @@
             rule/3,                             % :Head, -Rule, ?Ref
             numbervars/3,                       % +Term, +Start, -End
             term_string/3,                      % ?Term, ?String, +Options
-            nb_setval/2,                        % +Var, +Value
             thread_create/2,                    % :Goal, -Id
             thread_join/1,                      % +Id
             sig_block/1,                        % :Pattern
@@ -245,8 +244,8 @@ atom_prefix(Atom, Prefix) :-
 %   if the canonical name  as   defined  by  absolute_file_name/2 is
 %   known as a loaded filename.
 %
-%   Note that Time = 0.0 is used by  PlDoc and other code that needs
-%   to create a file record without being interested in the time.
+%   Note that Time = 0 is used by PlDoc and other code that needs to
+%   create a file record without being interested in the time.
 
 source_file(File) :-
     (   current_prolog_flag(access_level, user)
@@ -260,7 +259,7 @@ source_file(File) :-
         ), !
     ;   '$time_source_file'(File, Time, Level)
     ),
-    Time > 0.0.
+    float(Time).
 
 %!  source_file(+Head, -File) is semidet.
 %!  source_file(?Head, ?File) is nondet.
@@ -329,8 +328,8 @@ property_source_file(module(M), File) :-
     ;   '$current_module'(M, File)
     ).
 property_source_file(load_context(Module, Location, Options), File) :-
-    '$time_source_file'(File, _, user),
     clause(system:'$load_context_module'(File, Module, Options), true, Ref),
+    '$time_source_file'(File, _, user),
     (   clause_property(Ref, file(FromFile)),
         clause_property(Ref, line_count(FromLine))
     ->  Location = FromFile:FromLine
@@ -368,11 +367,12 @@ canonical_source_file(Spec, File) :-
     File = Spec.
 canonical_source_file(Spec, File) :-
     absolute_file_name(Spec, File,
-                       [ file_type(prolog),
-                         access(read),
+                       [ file_type(source),
+                         solutions(all),
                          file_errors(fail)
                        ]),
-    source_file(File).
+    source_file(File),
+    !.
 
 
 %!  exists_source(+Source) is semidet.
@@ -827,6 +827,10 @@ define_or_generate(Pred) :-
 '$predicate_property'(transparent, Pred) :-
     '$get_predicate_attribute'(Pred, transparent, 1).
 '$predicate_property'(meta_predicate(Pattern), Pred) :-
+    '$get_predicate_attribute'(Pred, transparent, 1),
+    '$get_predicate_attribute'(Pred, meta_predicate, Pattern).
+'$predicate_property'(mode(Pattern), Pred) :-
+    '$get_predicate_attribute'(Pred, transparent, 0),
     '$get_predicate_attribute'(Pred, meta_predicate, Pattern).
 '$predicate_property'(file(File), Pred) :-
     '$get_predicate_attribute'(Pred, file, File).
@@ -877,6 +881,8 @@ define_or_generate(Pred) :-
     '$get_predicate_attribute'(Pred, abstract, N).
 '$predicate_property'(size(Bytes), Pred) :-
     '$get_predicate_attribute'(Pred, size, Bytes).
+'$predicate_property'(primary_index(Arg), Pred) :-
+    '$get_predicate_attribute'(Pred, primary_index, Arg).
 
 system_undefined(user:prolog_trace_interception/4).
 system_undefined(prolog:prolog_exception_hook/5).
@@ -1408,19 +1414,6 @@ term_string(Term, String, Options) :-
     format(string(String), '~W', [Term, Options1]).
 
 
-                 /*******************************
-                 *             GVAR             *
-                 *******************************/
-
-%!  nb_setval(+Name, +Value) is det.
-%
-%   Bind the non-backtrackable variable Name with a copy of Value
-
-nb_setval(Name, Value) :-
-    duplicate_term(Value, Copy),
-    nb_linkval(Name, Copy).
-
-
 		 /*******************************
 		 *            THREADS		*
 		 *******************************/
@@ -1596,13 +1589,13 @@ run_undo([H|T], E0, E) :-
     run_undo(T, E2, E).
 
 
-%!  '$wrap_predicate'(:Head, +Name, -Closure, -Wrapped, +Body) is det.
+%!  '$wrap_predicate'(:Head, +Name, -Closure, -Wrapped, :Body) is det.
 %
 %   Would be nicer to have this   from library(prolog_wrap), but we need
 %   it for tabling, so it must be a system predicate.
 
 :- meta_predicate
-    '$wrap_predicate'(:, +, -, -, +).
+    '$wrap_predicate'(:, +, -, -, 0).
 
 '$wrap_predicate'(M:Head, WName, Closure, call(Wrapped), Body) :-
     callable_name_arguments(Head, PName, Args),
@@ -1618,7 +1611,8 @@ run_undo([H|T], E0, E) :-
     volatile(PI),
     module_transparent(PI),
     WHead =.. [WrapName|Args],
-    '$c_wrap_predicate'(M:Head, WName, Closure, Wrapped, M:(WHead :- Body)).
+    wrapped_clause(M, WHead, Body, Clause),
+    '$c_wrap_predicate'(M:Head, WName, Closure, Wrapped, Clause).
 
 callable_name_arguments(Head, PName, Args) :-
     atom(Head),
@@ -1635,3 +1629,6 @@ callable_name_arity(Head, PName, Arity) :-
     Arity = 0.
 callable_name_arity(Head, PName, Arity) :-
     compound_name_arity(Head, PName, Arity).
+
+wrapped_clause(M, WHead, M:Body, M:(WHead :- Body)) :- !.
+wrapped_clause(M, WHead, MB:Body, M:(WHead :- MB:Body)).

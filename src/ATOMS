@@ -15,7 +15,6 @@ A ISO_8859_1		"ISO-8859-1"
 A dollar		"$"
 A abi			"abi"
 A abort			"abort"
-A aborted		"$aborted"
 A abs			"abs"
 A abstract		"abstract"
 A access		"access"
@@ -58,6 +57,7 @@ A assert		"assert"
 A asserta		"asserta"
 A assertz		"assertz"
 A at			"at"
+A at_sign		"@"
 A at_equals		"=@="
 A at_exit		"at_exit"
 A at_larger		"@>"
@@ -172,6 +172,7 @@ A cos			"cos"
 A cosh			"cosh"
 A cputime		"cputime"
 A create		"create"
+A creep			"creep"
 A csym			"csym"
 A csymf			"csymf"
 A cumulative		"cumulative"
@@ -220,6 +221,7 @@ A defined		"defined"
 A deflated		"deflated"
 A delete		"delete"
 A denominator		"denominator"
+A dependency		"dependency"
 A dependent		"dependent"
 A depth			"depth"
 A depth_limit_exceeded	"depth_limit_exceeded"
@@ -234,6 +236,7 @@ A dexit			"$exit"
 A dforeign_registered    "$foreign_registered"
 A dgarbage_collect	"$garbage_collect"
 A dict			"dict"
+A dict_txt		"dict"
 A dict_position		"dict_position"
 A dict_punify		">:<"
 A dict_select		":<"
@@ -274,6 +277,7 @@ A dvariable_names	"$variable_names"
 A dwakeup		"$wakeup"
 A dyield		"$yield"
 A dynamic		"dynamic"
+A dyndict		"#"
 A e			"e"
 A eager			"eager"
 A else			"else"
@@ -339,6 +343,7 @@ A flag			"flag"
 A flag_value		"flag_value"
 A float			"float"
 A float_format		"float_format"
+A float_format_specifier "~h"
 A float_fractional_part	"float_fractional_part"
 A float_integer_part	"float_integer_part"
 A float_overflow	"float_overflow"
@@ -395,6 +400,7 @@ A guard			"guard"
 A guard_in_caller	"guard_in_caller"
 A gvar			"gvar"
 A halt			"halt"
+A halt_grace_time	"halt_grace_time"
 A has_alternatives	"has_alternatives"
 A hash			"hash"
 A hashed		"hashed"
@@ -403,6 +409,7 @@ A heap_gc		"heap_gc"
 A heapused		"heapused"
 A heartbeat		"heartbeat"
 A help			"help"
+A hex			"hex"
 A hidden		"hidden"
 A hide_childs		"hide_childs"
 A history_depth		"history_depth"
@@ -419,6 +426,7 @@ A import_type		"import_type"
 A imported		"imported"
 A imported_procedure	"imported_procedure"
 A cont_inactive		"<inactive>"
+A include		"include"
 A incomplete		"incomplete"
 A incremental		"incremental"
 A index			"index"
@@ -440,9 +448,11 @@ A inserted_char		"inserted_char"
 A instantiation_error	"instantiation_error"
 A int			"int"
 A int64_t		"int64_t"
+A int_format_specifier  "~d"
 A int_overflow		"int_overflow"
 A integer		"integer"
 A integer_expression	"integer_expression"
+A integer_format	"integer_format"
 A interrupt		"interrupt"
 A invalid		"invalid"
 A io_error		"io_error"
@@ -464,6 +474,7 @@ A last			"last"
 A last_modified_generation "last_modified_generation"
 A lazy			"lazy"
 A lcm			"lcm"
+A leap			"leap"
 A level			"level"
 A lgamma		"lgamma"
 A li			"li"
@@ -594,6 +605,7 @@ A numbervars		"numbervars"
 A numerator		"numerator"
 A obfuscate		"obfuscate"
 A occurs_check		"occurs_check"
+A octal			"octal"
 A octet		        "octet"
 A off			"off"
 A offset		"offset"
@@ -640,6 +652,7 @@ A posix_shell		"posix_shell"
 A powm			"powm"
 A predicate_indicator	"predicate_indicator"
 A predicates		"predicates"
+A primary_index		"primary_index"
 A print			"print"
 A print_message		"print_message"
 A print_write_options	"print_write_options"
@@ -747,6 +760,7 @@ A see			"see"
 A seed			"seed"
 A seek_method		"seek_method"
 A select		"select"
+A self			"self"
 A self_cputime		"self_cputime"
 A self_inferences	"self_inferences"
 A semicolon		";"
@@ -778,6 +792,7 @@ A skipped		"skipped"
 A smaller		"<"
 A smaller_equal		"=<"
 A softcut		"*->"
+A source		"source"
 A source_sink		"source_sink"
 A space			"space"
 A spacing		"spacing"
@@ -787,6 +802,7 @@ A sqrt			"sqrt"
 A ssu			"ssu"
 A ssu_commit		"=>"
 A ssu_choice		"?=>"
+A ssu_dcg		"==>"
 A stack			"stack"
 A stack_limit		"stack_limit"
 A stack_overflow	"stack_overflow"
@@ -848,6 +864,7 @@ A targp			"$targp"
 A term			"term"
 A term_expansion	"term_expansion"
 A term_position		"term_position"
+A term_t_free		"term_t_free"
 A terminal		"terminal"
 A terminal_capability	"terminal_capability"
 A test			"test"
@@ -928,11 +945,13 @@ A uninstantiation_error	"uninstantiation_error"
 A unique		"unique"
 A univ			"=.."
 A unknown		"unknown"
+A unknown_option	"unknown_option"
 A unlimited		"unlimited"
 A unload		"unload"
 A unlock		"unlock"
 A unlocked		"unlocked"
 A untable		"untable"
+A unwind		"unwind"
 A up			"up"
 A update		"update"
 A upper			"upper"
@@ -950,6 +969,7 @@ A v			"v"
 A value_count		"value_count"
 A var			"var"
 A var_prefix		"var_prefix"
+A var_tag		"var_tag"
 A variable		"variable"
 A variable_names	"variable_names"
 A variables		"variables"
@@ -982,9 +1002,9 @@ A xfx			"xfx"
 A xfy			"xfy"
 A xml			"xml"
 A xor			"xor"
-A xpceref		"@"
 A yf			"yf"
 A yfx			"yfx"
+A yield			"yield"
 A zero			"zero"
 A zero_divisor		"zero_divisor"
 A zip_options		"zip_options"
@@ -1005,6 +1025,8 @@ F asinh			1
 F assert		1
 F asserta		1
 F assertz		1
+F at_sign		1
+F at_sign		2
 F atan			1
 F atan			2
 F atanh			1
@@ -1067,6 +1089,7 @@ F decimal_point		1
 F deep			1
 F detached		1
 F determinism_error	4
+F dependency		1
 F dexit			2
 F dforeign_registered   2
 F dgarbage_collect	1
@@ -1132,6 +1155,7 @@ F float_integer_part	1
 F floor			1
 F foreign_function	1
 F frame			3
+F frame			4
 F frame_finished	1
 F fresh			2
 F gcd			2
@@ -1140,6 +1164,7 @@ F gc			6
 F goal_expansion	2
 F ground		1
 F grouping		1
+F halt			1
 F hat			2
 F hash			4
 F id			1
@@ -1147,6 +1172,7 @@ F if			1
 F ifthen		2
 F import_into		1
 F inf			0
+F include		1
 F input			0
 F input			4
 F integer		1
@@ -1235,7 +1261,6 @@ F representation_error	1
 F representation_errors 1
 F reset			3
 F resource_error	1
-F retry			1
 F rollback		1
 F round			1
 F roundtoward		2
@@ -1256,6 +1281,7 @@ F size			1
 F smaller		2
 F smaller_equal		2
 F softcut		2
+F source		1
 F spy			1
 F sqrt			1
 F ssu_commit		2
@@ -1289,6 +1315,7 @@ F trace			1
 F traceinterc		3
 F tracing		1
 F thread		1
+F thread_exit		1
 F tripwire		2
 F true			0
 F truncate		1
@@ -1298,6 +1325,8 @@ F type_error		2
 F undefinterc		4
 F unify_determined	2
 F uninstantiation_error	1
+F unknown_option	2
+F unwind		1
 F var			1
 F waiting		1
 F wakeup		3
@@ -1305,5 +1334,3 @@ F warning		3
 F worklist		5
 F write_errors		1
 F xor			2
-F xpceref		1
-F xpceref		2

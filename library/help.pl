@@ -36,7 +36,8 @@
 :- module(prolog_help,
 	  [ help/0,
 	    help/1,                     % +Object
-	    apropos/1                   % +Search
+	    apropos/1,                  % +Search
+	    help_text/2
 	  ]).
 :- use_module(library(pldoc), []).
 :- use_module(library(isub), [isub/4]).
@@ -52,7 +53,7 @@
 :- autoload(library(http/html_write), [html/3, print_html/1]).
 :- autoload(library(lynx/html_text), [html_text/2]).
 :- autoload(pldoc(doc_man), [man_page/4]).
-:- autoload(pldoc(doc_modes), [mode/2]).
+:- autoload(pldoc(doc_modes), [(mode)/2]).
 :- autoload(pldoc(doc_words), [doc_related_word/3]).
 :- autoload(pldoc(man_index), [man_object_property/2, doc_object_identifier/2]).
 :- autoload(library(prolog_code), [pi_head/2]).
@@ -541,6 +542,18 @@ object_class(_M:_Name/_Arity, library_predicate).
 object_class(_Name//_Arity, dcg).
 object_class(_M:_Name//_Arity, dcg).
 
+%! help_text(+Predicate:term, -HelpText:string) is semidet.
+%
+%  When =Predicate= is a term of the form =Name/Arity= for which
+%  documentation exists, =HelpText= is the documentation in textual
+%  format (parsed from the HTML help).
+help_text(Pred, HelpText) :-
+    help_objects(Pred, exact, Matches), !,
+    catch(help_html(Matches, exact-exact, HtmlDoc), _, fail),
+    setup_call_cleanup(open_string(HtmlDoc, In),
+                       load_html(stream(In), Dom, []),
+                       close(In)),
+    with_output_to(string(HelpText), html_text(Dom, [])).
 
 		 /*******************************
 		 *            MESSAGES		*

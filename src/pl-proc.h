@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2023, University of Amsterdam
+    Copyright (c)  1985-2025, University of Amsterdam
                               VU University Amsterdam
 			      CWI, Amsterdam
 			      SWI-Prolog Solutions b.v.
@@ -62,7 +62,7 @@
 Procedure	lookupProcedure(functor_t f, Module m) WUNUSED;
 void		unallocProcedure(Procedure proc);
 Procedure	isCurrentProcedure(functor_t f, Module m);
-int		importDefinitionModule(Module m,
+bool		importDefinitionModule(Module m,
 				       Definition def, int flags);
 Procedure	lookupProcedureToDefine(functor_t def, Module m);
 ClauseRef	hasClausesDefinition(Definition def);
@@ -72,24 +72,24 @@ void		shareDefinition(Definition def);
 int		unshareDefinition(Definition def);
 void		lingerDefinition(Definition def);
 void		setLastModifiedPredicate(Definition def, gen_t gen, int flags);
-int		get_head_functor(term_t head, functor_t *fdef,
+bool		get_head_functor(term_t head, functor_t *fdef,
 				 int flags);
-int		get_functor(term_t descr, functor_t *fdef,
+bool		get_functor(term_t descr, functor_t *fdef,
 			    Module *m, term_t h, int how);
-int		get_procedure(term_t descr, Procedure *proc,
+bool		get_procedure(term_t descr, Procedure *proc,
 			      term_t he, int f);
-int		checkModifySystemProc(functor_t f);
-int		overruleImportedProcedure(Procedure proc, Module target);
-word		pl_current_predicate(term_t name, term_t functor, control_t h);
+bool		checkModifySystemProc(functor_t f);
+bool		overruleImportedProcedure(Procedure proc, Module target);
+foreign_t	pl_current_predicate(term_t name, term_t functor, control_t h);
 void		clear_meta_declaration(Definition def);
-void		setMetapredicateMask(Definition def, arg_info *args);
-int		isTransparentMetamask(Definition def, arg_info *args);
+void		setMetapredicateMask(Definition def, const arg_info *args);
+bool		isTransparentMetamask(Definition def, const arg_info *args);
 ClauseRef	assertDefinition(Definition def, Clause clause,
 				 ClauseRef where);
 ClauseRef	assertProcedure(Procedure proc, Clause clause,
 				ClauseRef where);
 bool		abolishProcedure(Procedure proc, Module module);
-int		retract_clause(Clause clause, gen_t gen);
+bool		retract_clause(Clause clause, gen_t gen);
 bool		retractClauseDefinition(Definition def, Clause clause,
 					int notify);
 void		unallocClause(Clause c);
@@ -108,26 +108,26 @@ void		initProcedures(void);
 void		cleanupProcedures(void);
 Procedure	resolveProcedure(functor_t f, Module module);
 Definition	trapUndefined(Definition undef);
-word		pl_abolish(term_t atom, term_t arity);
-word		pl_abolish1(term_t pred);
-int		redefineProcedure(Procedure proc, SourceFile sf,
+foreign_t	pl_abolish(term_t atom, term_t arity);
+foreign_t	pl_abolish1(term_t pred);
+bool		redefineProcedure(Procedure proc, SourceFile sf,
 				  unsigned int suppress);
-word		pl_index(term_t pred);
+foreign_t	pl_index(term_t pred);
 Definition	autoImport(functor_t f, Module m);
-word		pl_require(term_t pred);
-word		pl_check_definition(term_t spec);
+foreign_t	pl_require(term_t pred);
+foreign_t	pl_check_definition(term_t spec);
 foreign_t	pl_list_generations(term_t desc);
 foreign_t	pl_check_procedure(term_t desc);
 void		checkDefinition(Definition def);
 Procedure	isStaticSystemProcedure(functor_t fd);
 foreign_t	pl_garbage_collect_clauses(void);
-int		setDynamicDefinition(Definition def, bool isdyn);
-int		setThreadLocalDefinition(Definition def, bool isdyn);
-int		setAttrDefinition(Definition def, uint64_t attr, int val);
-int		PL_meta_predicate(predicate_t def, const char*);
+bool		setDynamicDefinition(Definition def, bool isdyn);
+bool		setThreadLocalDefinition(Definition def, bool isdyn);
+bool		setAttrDefinition(Definition def, uint64_t attr, bool val);
+bool		PL_meta_predicate(predicate_t def, const char*);
 void		ddi_add_access_gen(DirtyDefInfo ddi, gen_t access);
-int		ddi_contains_gen(DirtyDefInfo ddi, gen_t access);
-int		ddi_is_garbage(DirtyDefInfo ddi,
+bool		ddi_contains_gen(DirtyDefInfo ddi, gen_t access);
+bool		ddi_is_garbage(DirtyDefInfo ddi,
 			       gen_t start, Buffer tr_starts,
 			       Clause cl);
 size_t		sizeof_predicate(Definition def);
@@ -146,6 +146,12 @@ lookupDefinition(functor_t f, Module m)
   return proc ? proc->definition : NULL;
 }
 
+/* The nth-0 argument of def has mode `-`
+ */
 
+static inline bool
+mode_arg_is_unbound(Definition def, int arg0)
+{ return def->impl.any.args[arg0].meta == MA_VAR;
+}
 
 #endif /*_PL_PROC_H*/

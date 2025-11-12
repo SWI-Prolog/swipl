@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2022, University of Amsterdam
+    Copyright (c)  1985-2025, University of Amsterdam
 			      VU University Amsterdam
 			      CWI, Amsterdam
 			      SWI-Prolog Solutions b.v.
@@ -72,7 +72,7 @@ static void	resetProcedure(Procedure proc, bool isnew);
 static atom_t	autoLoader(Definition def);
 static Procedure visibleProcedure(functor_t f, Module m);
 static void	freeClauseRef(ClauseRef cref);
-static int	setDynamicDefinition_unlocked(Definition def, bool isdyn);
+static bool	setDynamicDefinition_unlocked(Definition def, bool isdyn);
 static void	registerDirtyDefinition(Definition def);
 static void	unregisterDirtyDefinition(Definition def);
 static gen_t	ddi_oldest_generation(DirtyDefInfo ddi);
@@ -99,7 +99,7 @@ lookupProcedure(functor_t f, Module m)
   Procedure proc, oproc;
   Definition def;
 
-  if ( (proc = lookupHTable(m->procedures, (void *)f)) )
+  if ( (proc = lookupHTableWP(m->procedures, f)) )
   { DEBUG(MSG_PROC, Sdprintf("lookupProcedure(%s) --> %s\n",
 			     PL_atom_chars(m->name),
 			     procedureName(proc)));
@@ -134,7 +134,7 @@ lookupProcedure(functor_t f, Module m)
   } else
   { def->impl.any.args = NULL;
   }
-  resetProcedure(proc, TRUE);
+  resetProcedure(proc, true);
 
   DEBUG(MSG_PROC_COUNT, Sdprintf("Created %s at %p\n",
 				 procedureName(proc), proc));
@@ -143,7 +143,7 @@ lookupProcedure(functor_t f, Module m)
   ATOMIC_INC(&GD->statistics.predicates);
   ATOMIC_ADD(&m->code_size, SIZEOF_PROC);
 
-  if ( (oproc=addHTable(m->procedures, (void *)f, proc)) == proc )
+  if ( (oproc=addHTableWP(m->procedures, f, proc)) == proc )
   { return proc;
   } else
   { unallocProcedure(proc);
@@ -202,16 +202,16 @@ destroyDefinition(Definition def)
   DEBUG(MSG_CGC_PRED,
 	Sdprintf("destroyDefinition(%s)\n", predicateName(def)));
 
-  freeCodesDefinition(def, FALSE);
+  freeCodesDefinition(def, false);
 
-  if ( false(def, P_FOREIGN|P_THREAD_LOCAL) )	/* normal Prolog predicate */
+  if ( isoff(def, P_FOREIGN|P_THREAD_LOCAL) )	/* normal Prolog predicate */
   { GET_LD
 
     LOCKDEF(def);
     deleteIndexesDefinition(def);
     UNLOCKDEF(def);
-    removeClausesPredicate(def, 0, FALSE);
-    if ( GD->cleaning != CLN_DATA )
+    removeClausesPredicate(def, 0, false);
+    if ( GD->halt.cleaning != CLN_DATA )
     { registerDirtyDefinition(def);
       DEBUG(MSG_PRED_COUNT, Sdprintf("Erased %s at\n", predicateName(def), def));
       def->module = NULL;
@@ -225,12 +225,12 @@ destroyDefinition(Definition def)
 #ifdef O_PLMT
     DEBUG(MSG_PRED_COUNT, Sdprintf("Unalloc foreign/thread-local: %s\n",
 				   predicateName(def)));
-    if ( true(def, P_THREAD_LOCAL) )
+    if ( ison(def, P_THREAD_LOCAL) )
       destroyLocalDefinitions(def);
 #endif
   }
 
-  if ( true(def, P_DIRTYREG) )
+  if ( ison(def, P_DIRTYREG) )
     unregisterDirtyDefinition(def);
   unallocDefinition(def);
 }
@@ -243,9 +243,9 @@ delayedDestroyDefinition(Definition def)
 				 predicateName(def), def));
   assert(def->module == NULL);
   if ( def->impl.clauses.first_clause == NULL ||
-       GD->cleaning == CLN_DATA )
-  { if ( GD->cleaning == CLN_DATA )
-      removeClausesPredicate(def, 0, FALSE);
+       GD->halt.cleaning == CLN_DATA )
+  { if ( GD->halt.cleaning == CLN_DATA )
+      removeClausesPredicate(def, 0, false);
 
     DEBUG(1,
 	  if ( def->lingering )
@@ -253,7 +253,7 @@ delayedDestroyDefinition(Definition def)
 		     predicateName(def));
 	  });
     unregisterDirtyDefinition(def);
-    deleteIndexes(&def->impl.clauses, TRUE);
+    deleteIndexes(def, &def->impl.clauses, true);
     unallocDefinition(def);
   }
 }
@@ -267,7 +267,7 @@ unallocDefinition(Definition def)
     freeHeap(def->impl.any.args, sizeof(arg_info)*def->functor->arity);
   if ( def->events )
     destroy_event_list(&def->events);
-  freeCodesDefinition(def, FALSE);
+  freeCodesDefinition(def, false);
   free_lingering(&def->lingering, GEN_MAX);
 
   DEBUG(MSG_PRED_COUNT, Sdprintf("Freed %s at %p\n", predicateName(def), def));
@@ -284,8 +284,8 @@ unallocProcedure(Procedure proc)
 				 predicateName(def), proc));
 
   if ( unshareDefinition(def) == 0 )
-  { def->module = NULL;
-    DEBUG(MSG_PROC, Sdprintf("Reclaiming %s\n", predicateName(def)));
+  { DEBUG(MSG_PROC, Sdprintf("Reclaiming %s\n", predicateName(def)));
+    def->module = NULL;
     destroyDefinition(def);
   }
   if ( proc->source_no )
@@ -295,19 +295,19 @@ unallocProcedure(Procedure proc)
 
 
 static void
-free_ddi_symbol(void *name, void *value)
-{ DirtyDefInfo ddi = value;
-  Definition def = name;
+free_ddi_symbol(table_key_t name, table_value_t value)
+{ DirtyDefInfo ddi = val2ptr(value);
+  Definition def = val2ptr(name);
 
   PL_free(ddi);
-  if ( true(def, P_ERASED) )
+  if ( ison(def, P_ERASED) )
     delayedDestroyDefinition(def);
 }
 
 
 void
 initProcedures(void)
-{ GD->procedures.dirty = newHTable(32);
+{ GD->procedures.dirty = newHTablePP(32);
   GD->procedures.dirty->free_symbol = free_ddi_symbol;
 }
 
@@ -320,7 +320,7 @@ allocations pending on clause GC.
 void
 cleanupProcedures(void)
 { if ( GD->procedures.dirty )
-  { destroyHTable(GD->procedures.dirty);
+  { destroyHTablePP(GD->procedures.dirty);
     GD->procedures.dirty = NULL;
   }
 
@@ -333,15 +333,15 @@ Add (import) a definition to a module.  Used by loadImport() for loading
 states and QLF files. Must be merged with import/1.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+bool
 importDefinitionModule(Module m, Definition def, int flags)
 { GET_LD
   functor_t functor = def->functor->functor;
   Procedure proc;
-  int rc = TRUE;
+  bool rc = true;
 
   LOCKMODULE(m);
-  if ( (proc = lookupHTable(m->procedures, (void *)functor)) )
+  if ( (proc = lookupHTableWP(m->procedures, functor)) )
   { if ( proc->definition != def )
     { if ( !isDefinedProcedure(proc) )
       { Definition odef = proc->definition;
@@ -362,7 +362,7 @@ importDefinitionModule(Module m, Definition def, int flags)
     proc->definition = def;
     proc->flags      = flags;
     proc->source_no  = 0;
-    addNewHTable(m->procedures, (void *)functor, proc);
+    addNewHTableWP(m->procedures, functor, proc);
     DEBUG(MSG_PROC_COUNT, Sdprintf("Created %s at %p\n",
 				   procedureName(proc), proc));
   }
@@ -388,15 +388,15 @@ static void
 resetProcedure(Procedure proc, bool isnew)
 { Definition def = proc->definition;
 
-  if ( (true(def, P_DYNAMIC) /*&& def->references == 0*/) ||
+  if ( (ison(def, P_DYNAMIC) /*&& def->references == 0*/) ||
        !def->impl.any.defined )
-    isnew = TRUE;
+    isnew = true;
 
-  if ( true(def, P_DIRTYREG) )
+  if ( ison(def, P_DIRTYREG) )
     ATOMIC_SUB(&GD->clauses.dirty, def->impl.clauses.number_of_clauses);
 
   uint64_t flags0, flags;
-  int userpred = stringAtom(def->functor->name)[0] != '$';
+  bool userpred = stringAtom(def->functor->name)[0] != '$';
   do
   { flags0 = def->flags;
     flags  = flags0 ^ (flags0 & ~(SPY_ME|P_DIRTYREG));
@@ -410,25 +410,22 @@ resetProcedure(Procedure proc, bool isnew)
   if ( def->tabling )
     tbl_reset_tabling_attributes(def);
 
-  if ( isnew )
-  { deleteIndexes(&def->impl.clauses, TRUE);
-    freeCodesDefinition(def, FALSE);
-  } else
-    freeCodesDefinition(def, TRUE);	/* carefully sets to S_VIRGIN */
+  deleteIndexes(def, &def->impl.clauses, isnew);
+  freeCodesDefinition(def, !isnew);
 }
 
 
 Procedure
 isCurrentProcedure(DECL_LD functor_t f, Module m)
-{ return lookupHTable(m->procedures, (void *)f);
+{ return lookupHTableWP(m->procedures, f);
 }
 
 
 ClauseRef
 hasClausesDefinition(DECL_LD Definition def)
-{ if ( false(def, P_FOREIGN|P_THREAD_LOCAL) &&
+{ if ( isoff(def, P_FOREIGN|P_THREAD_LOCAL) &&
        def->impl.clauses.first_clause )
-  { if ( false(def, P_DIRTYREG) && false(def, P_DYNAMIC) &&
+  { if ( isoff(def, P_DIRTYREG) && isoff(def, P_DYNAMIC) &&
 	 LD->reload.generation == GEN_INVALID )
     { return def->impl.clauses.first_clause;
     } else
@@ -456,10 +453,10 @@ bool
 isDefinedProcedure(DECL_LD Procedure proc)
 { Definition def = proc->definition;
 
-  if ( true(def, PROC_DEFINED) )
+  if ( ison(def, PROC_DEFINED) )
     succeed;
 
-  return hasClausesDefinition(def) ? TRUE : FALSE;
+  return hasClausesDefinition(def) ? true : false;
 }
 
 
@@ -476,39 +473,39 @@ isStaticSystemProcedure(functor_t fd)
   if ( !SYSTEM_MODE &&
        MODULE_system &&
        (proc=isCurrentProcedure(fd, MODULE_system)) &&
-       true(proc->definition, P_LOCKED) &&
-       false(proc->definition, P_DYNAMIC) )
+       ison(proc->definition, P_LOCKED) &&
+       isoff(proc->definition, P_DYNAMIC) )
     return proc;
 
   return NULL;
 }
 
 
-int
+bool
 checkModifySystemProc(functor_t fd)
 { Procedure proc;
 
   if ( (proc = isStaticSystemProcedure(fd)) &&
-       true(proc->definition, P_ISO) )
+       ison(proc->definition, P_ISO) )
     return PL_error(NULL, 0, NULL, ERR_MODIFY_STATIC_PROC, proc);
 
-  succeed;
+  return true;
 }
 
 
-int
+bool
 overruleImportedProcedure(Procedure proc, Module target)
 { GET_LD
   Definition def = proc->definition;	/* we do *not* want a thread-local version */
 
-  if ( true(def, P_AUTOLOAD) )
+  if ( ison(def, P_AUTOLOAD) )
     return PL_error(NULL, 0, NULL, ERR_PERMISSION_PROC,
 		    ATOM_redefine, ATOM_imported_procedure, proc);
 
   if ( def->module == target )
-    return TRUE;
+    return true;
 
-  if ( true(def->module, M_SYSTEM) )
+  if ( ison(def->module, M_SYSTEM) )
   { return PL_error(NULL, 0, NULL, ERR_PERMISSION_PROC,
 		    ATOM_redefine, ATOM_built_in_procedure, proc);
   } else
@@ -522,11 +519,10 @@ overruleImportedProcedure(Procedure proc, Module target)
 			   PL_FUNCTOR_CHARS, "ignored_weak_import", 2,
 			     PL_ATOM, target->name,
 			     PL_TERM, pi) )
-	  return FALSE;
+	  return false;
       }
 
-      abolishProcedure(proc, target);
-      return TRUE;
+      return abolishProcedure(proc, target);
     }
   }
 
@@ -577,7 +573,7 @@ shareDefinition(Definition def)
 }
 
 
-int
+int /* returns new access count */
 unshareDefinition(Definition def)
 { return ATOMIC_DEC(&def->shared);
 }
@@ -610,20 +606,20 @@ get_arity(term_t t, int extra, int maxarity, int *arity)
 
   *arity = a;
 
-  return TRUE;
+  return true;
 }
 
 
-int
+bool
 get_functor(term_t descr, functor_t *fdef, Module *m, term_t h, int how)
 { GET_LD
   term_t head;
-  int dcgpi=FALSE;
+  int dcgpi=false;
 
   if ( !(how&GP_NOT_QUALIFIED) )
   { head = PL_new_term_ref();
     if ( !PL_strip_module(descr, m, head) )
-      return FALSE;
+      return false;
   } else
   { head = descr;
   }
@@ -636,26 +632,26 @@ get_functor(term_t descr, functor_t *fdef, Module *m, term_t h, int how)
 
     _PL_get_arg(1, head, a);
     if ( !PL_get_atom_ex(a, &name) )
-      fail;
+      return false;
     _PL_get_arg(2, head, a);
     if ( !get_arity(a,
 		    (dcgpi ? 2 : 0),
 		    (how&GF_PROCEDURE) ? MAXARITY : -1,
 		    &arity ) )
-      fail;
+      return false;
     *fdef = PL_new_functor(name, arity);
     if ( h )
       PL_put_term(h, head);
 
-    succeed;
+    return true;
   } else if ( !(how&GF_NAMEARITY) && PL_get_functor(head, fdef) )
   { if ( h )
       PL_put_term(h, head);
 
-    succeed;
+    return true;
   } else
   { if ( how & GP_TYPE_QUIET )
-      fail;
+      return false;
     else
       return PL_error(NULL, 0, NULL, ERR_TYPE,
 		      ATOM_predicate_indicator, head);
@@ -663,13 +659,13 @@ get_functor(term_t descr, functor_t *fdef, Module *m, term_t h, int how)
 }
 
 
-int
+bool
 get_head_functor(DECL_LD term_t head, functor_t *fdef, int how)
 { FunctorDef fd;
 
   if ( !PL_get_functor(head, fdef) )
   { if ( how&GP_TYPE_QUIET )
-      fail;
+      return false;
     else
       return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_callable, head);
   }
@@ -678,7 +674,7 @@ get_head_functor(DECL_LD term_t head, functor_t *fdef, int how)
 
   if ( fd->arity > MAXARITY )
   { if ( how&GP_TYPE_QUIET )
-    { fail;
+    { return false;
     } else
     { char buf[100];
 
@@ -691,20 +687,20 @@ get_head_functor(DECL_LD term_t head, functor_t *fdef, int how)
 
   if ( !isCallableAtom(fd->name) )
   { if ( how&GP_TYPE_QUIET )
-    { fail;
+    { return false;
     } else
     { return PL_error(NULL, 0, NULL,
 		      ERR_TYPE, ATOM_callable, head);
     }
   }
 
-  succeed;
+  return true;
 }
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Get the specified procedure from a   Prolog  argument.  This argument is
-either a head or a term of the form module:head.  If `create' is TRUE, a
+either a head or a term of the form module:head.  If `create' is true, a
 procedure is created in the module.  Otherwise, the system traverses the
 module-inheritance chain to find the existing procedure.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
@@ -733,7 +729,7 @@ get_module(DECL_LD atom_t mname, int how)
 }
 
 
-int
+bool
 get_procedure(term_t descr, Procedure *proc, term_t h, int how)
 { GET_LD
   atom_t mname = 0;
@@ -744,23 +740,23 @@ get_procedure(term_t descr, Procedure *proc, term_t h, int how)
   if ( (how&GP_NAMEARITY) )
   { if ( !get_functor(descr, &fdef, &m, h,
 		      GF_PROCEDURE|(how&GP_TYPE_QUIET)) )
-      fail;
+      return false;
   } else
   { term_t head = PL_new_term_ref();
     Word p;
 
     if ( !(p=stripModuleName(valTermRef(descr), &mname)) )
-      return FALSE;
+      return false;
     *valTermRef(head) = linkValNoG(p);
 
     if ( !(m = get_module(mname, how)) )
-      return FALSE;
+      return false;
 
     if ( h )
       PL_put_term(h, head);
 
     if ( !get_head_functor(head, &fdef, how) )
-      fail;
+      return false;
   }
 
   switch( how & GP_HOW_MASK )
@@ -784,7 +780,7 @@ get_procedure(term_t descr, Procedure *proc, term_t h, int how)
       { *proc = p;
 	break;
       }
-      fail;				/* permission error */
+      return false;		/* permission error */
     case GP_RESOLVE:
       if ( (p = resolveProcedure(fdef, m)) )
       { *proc = p;
@@ -795,12 +791,12 @@ get_procedure(term_t descr, Procedure *proc, term_t h, int how)
       assert(0);
   }
 out:
-  succeed;
+  return true;
 
 notfound:
   if ( (how & GP_EXISTENCE_ERROR) )
     return PL_error(NULL, 0, NULL, ERR_EXISTENCE, ATOM_procedure, descr);
-  fail;
+  return false;
 }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -815,7 +811,7 @@ reconsidered and probably a large part of this function should be  moved
 to C.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-word
+foreign_t
 pl_current_predicate(term_t name, term_t spec, control_t h)
 { GET_LD
   TableEnum e;
@@ -853,13 +849,15 @@ pl_current_predicate(term_t name, term_t spec, control_t h)
 	return PL_unify_atom(name, nameFunctor(f));
       fail;
     }
-    e = newTableEnum(m->procedures);
+    e = newTableEnumWP(m->procedures);
   } else
     e = ForeignContextPtr(h);
 
-  while( advanceTableEnum(e, NULL, (void**)&proc) )
+  table_value_t tv;
+  while( advanceTableEnum(e, NULL, &tv) )
   { FunctorDef fdef;
 
+    proc = val2ptr(tv);
     fdef = proc->definition->functor;
 
     if ( (n && n != fdef->name) ||
@@ -902,10 +900,10 @@ static int
 isDefinedOrAutoloadProcedure(DECL_LD Procedure proc)
 { Definition def = proc->definition;
 
-  if ( true(def, PROC_DEFINED|P_AUTOLOAD) )
+  if ( ison(def, PROC_DEFINED|P_AUTOLOAD) )
     succeed;
 
-  return hasClausesDefinition(def) ? TRUE : FALSE;
+  return hasClausesDefinition(def) ? true : false;
 }
 
 
@@ -941,7 +939,7 @@ PRED_IMPL("current_predicate", 1, current_predicate,
 { PRED_LD
   cur_enum e0;
   cur_enum *e;
-  int rval = FALSE;
+  int rval = false;
   term_t mt = 0;			/* module-term */
   term_t nt = 0;			/* name-term */
   term_t at = 0;			/* arity-term */
@@ -974,7 +972,7 @@ PRED_IMPL("current_predicate", 1, current_predicate,
       if ( !(a=PL_new_term_ref()) ||
 	   !PL_cons_functor(a, FUNCTOR_divide2, nt, at) ||
 	   !PL_unify(pi, a) )
-	return FALSE;			/* resource error */
+	return false;			/* resource error */
     } else
       goto typeerror;
   }
@@ -1011,13 +1009,13 @@ PRED_IMPL("current_predicate", 1, current_predicate,
 	    return PL_no_memory();
 
 	  if ( !(e->module=advanceModuleEnum(e->emod)) )
-	    return FALSE;
+	    return false;
 	} else if ( PL_get_atom_ex(mt, &mname) )
 	{ if ( !(e->module = acquireModule(mname)) )
-	    return FALSE;
-	  e->macq = TRUE;
+	    return false;
+	  e->macq = true;
 	} else
-	{ return FALSE;
+	{ return false;
 	}
       } else
       { if ( environment_frame )
@@ -1033,7 +1031,7 @@ PRED_IMPL("current_predicate", 1, current_predicate,
 	  goto clean;
 	}
       } else
-      { e->epred = newTableEnum(e->module->procedures);
+      { e->epred = newTableEnumWP(e->module->procedures);
       }
 
       e = allocForeignState(sizeof(*e));
@@ -1045,7 +1043,7 @@ PRED_IMPL("current_predicate", 1, current_predicate,
       break;
     case FRG_CUTTED:
     { e = CTX_PTR;
-      rval = TRUE;
+      rval = true;
       goto clean;
     }
     default:
@@ -1062,15 +1060,18 @@ PRED_IMPL("current_predicate", 1, current_predicate,
 	if ( (e->module=advanceModuleEnum(e->emod)) )
 	{ ForeignRedoPtr(e);
 	} else
-	{ rval = TRUE;
+	{ rval = true;
 	  goto clean;
 	}
       }
     } else
-    { functor_t f;
-      Procedure proc;
-      while( advanceTableEnum(e->epred, (void**)&f, (void**)&proc) )
-      { FunctorDef fd = valueFunctor(f);
+    { table_key_t tk;
+      table_value_t tv;
+
+      while( advanceTableEnum(e->epred, &tk, &tv) )
+      { functor_t f = (functor_t)tk;
+	FunctorDef fd = valueFunctor(f);
+	Procedure proc = val2ptr(tv);
 
 	if ( (!e->name     || e->name == fd->name) &&
 	     (e->arity < 0 || (unsigned int)e->arity == fd->arity) &&
@@ -1110,7 +1111,7 @@ PRED_IMPL("current_predicate", 1, current_predicate,
 
     if ( !e->functor )
     { freeTableEnum(e->epred);
-      e->epred = newTableEnum(e->super->procedures);
+      e->epred = newTableEnumWP(e->super->procedures);
     }
   }
 
@@ -1139,7 +1140,7 @@ typeerror:
 		 *******************************/
 
 #ifdef O_DEBUG
-static Table retracted_clauses = NULL;
+static TablePW retracted_clauses = NULL;
 
 static void
 registerRetracted(Clause cl)
@@ -1147,8 +1148,8 @@ registerRetracted(Clause cl)
   DEBUG(MSG_CGC_CREF_PL, Sdprintf("/**/ r(%p).\n", cl));
   DEBUG(MSG_CGC_CREF_TRACK,
 	{ if ( !retracted_clauses )
-	    retracted_clauses = newHTable(1024);
-	  addNewHTable(retracted_clauses, cl, (void*)1);
+	    retracted_clauses = newHTablePW(1024);
+	  addNewHTablePW(retracted_clauses, cl, 1);
 	});
 }
 
@@ -1156,8 +1157,9 @@ static void
 reclaimRetracted(Clause cl)
 { DEBUG(MSG_CGC_CREF_TRACK,
 	{ GET_LD
-	  void *v = deleteHTable(retracted_clauses, cl);
-	  if ( v != (void*)1 && GD->cleaning == CLN_NORMAL )
+	  table_value_t v = deleteHTablePW(retracted_clauses, cl);
+
+	  if ( v != 1 && GD->halt.cleaning == CLN_NORMAL )
 	  { Definition def = cl->predicate;
 	    Sdprintf("reclaim not retracted from %s\n", predicateName(def));
 	  }
@@ -1253,7 +1255,7 @@ lingerClauseRef(ClauseRef cref)
 	  assert(0);
 	});
 
-  if ( GD->cleaning != CLN_DATA )
+  if ( GD->halt.cleaning != CLN_DATA )
   { do
     { o = GD->clauses.lingering;
       cref->d.gnext = o;
@@ -1316,11 +1318,11 @@ activePredicate(const Definition *defs, const Definition def)
 { if ( defs )
   { for( ; *defs; defs++)
     { if ( *defs == def )
-	return TRUE;
+	return true;
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 void
@@ -1336,7 +1338,7 @@ setLastModifiedPredicate(Definition def, gen_t gen, int flags)
     } while ( lmm < gen &&
 	      !COMPARE_AND_SWAP_UINT64(&m->last_modified, lmm, gen) );
 #ifdef O_PLMT
-    if ( true(def, P_DYNAMIC) )
+    if ( ison(def, P_DYNAMIC) )
       wakeupThreads(def, flags);
 #endif
   } else
@@ -1347,15 +1349,15 @@ setLastModifiedPredicate(Definition def, gen_t gen, int flags)
 
 static int
 add_ssu_clause(Definition def, Clause clause)
-{ if ( true(clause, SSU_COMMIT_CLAUSE|SSU_CHOICE_CLAUSE) )
-  { if ( false(def, P_SSU_DET) )
+{ if ( ison(clause, SSU_COMMIT_CLAUSE|SSU_CHOICE_CLAUSE) )
+  { if ( isoff(def, P_SSU_DET) )
     { if ( def->impl.clauses.number_of_clauses == 0 )
 	set(def, P_SSU_DET);
       else
 	return PL_error(NULL, 0, NULL, ERR_PERMISSION_SSU_DEF, def);
     }
   } else
-  { if ( true(def, P_SSU_DET) )
+  { if ( ison(def, P_SSU_DET) )
     { if ( def->impl.clauses.number_of_clauses == 0 )
 	clear(def, P_SSU_DET);
       else
@@ -1363,7 +1365,7 @@ add_ssu_clause(Definition def, Clause clause)
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1404,7 +1406,7 @@ assertDefinition(DECL_LD Definition def, Clause clause, ClauseRef where)
     return NULL;
   }
 
-  argKey(clause->codes, 0, &key);
+  argKey(clause->codes, def->impl.clauses.primary_index, &key);
   if ( !(cref=newClauseRef(clause, key)) )
   { freeClause(clause);
     return PL_no_memory(),NULL;
@@ -1439,20 +1441,20 @@ assertDefinition(DECL_LD Definition def, Clause clause, ClauseRef where)
   }
 
   def->impl.clauses.number_of_clauses++;
-  if ( false(clause, UNIT_CLAUSE) )
+  if ( isoff(clause, UNIT_CLAUSE) )
     def->impl.clauses.number_of_rules++;
-  if ( true(def, P_DIRTYREG) )
+  if ( ison(def, P_DIRTYREG) )
     ATOMIC_INC(&GD->clauses.dirty);
 
-  if ( false(def, P_DYNAMIC|P_LOCKED_SUPERVISOR) ) /* see (*) above */
-    freeCodesDefinition(def, TRUE);
+  if ( isoff(def, P_DYNAMIC|P_LOCKED_SUPERVISOR) ) /* see (*) above */
+    freeCodesDefinition(def, true);
 
   addClauseToIndexes(def, clause, where);
   release_def(def);
   DEBUG(CHK_SECURE, checkDefinition(def));
   UNLOCKDEF(def);
 
-  if ( unlikely(!!LD->transaction.generation) && def && true(def, P_TRANSACT) )
+  if ( unlikely(!!LD->transaction.generation) && def && ison(def, P_TRANSACT) )
   { if ( LD->transaction.generation < LD->transaction.gen_max )
     { clause->generation.created = ++LD->transaction.generation;
       clause->generation.erased  = max_generation(def);
@@ -1473,7 +1475,7 @@ assertDefinition(DECL_LD Definition def, Clause clause, ClauseRef where)
 				 where == CL_START ? ATOM_asserta : ATOM_assertz,
 				 clause, 0) ) )
   { error:
-    retractClauseDefinition(def, clause, FALSE);
+    retractClauseDefinition(def, clause, false);
     return NULL;
   }
 
@@ -1524,28 +1526,28 @@ abolishProcedure(Procedure proc, Module module)
     proc->definition         = ndef;
     ATOMIC_INC(&GD->statistics.predicates);
     ATOMIC_ADD(&module->code_size, sizeof(*ndef));
-    resetProcedure(proc, TRUE);
+    resetProcedure(proc, true);
     DEBUG(MSG_PRED_COUNT, Sdprintf("Created %s at %p\n",
 				   predicateName(ndef), ndef));
     if ( unshareDefinition(odef) == 0 )
       lingerDefinition(odef);
-  } else if ( true(def, P_FOREIGN) )	/* foreign: make normal */
+  } else if ( ison(def, P_FOREIGN) )	/* foreign: make normal */
   { def->impl.clauses.first_clause = def->impl.clauses.last_clause = NULL;
-    resetProcedure(proc, TRUE);
-  } else if ( true(def, P_THREAD_LOCAL) )
+    resetProcedure(proc, true);
+  } else if ( ison(def, P_THREAD_LOCAL) )
   { UNLOCKDEF(def);
     return PL_error(NULL, 0, NULL, ERR_PERMISSION_PROC,
 		    ATOM_modify, ATOM_thread_local_procedure, proc);
   } else				/* normal Prolog procedure */
-  { removeClausesPredicate(def, 0, FALSE);
-    setDynamicDefinition_unlocked(def, FALSE);
-    resetProcedure(proc, FALSE);
+  { removeClausesPredicate(def, 0, false);
+    setDynamicDefinition_unlocked(def, false);
+    resetProcedure(proc, false);
   }
 
   DEBUG(CHK_SECURE, checkDefinition(def));
   UNLOCKDEF(def);
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1568,10 +1570,10 @@ removeClausesPredicate(Definition def, int sfindex, int fromfile)
   size_t memory = 0;
   gen_t update;
 
-  if ( true(def, P_THREAD_LOCAL) )
+  if ( ison(def, P_THREAD_LOCAL) )
     return 0;
 
-  if ( GD->cleaning != CLN_DATA )		/* normal operation */
+  if ( GD->halt.cleaning != CLN_DATA )		/* normal operation */
   { PL_LOCK(L_GENERATION);
     update = global_generation()+1;
     acquire_def(def);
@@ -1582,7 +1584,7 @@ removeClausesPredicate(Definition def, int sfindex, int fromfile)
 
       if ( (sfindex == 0 || sfindex == cl->owner_no) &&
 	   (!fromfile || cl->line_no > 0) &&
-	   false(cl, CL_ERASED) )
+	   isoff(cl, CL_ERASED) )
       { set(cl, CL_ERASED);
 #ifdef O_LOGICAL_UPDATE
 	cl->generation.erased = update;
@@ -1591,7 +1593,7 @@ removeClausesPredicate(Definition def, int sfindex, int fromfile)
 	memory += sizeofClause(cl->code_size) + SIZEOF_CREF_CLAUSE;
 	def->impl.clauses.number_of_clauses--;
 	def->impl.clauses.erased_clauses++;
-	if ( false(cl, UNIT_CLAUSE) )
+	if ( isoff(cl, UNIT_CLAUSE) )
 	  def->impl.clauses.number_of_rules--;
 	deleteActiveClauseFromIndexes(def, cl);
 	registerRetracted(cl);
@@ -1606,7 +1608,7 @@ removeClausesPredicate(Definition def, int sfindex, int fromfile)
 	ATOMIC_SUB(&def->module->code_size, memory);
       ATOMIC_ADD(&GD->clauses.erased_size, memory);
       ATOMIC_ADD(&GD->clauses.erased, deleted);
-      if( true(def, P_DIRTYREG) )
+      if( ison(def, P_DIRTYREG) )
 	ATOMIC_SUB(&GD->clauses.dirty, deleted);
 
       registerDirtyDefinition(def);
@@ -1630,13 +1632,13 @@ removeClausesPredicate(Definition def, int sfindex, int fromfile)
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Retract  a  clause  from  a  dynamic  procedure.  Called  from  erase/1,
-retract/1 and retractall/1. Returns FALSE  if   the  clause  was already
+retract/1 and retractall/1. Returns false  if   the  clause  was already
 retracted or retract is vetoed by  the   update  event handling. This is
 also used by  trie_gen_compiled/3  to  get   rid  of  the  clauses  that
 represent tries.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+bool
 retract_clause(DECL_LD Clause clause, gen_t generation)
 { Definition def = clause->predicate;
   size_t size = sizeofClause(clause->code_size) + SIZEOF_CREF_CLAUSE;
@@ -1645,7 +1647,7 @@ retract_clause(DECL_LD Clause clause, gen_t generation)
   { if ( clause->generation.erased > generation )
       clause->generation.erased = generation;
   } else if ( unlikely(!!LD->transaction.generation) &&
-	      def && true(def, P_TRANSACT) )
+	      def && ison(def, P_TRANSACT) )
   { if ( LD->transaction.generation < LD->transaction.gen_max )
     { if ( LD->transaction.generation < LD->transaction.gen_max )
       { if ( clause->generation.erased >= LD->transaction.generation )
@@ -1666,9 +1668,9 @@ retract_clause(DECL_LD Clause clause, gen_t generation)
   }
 
   LOCKDEF(def);
-  if ( true(clause, CL_ERASED) )
+  if ( ison(clause, CL_ERASED) )
   { UNLOCKDEF(def);
-    return FALSE;
+    return false;
   }
 
   DEBUG(CHK_SECURE, checkDefinition(def));
@@ -1676,20 +1678,20 @@ retract_clause(DECL_LD Clause clause, gen_t generation)
   deleteActiveClauseFromIndexes(def, clause); /* just updates "dirtyness" */
   def->impl.clauses.number_of_clauses--;
   def->impl.clauses.erased_clauses++;
-  if ( false(clause, UNIT_CLAUSE) )
+  if ( isoff(clause, UNIT_CLAUSE) )
     def->impl.clauses.number_of_rules--;
   DEBUG(CHK_SECURE, checkDefinition(def));
   UNLOCKDEF(def);
 
 					/* update stats */
   registerRetracted(clause);
-  if ( true(clause, DBREF_CLAUSE) )
+  if ( ison(clause, DBREF_CLAUSE) )
     ATOMIC_INC(&GD->clauses.db_erased_refs);
 
   ATOMIC_SUB(&def->module->code_size, size);
   ATOMIC_ADD(&GD->clauses.erased_size, size);
   ATOMIC_INC(&GD->clauses.erased);
-  if( true(def, P_DIRTYREG) )
+  if( ison(def, P_DIRTYREG) )
     ATOMIC_DEC(&GD->clauses.dirty);
 
   registerDirtyDefinition(def);
@@ -1700,22 +1702,22 @@ retract_clause(DECL_LD Clause clause, gen_t generation)
 }
 
 
-int
+bool
 retractClauseDefinition(Definition def, Clause clause, int notify)
 { GET_LD
 
   if ( def->events && notify &&
        !(LD->transaction.flags&TR_BULK) &&
        !predicate_update_event(def, ATOM_retract, clause, 0) )
-    return FALSE;
+    return false;
 
-  if ( LD->transaction.generation )
+  if ( LD->transaction.generation && ison(def, P_TRANSACT) )
   { int rc;
 
-    if ( (rc=transaction_retract_clause(clause)) == TRUE )
-      return TRUE;
+    if ( (rc=transaction_retract_clause(clause)) == true )
+      return true;
     if ( rc < 0 )
-      return FALSE;			/* error */
+      return false;
   }
 
   return retract_clause(clause, 0);
@@ -1741,31 +1743,25 @@ unallocClause(Clause c)
   PL_free(c);
 }
 
-
-#ifdef O_DEBUG_ATOMGC
-static void
-unregister_atom_clause(atom_t a)
-{ PL_unregister_atom(a);
+static int
+unregister_atom_clause(atom_t a, void *ctx)
+{ (void)ctx;
+  PL_unregister_atom(a);
+  return true;
 }
 
-static void
-register_atom_clause(atom_t a)
-{ PL_register_atom(a);
+static int
+register_atom_clause(atom_t a, void *ctx)
+{ (void)ctx;
+  PL_register_atom(a);
+  return true;
 }
-#endif
 
 void
 freeClause(Clause c)
-{
-#ifdef O_ATOMGC
-#ifdef O_DEBUG_ATOMGC
-  forAtomsInClause(c, unregister_atom_clause);
-#else
-  forAtomsInClause(c, PL_unregister_atom);
-#endif
-#endif
+{ forAtomsInClause(c, unregister_atom_clause, NULL);
 
-  if ( true(c, DBREF_CLAUSE) )		/* will be freed from symbol */
+  if ( ison(c, DBREF_CLAUSE) )		/* will be freed from symbol */
     set(c, DBREF_ERASED_CLAUSE);
   else
     unallocClause(c);
@@ -1773,7 +1769,7 @@ freeClause(Clause c)
 
 
 
-static int WUNUSED			/* FALSE if there was an error */
+static int WUNUSED			/* false if there was an error */
 announceErasedClause(Clause clause)
 { return callEventHook(PLEV_ERASED_CLAUSE, clause);
 }
@@ -1828,8 +1824,8 @@ clause GC and clause GC calls cannot run in parallel.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static size_t
-cleanDefinition(Definition def, DirtyDefInfo ddi, gen_t start, Buffer tr_starts,
-		int *rcp)
+cleanDefinition(Definition def, DirtyDefInfo ddi, gen_t start,
+		Buffer tr_starts, bool *rcp)
 { size_t removed = 0;
 
   DEBUG(CHK_SECURE,
@@ -1837,7 +1833,7 @@ cleanDefinition(Definition def, DirtyDefInfo ddi, gen_t start, Buffer tr_starts,
 	checkDefinition(def);
 	UNLOCKDEF(def));
 
-  if ( mustCleanDefinition(def) && true(ddi, DDI_MARKING) )
+  if ( mustCleanDefinition(def) && ison(ddi, DDI_MARKING) )
   { ClauseRef cref, prev = NULL;
 #if O_DEBUG
     int left = 0;
@@ -1850,9 +1846,9 @@ cleanDefinition(Definition def, DirtyDefInfo ddi, gen_t start, Buffer tr_starts,
 	cref=cref->next)
     { Clause cl = cref->value.clause;
 
-      if ( true(cl, CL_ERASED) && ddi_is_garbage(ddi, start, tr_starts, cl) )
+      if ( ison(cl, CL_ERASED) && ddi_is_garbage(ddi, start, tr_starts, cl) )
       { if ( !announceErasedClause(cl) )
-	  *rcp = FALSE;
+	  *rcp = false;
 
 	LOCKDEF(def);
 	prev = find_prev(def, prev, cref);
@@ -1913,7 +1909,7 @@ visible.
 
 void
 reconsultFinalizePredicate(DECL_LD sf_reload *rl, Definition def, p_reload *r)
-{ if ( true(r, P_MODIFIED) )
+{ if ( ison(r, P_MODIFIED) )
   { ClauseRef cref;
     gen_t update;
     size_t deleted = 0;
@@ -1926,16 +1922,16 @@ reconsultFinalizePredicate(DECL_LD sf_reload *rl, Definition def, p_reload *r)
     for(cref = def->impl.clauses.first_clause; cref; cref=cref->next)
     { Clause cl = cref->value.clause;
 
-      if ( cl->generation.erased == rl->reload_gen && false(cl, CL_ERASED) )
+      if ( cl->generation.erased == rl->reload_gen && isoff(cl, CL_ERASED) )
       { set(cl, CL_ERASED);
 	cl->generation.erased = update;
 	deleted++;
 	memory += sizeofClause(cl->code_size) + SIZEOF_CREF_CLAUSE;
 	def->impl.clauses.number_of_clauses--;
 	def->impl.clauses.erased_clauses++;
-	if ( false(cl, UNIT_CLAUSE) )
+	if ( isoff(cl, UNIT_CLAUSE) )
 	  def->impl.clauses.number_of_rules--;
-	if ( true(def, P_DYNAMIC) )
+	if ( ison(def, P_DYNAMIC) )
 	  deleteActiveClauseFromIndexes(def, cl);
 	registerRetracted(cl);
 	int rc = clearBreakPointsClause(cl);
@@ -1966,11 +1962,12 @@ reconsultFinalizePredicate(DECL_LD sf_reload *rl, Definition def, p_reload *r)
     { ATOMIC_SUB(&def->module->code_size, memory);
       ATOMIC_ADD(&GD->clauses.erased_size, memory);
       ATOMIC_ADD(&GD->clauses.erased, deleted);
-      if( true(def, P_DIRTYREG) )
+      if( ison(def, P_DIRTYREG) )
 	ATOMIC_SUB(&GD->clauses.dirty, deleted);
 
       registerDirtyDefinition(def);
     }
+    clear(def, P_MODIFIED);
 
     DEBUG(CHK_SECURE, checkDefinition(def));
   }
@@ -1989,18 +1986,20 @@ P_META indicates that meta_info is   valid. P_TRANSPARENT indicates that
 the declaration contains at least one meta-argument (: or 0..9).
 
 @param HeadList	Comma separated list of predicates heads, where each
-		predicate head has arguments 0..9, :,+,-,?
+		predicate head has arguments 0..9, :,^,//,+,-,?
 */
 
-int
-isTransparentMetamask(Definition def, arg_info *args)
+bool
+isTransparentMetamask(Definition def, const arg_info *args)
 { size_t i, arity = def->functor->arity;
-  int transparent = FALSE;
+  bool transparent = false;
 
   for(i=0; i<arity && !transparent; i++)
   { int ma = args[i].meta;
     if ( MA_NEEDS_TRANSPARENT(ma) )
-      transparent = TRUE;
+    { transparent = true;
+      break;
+    }
   }
 
   return transparent;
@@ -2008,7 +2007,7 @@ isTransparentMetamask(Definition def, arg_info *args)
 
 
 void
-setMetapredicateMask(Definition def, arg_info *args)
+setMetapredicateMask(Definition def, const arg_info *args)
 { size_t i, arity = def->functor->arity;
 
   for(i=0; i<arity; i++)
@@ -2022,10 +2021,11 @@ setMetapredicateMask(Definition def, arg_info *args)
 }
 
 
-static int
-meta_declaration(term_t spec)
-{ GET_LD
-  term_t head = PL_new_term_ref();
+#define meta_declaration(spec, ismeta) LDFUNC(meta_declaration, spec, ismeta)
+
+static bool
+meta_declaration(DECL_LD term_t spec, bool ismeta)
+{ term_t head = PL_new_term_ref();
   term_t arg = PL_new_term_ref();
   Procedure proc;
   atom_t name;
@@ -2033,7 +2033,7 @@ meta_declaration(term_t spec)
 
   if ( !get_procedure(spec, &proc, head, GP_DEFINE) ||
        !PL_get_name_arity(head, &name, &arity) )
-    return FALSE;
+    return false;
 
 #ifdef _MSC_VER
   arg_info *args = alloca(arity*sizeof(*args));
@@ -2046,67 +2046,82 @@ meta_declaration(term_t spec)
 
     _PL_get_arg(i+1, head, arg);
 
-    if ( PL_is_integer(arg) )
-    { int e;
+    if ( ismeta && PL_is_integer(arg) )
+    { unsigned int e;
 
-      if ( !PL_get_integer_ex(arg, &e) )
-	return FALSE;
-      if ( e < 0 || e > 9 )
-      { domain_error:
-	return PL_error(NULL, 0, "0..9",
-			ERR_DOMAIN, ATOM_meta_argument_specifier, arg);
-      }
-      args[i].meta = e;
+      if ( !PL_cvt_i_uint(arg, &e) )
+	return false;
+      if ( e > 9 )
+	return PL_domain_error("meta_argument_specifier", arg);
+      args[i].meta = e&0xf;
     } else if ( PL_get_atom(arg, &ma) )
-    { int m;
+    { unsigned int m;
 
       if      ( ma == ATOM_plus )          m = MA_NONVAR;
       else if ( ma == ATOM_minus )         m = MA_VAR;
       else if ( ma == ATOM_question_mark ) m = MA_ANY;
-      else if ( ma == ATOM_star )	   m = MA_ANY; /* * mapped to ? */
+      else if ( !ismeta ) return PL_domain_error("mode", arg);
+      else if ( ma == ATOM_star )	   m = MA_ANY; /* `*` mapped to ? */
       else if ( ma == ATOM_colon )         m = MA_META;
       else if ( ma == ATOM_hat )           m = MA_HAT;
       else if ( ma == ATOM_gdiv )          m = MA_DCG;
-      else goto domain_error;
+      else return PL_domain_error("meta_argument_specifier", arg);
 
-      args[i].meta = m;
+      args[i].meta = m&0xf;
+    } else if ( ismeta )
+    { return PL_type_error("meta_argument_specifier", arg);
     } else
-    { return PL_error(NULL, 0, "0..9",
-			ERR_TYPE, ATOM_meta_argument_specifier, arg);;
+    { return PL_type_error("mode", arg);
     }
   }
 
+  bool rc;
   if ( ReadingSource )
-  { SourceFile sf = lookupSourceFile(source_file_name, TRUE);
-    int rc = setMetapredicateSource(sf, proc, args);
+  { SourceFile sf = lookupSourceFile(source_file_name, true);
+    rc = setMetapredicateSource(sf, proc, args);
     releaseSourceFile(sf);
-    return rc;
   } else
   { setMetapredicateMask(proc->definition, args);
-    return TRUE;
+    rc = true;
   }
+  PL_reset_term_refs(head);
+
+  return rc;
 }
 
+#define meta_predicate(spec, ismeta) LDFUNC(meta_predicate, spec, ismeta)
 
-static
-PRED_IMPL("meta_predicate", 1, meta_predicate, PL_FA_TRANSPARENT)
-{ PRED_LD
-  term_t tail = PL_copy_term_ref(A1);
+static bool
+meta_predicate(DECL_LD term_t spec, bool ismeta)
+{ term_t tail = PL_copy_term_ref(spec);
   term_t head = PL_new_term_ref();
 
   while ( PL_is_functor(tail, FUNCTOR_comma2) )
   { _PL_get_arg(1, tail, head);
-    if ( !meta_declaration(head) )
-      return FALSE;
+    if ( !meta_declaration(head, ismeta) )
+      return false;
     _PL_get_arg(2, tail, tail);
   }
 
-  if ( !meta_declaration(tail) )
-    return FALSE;
+  if ( !meta_declaration(tail, ismeta) )
+    return false;
 
-  return TRUE;
+  return true;
 }
 
+static
+PRED_IMPL("meta_predicate", 1, meta_predicate, PL_FA_TRANSPARENT)
+{ PRED_LD
+
+  return meta_predicate(A1, true);
+}
+
+static
+PRED_IMPL("mode", 1, mode, PL_FA_TRANSPARENT)
+{ PRED_LD
+
+  return meta_predicate(A1, false);
+}
 
 #define unify_meta_argument(head, def, i) LDFUNC(unify_meta_argument, head, def, i)
 static int
@@ -2146,27 +2161,27 @@ unify_meta_pattern(Procedure proc, term_t head)
 
     for(i=0; i<arity; i++)
     { if ( !unify_meta_argument(head, def, i) )
-	return FALSE;
+	return false;
     }
 
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
-int
+bool
 PL_meta_predicate(predicate_t proc, const char *spec_s)
 { Definition def = proc->definition;
   int arity = def->functor->arity;
   int i;
-  int transparent = FALSE;
+  int transparent = false;
   const unsigned char *s = (const unsigned char*)spec_s;
 
   for(i=0; i<arity; i++, s++)
   { int spec_c = *s;
-    int spec;
+    unsigned int spec;
 
     switch(spec_c)
     { case '+':
@@ -2199,12 +2214,12 @@ PL_meta_predicate(predicate_t proc, const char *spec_s)
 	}
       invalid:
 	fatalError("Invalid meta-argument for %s: %s\n", procedureName(proc), spec_s);
-	return FALSE;
+	return false;
     }
 
-    def->impl.any.args[i].meta = spec;
+    def->impl.any.args[i].meta = spec&0xf;
     if ( MA_NEEDS_TRANSPARENT(spec) )
-      transparent = TRUE;
+      transparent = true;
   }
 
   if ( transparent )
@@ -2213,7 +2228,7 @@ PL_meta_predicate(predicate_t proc, const char *spec_s)
     clear(def, P_TRANSPARENT);
   set(def, P_META);
 
-  return TRUE;
+  return true;
 }
 
 
@@ -2262,7 +2277,7 @@ CGC builds on the following components and invariants:
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 #define considerClauseGC(_) LDFUNC(considerClauseGC, _)
-static int
+static bool
 considerClauseGC(DECL_LD)
 { size_t pending  = GD->clauses.erased_size - GD->clauses.erased_size_last;
   size_t codesize = GD->statistics.codes*sizeof(code);
@@ -2270,41 +2285,41 @@ considerClauseGC(DECL_LD)
 
   if ( GD->clauses.cgc_space_factor > 0 &&
        pending > codesize/GD->clauses.cgc_space_factor &&
-       GD->cleaning == CLN_NORMAL )
+       GD->halt.cleaning == CLN_NORMAL )
   { DEBUG(MSG_CGC_CONSIDER,
 	  Sdprintf("CGC? too much garbage: %lld bytes in %lld clauses\n",
 		   (int64_t)GD->clauses.erased_size,
 		   (int64_t)GD->clauses.erased));
-    return TRUE;
+    return true;
   }
 
   if ( LD->statistics.inferences > LD->clauses.cgc_inferences )
-  { int rgc;
+  { bool rgc;
 
     LD->clauses.cgc_inferences = LD->statistics.inferences + 500;
 
     stats.dirty_pred_clauses = GD->clauses.dirty;
     if ( stats.dirty_pred_clauses == (size_t)-1 )
-      return FALSE;			/* already kicked in */
+      return false;			/* already kicked in */
 
     if ( !cgc_thread_stats(&stats) )
-      return FALSE;
+      return false;
 
     rgc =  ( (double)stats.erased_skipped >
 	     (double)stats.local_size*GD->clauses.cgc_stack_factor +
 	     (double)stats.dirty_pred_clauses*GD->clauses.cgc_clause_factor );
-    rgc = rgc && (GD->cleaning == CLN_NORMAL);
+    rgc = rgc && (GD->halt.cleaning == CLN_NORMAL);
     DEBUG(MSG_CGC_CONSIDER,
-	  Sdprintf("GCG? [%s] %ld skipped; lsize=%ld; clauses=%ld\n",
+	  Sdprintf("GCG? [%s] %lld skipped; lsize=%zd; clauses=%zd\n",
 		   rgc ? "Y" : " ",
-		   (long)stats.erased_skipped,
-		   (long)stats.local_size,
-		   (long)stats.dirty_pred_clauses));
+		   (long long)stats.erased_skipped,
+		   stats.local_size,
+		   stats.dirty_pred_clauses));
 
     return rgc;
   }
 
-  return FALSE;
+  return false;
 }
 
 /** '$cgc_params'(-OldSpace, -OldStack, -OldClause,
@@ -2354,7 +2369,7 @@ ddi_generation_name(DirtyDefInfo ddi)
   char *o = s;
   *o++ = '{';
 
-  if ( false(ddi, DDI_INTERVALS) )
+  if ( isoff(ddi, DDI_INTERVALS) )
   { int i;
 
     for(i=0; i<ddi->count; i++)
@@ -2394,14 +2409,14 @@ ddi_reset(DirtyDefInfo ddi)
   ddi->flags = DDI_MARKING;
 }
 
-int
+bool
 ddi_contains_gen(DirtyDefInfo ddi, gen_t access)
-{ if ( false(ddi, DDI_INTERVALS) )
+{ if ( isoff(ddi, DDI_INTERVALS) )
   { int i;
 
     for(i=0; i<ddi->count; i++)
     { if ( ddi->access[i] == access )
-	return TRUE;
+	return true;
     }
   } else
   { int i;
@@ -2409,11 +2424,11 @@ ddi_contains_gen(DirtyDefInfo ddi, gen_t access)
     for(i=0; i<ddi->count; )
     { if ( access >= ddi->access[i++] &&
 	   access <= ddi->access[i++] )
-	return TRUE;
+	return true;
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -2451,10 +2466,10 @@ ddi_interval_add_access_gen(DirtyDefInfo ddi, gen_t access)
 
 void
 ddi_add_access_gen(DirtyDefInfo ddi, gen_t access)
-{ if ( true(ddi, DDI_MARKING) )
+{ if ( ison(ddi, DDI_MARKING) )
   { PL_LOCK(L_CGCGEN);
     if ( !ddi_contains_gen(ddi, access) )
-    { if ( false(ddi, DDI_INTERVALS) )
+    { if ( isoff(ddi, DDI_INTERVALS) )
       { if ( ddi->count < PROC_DIRTY_GENS )
 	  ddi->access[ddi->count++] = access;
 	else
@@ -2467,9 +2482,9 @@ ddi_add_access_gen(DirtyDefInfo ddi, gen_t access)
   }
 }
 
-int
+bool
 ddi_is_garbage(DirtyDefInfo ddi, gen_t start, Buffer tr_starts, Clause cl)
-{ assert(true(ddi, DDI_MARKING));
+{ assert(ison(ddi, DDI_MARKING));
 
   if ( cl->generation.erased >= start )
   { if ( cl->generation.erased >= GEN_TRANSACTION_BASE &&
@@ -2480,43 +2495,39 @@ ddi_is_garbage(DirtyDefInfo ddi, gen_t start, Buffer tr_starts, Clause cl)
       for(; g0<top; g0++)
       { if ( cl->generation.erased >= *g0 &&
 	     cl->generation.erased < GEN_TRMAX(*g0) )
-	  return FALSE;
+	  return false;
       }
     } else
-    { return FALSE;
+    { return false;
     }
   }
 
-  if ( false(ddi, DDI_INTERVALS) )
-  { int i;
-
-    for(i=0; i<ddi->count; i++)
+  if ( isoff(ddi, DDI_INTERVALS) )
+  { for(int i=0; i<ddi->count; i++)
     { if ( GLOBALLY_VISIBLE_CLAUSE(cl, ddi->access[i]) )
-	return FALSE;
+	return false;
     }
   } else
-  { int i;
+  { assert(ddi->count == 2);
 
-    assert(ddi->count == 2);
-
-    for(i=0; i<ddi->count; )
+    for(int i=0; i<ddi->count; )
     { gen_t f = ddi->access[i++];
       gen_t t = ddi->access[i++];
 
       if ( !(cl->generation.erased  < f ||
 	     cl->generation.created > t) )
-	return FALSE;
+	return false;
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 static gen_t
 ddi_oldest_generation(DirtyDefInfo ddi)
 { gen_t oldest = GEN_MAX;
 
-  if ( false(ddi, DDI_INTERVALS) )
+  if ( isoff(ddi, DDI_INTERVALS) )
   { int i;
 
     for(i=0; i<ddi->count; i++)
@@ -2538,22 +2549,22 @@ ddi_oldest_generation(DirtyDefInfo ddi)
 }
 
 #ifdef O_DEBUG
-static Table protectedCRefs = NULL;
+static TablePW protectedCRefs = NULL;
 
 static void
 protectCRef(ClauseRef cref)
 { GET_LD
-  void *k;
+  table_value_t k;
 
   if ( !protectedCRefs )		/* may waste a table.  Only O_DEBUG */
-    COMPARE_AND_SWAP_PTR(&protectedCRefs, NULL, newHTable(64));
+    COMPARE_AND_SWAP_PTR(&protectedCRefs, NULL, newHTablePW(64));
 
-  if ( (k=lookupHTable(protectedCRefs, cref)) )
-  { k = (void*)((intptr_t)k+1);
-    updateHTable(protectedCRefs, cref, k);
+  if ( (k=lookupHTablePW(protectedCRefs, cref)) )
+  { k = k+1;
+    updateHTablePW(protectedCRefs, cref, k);
     // Sdprintf("Protect %p --> %zd\n", cref, (intptr_t)k);
   } else
-  { addNewHTable(protectedCRefs, cref, (void*)1);
+  { addNewHTablePW(protectedCRefs, cref, 1);
     // Sdprintf("Protect %p\n", cref);
   }
 }
@@ -2561,15 +2572,15 @@ protectCRef(ClauseRef cref)
 static void
 unprotectCRef(ClauseRef cref)
 { GET_LD
-  void *k;
+  table_value_t k;
 
-  if ( (k=lookupHTable(protectedCRefs, cref)) )
-  { k = (void*)((intptr_t)k-1);
+  if ( (k=lookupHTablePW(protectedCRefs, cref)) )
+  { k = k-1;
     if ( k )
-    { updateHTable(protectedCRefs, cref, k);
+    { updateHTablePW(protectedCRefs, cref, k);
       // Sdprintf("UnProtect %p --> %zd\n", cref, (intptr_t)k);
     } else
-    { deleteHTable(protectedCRefs, cref);
+    { deleteHTablePW(protectedCRefs, cref);
       // Sdprintf("UnProtect %p\n", cref);
     }
   } else
@@ -2582,7 +2593,7 @@ isProtectedCRef(ClauseRef cref)
 { GET_LD
 
   return ( protectedCRefs &&
-	   lookupHTable(protectedCRefs, cref) );
+	   lookupHTablePW(protectedCRefs, cref) );
 }
 #endif /*O_DEBUG*/
 
@@ -2594,13 +2605,13 @@ oldest generation is 0 and thus no clause reference will be collected.
 
 static void
 registerDirtyDefinition(DECL_LD Definition def)
-{ if ( unlikely(GD->cleaning == CLN_DATA) )
+{ if ( unlikely(GD->halt.cleaning == CLN_DATA) )
     return;
 
-  if ( false(def, P_DIRTYREG) )
+  if ( isoff(def, P_DIRTYREG) )
   { DirtyDefInfo ddi = ddi_new(def);
 
-    if ( addHTable(GD->procedures.dirty, def, ddi) == ddi )
+    if ( addHTablePP(GD->procedures.dirty, def, ddi) == ddi )
     { set(def, P_DIRTYREG);
       ATOMIC_ADD(&GD->clauses.dirty, def->impl.clauses.number_of_clauses);
     } else
@@ -2610,15 +2621,7 @@ registerDirtyDefinition(DECL_LD Definition def)
   if ( !isSignalledGCThread(SIG_CLAUSE_GC) &&	/* already asked for */
        !GD->clauses.cgc_active &&	/* currently running */
        considerClauseGC() )
-  { if ( GD->clauses.db_erased_refs > GD->clauses.erased / 10 )
-    { DEBUG(MSG_CGC_CONSIDER,
-	    Sdprintf("CGC: %ld of %ld erased clauses has a clause ref; "
-		     "asking for AGC\n",
-		     (long)GD->clauses.db_erased_refs,
-		     (long)GD->clauses.erased));
-      signalGCThread(SIG_ATOM_GC);
-    }
-    signalGCThread(SIG_CLAUSE_GC);
+  { signalGCThread(SIG_CLAUSE_GC);
   }
 }
 
@@ -2627,7 +2630,7 @@ unregisterDirtyDefinition(Definition def)
 { GET_LD
   DirtyDefInfo ddi;
 
-  if ( (ddi=deleteHTable(GD->procedures.dirty, def)) )
+  if ( (ddi=deleteHTablePP(GD->procedures.dirty, def)) )
   { PL_free(ddi);
     clear(def, P_DIRTYREG);
     ATOMIC_SUB(&GD->clauses.dirty, def->impl.clauses.number_of_clauses);
@@ -2649,16 +2652,16 @@ may leave this predicate as non-dirty while it is dirty.
 
 static void
 maybeUnregisterDirtyDefinition(Definition def)
-{ if ( true(def, P_DIRTYREG) &&
+{ if ( ison(def, P_DIRTYREG) &&
        def->impl.clauses.erased_clauses == 0 )
   { LOCKDEF(def);			/* See (*) */
-    if ( true(def, P_DIRTYREG) &&
+    if ( ison(def, P_DIRTYREG) &&
 	 def->impl.clauses.erased_clauses == 0 )
       unregisterDirtyDefinition(def);
     UNLOCKDEF(def);
   }
 
-  if ( true(def, P_ERASED) )
+  if ( ison(def, P_ERASED) )
     delayedDestroyDefinition(def);
 }
 
@@ -2672,10 +2675,10 @@ the start generation of the clause garbage collector.
 foreign_t
 pl_garbage_collect_clauses(void)
 { GET_LD
-  int rc = TRUE;
+  bool rc = true;
 
   if ( GD->procedures.dirty->size > 0 &&
-       COMPARE_AND_SWAP_INT(&GD->clauses.cgc_active, FALSE, TRUE) )
+       COMPARE_AND_SWAP_INT(&GD->clauses.cgc_active, false, true) )
   { size_t removed = 0;
     size_t erased_pending = GD->clauses.erased_size;
     double gct, t0 = ThreadCPUTime(CPU_USER);
@@ -2686,7 +2689,7 @@ pl_garbage_collect_clauses(void)
     if ( verbose )
     { if ( (rc=printMessage(ATOM_informational,
 			    PL_FUNCTOR_CHARS, "cgc", 1,
-			      PL_CHARS, "start")) == FALSE )
+			      PL_CHARS, "start")) == false )
 	goto out;
     }
 
@@ -2698,10 +2701,10 @@ pl_garbage_collect_clauses(void)
 
 					/* sanity-check */
     FOR_TABLE(GD->procedures.dirty, n, v)
-    { DirtyDefInfo ddi = v;
+    { DirtyDefInfo ddi = val2ptr(v);
 
       DEBUG(CHK_SECURE,
-	    { Definition def = n;
+	    { Definition def = key2ptr(n);
 	      LOCKDEF(def);
 	      checkDefinition(def);
 	      UNLOCKDEF(def);
@@ -2719,10 +2722,10 @@ pl_garbage_collect_clauses(void)
     DEBUG(MSG_CGC, Sdprintf("(marking done)\n"));
 
     FOR_TABLE(GD->procedures.dirty, n, v)
-    { Definition def = n;
-      DirtyDefInfo ddi = v;
+    { Definition def = key2ptr(n);
+      DirtyDefInfo ddi = val2ptr(v);
 
-      if ( false(def, P_FOREIGN) &&
+      if ( isoff(def, P_FOREIGN) &&
 	   def->impl.clauses.erased_clauses > 0 )
       { size_t del = cleanDefinition(def, ddi,
 				     start_gen, (Buffer)&tr_starts,
@@ -2766,7 +2769,7 @@ pl_garbage_collect_clauses(void)
 		  PL_DOUBLE, gct);
 
   out:
-    GD->clauses.cgc_active = FALSE;
+    GD->clauses.cgc_active = false;
   }
 
   return rc;
@@ -2779,7 +2782,7 @@ pl_garbage_collect_clauses(void)
 		 *	    CHECKING		*
 		 *******************************/
 
-word
+foreign_t
 pl_check_definition(term_t spec)
 { GET_LD
   Procedure proc;
@@ -2793,7 +2796,7 @@ pl_check_definition(term_t spec)
     return Sdprintf("$check_definition/1: can't find definition");
   def = getProcDefinition(proc);
 
-  if ( true(def, P_FOREIGN) )
+  if ( ison(def, P_FOREIGN) )
     succeed;
 
   acquire_def(def);
@@ -2803,7 +2806,7 @@ pl_check_definition(term_t spec)
     if ( cref->d.key == 0 )
       nindexable++;
 
-    if ( false(clause, CL_ERASED) )
+    if ( isoff(clause, CL_ERASED) )
       nclauses++;
     else
       nerased++;
@@ -2874,7 +2877,7 @@ autoImport(functor_t f, Module m)
   if ( (proc = isCurrentProcedure(f, m)) )
   { if ( isDefinedProcedure(proc) )
       return proc->definition;
-    if ( true(proc->definition, P_AUTOLOAD) )
+    if ( ison(proc->definition, P_AUTOLOAD) )
       return NULL;
   }
 
@@ -2945,11 +2948,11 @@ test_autoload_loop(DECL_LD Definition def)
 	  break;
       }
 
-      return FALSE;
+      return false;
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -3014,7 +3017,7 @@ trapUndefined(DECL_LD Definition def)
   if ( (newdef = autoImport(functor->functor, module)) )
     return newdef;
 					/* Pred/Module does not want to trap */
-  if ( true(def, PROC_DEFINED) ||
+  if ( ison(def, PROC_DEFINED) ||
        getUnknownModule(module) == UNKNOWN_FAIL )
     return def;
 
@@ -3061,7 +3064,7 @@ error:
 		 *	  REQUIRE SUPPORT	*
 		 *******************************/
 
-word
+foreign_t
 pl_require(term_t pred)
 { Procedure proc;
 
@@ -3087,7 +3090,7 @@ alloc_retract_context(retract_context *ctx0)
 { retract_context *ctx = allocForeignState(sizeof(*ctx));
 
   *ctx = *ctx0;
-  ctx->allocated = TRUE;
+  ctx->allocated = true;
 
   return ctx;
 }
@@ -3117,7 +3120,7 @@ PRED_IMPL("retract", 1, retract,
     unprotectCRef(ctx->chp.cref);
     free_retract_context(ctx);
 
-    return TRUE;
+    return true;
   } else
   { Module m = NULL;
     term_t cl = PL_new_term_ref();
@@ -3132,13 +3135,13 @@ PRED_IMPL("retract", 1, retract,
 
     if ( !PL_strip_module_ex(term, &m, cl) ||
 	 !get_head_and_body_clause(cl, head, body, &m, &flags) )
-      return FALSE;
+      return false;
     if ( PL_get_atom(body, &b) && b == ATOM_true )
       rc = PL_put_term(cl, head);
     else
       rc = PL_cons_functor(cl, FUNCTOR_prove2, head, body);
     if ( !rc )
-      return FALSE;
+      return false;
 
     argv = valTermRef(head);
     deRef(argv);
@@ -3161,12 +3164,12 @@ PRED_IMPL("retract", 1, retract,
 
       def = getProcDefinition(proc);
 
-      if ( true(def, P_FOREIGN) )
+      if ( ison(def, P_FOREIGN) )
 	return PL_error(NULL, 0, NULL, ERR_MODIFY_STATIC_PROC, proc);
-      if ( false(def, P_DYNAMIC) )
+      if ( isoff(def, P_DYNAMIC) )
       { if ( isDefinedProcedure(proc) )
 	  return PL_error(NULL, 0, NULL, ERR_MODIFY_STATIC_PROC, proc);
-	setDynamicDefinition(def, TRUE); /* implicit */
+	setDynamicDefinition(def, true); /* implicit */
 	fail;				/* no clauses */
       }
 
@@ -3199,7 +3202,7 @@ PRED_IMPL("retract", 1, retract,
 
     if ( !(fid = PL_open_foreign_frame()) )
     { free_retract_context(ctx);
-      return FALSE;
+      return false;
     }
 
     while( cref )
@@ -3207,12 +3210,12 @@ PRED_IMPL("retract", 1, retract,
 
       if ( (clause->flags&CLAUSE_SSU_FLAGS) == (flags&CLAUSE_SSU_FLAGS) &&
 	   decompile(clause, cl, 0) )
-      { if ( retractClauseDefinition(ctx->def, clause, TRUE) ||
+      { if ( retractClauseDefinition(ctx->def, clause, true) ||
 	     CTX_CNTRL != FRG_FIRST_CALL )
 	{ if ( !ctx->chp.cref )		/* deterministic last one */
 	  { free_retract_context(ctx);
 	    PL_close_foreign_frame(fid);
-	    return TRUE;
+	    return true;
 	  }
 
 	  if ( ctx == &ctxbuf )		/* non-determinisic; save state */
@@ -3243,7 +3246,7 @@ PRED_IMPL("retract", 1, retract,
 
     PL_close_foreign_frame(fid);
     free_retract_context(ctx);
-    return FALSE;
+    return false;
   }
 }
 
@@ -3251,7 +3254,7 @@ PRED_IMPL("retract", 1, retract,
 #define allVars(argc, argv) LDFUNC(allVars, argc, argv)
 static int
 allVars(DECL_LD int argc, Word argv)
-{ int i, r, allvars = TRUE;
+{ int i, r, allvars = true;
   Word *reset = alloca(argc*sizeof(Word));
 
   for(i=0; i<argc; i++)
@@ -3262,7 +3265,7 @@ allVars(DECL_LD int argc, Word argv)
     { reset[i] = p2;
       *p2 = ATOM_nil;
     } else
-    { allvars = FALSE;
+    { allvars = false;
       break;
     }
   }
@@ -3284,26 +3287,26 @@ PRED_IMPL("retractall", 1, retractall, PL_FA_NONDETERMINISTIC|PL_FA_ISO)
   definition_ref *dref;
   ClauseRef cref;
   Word argv;
-  int allvars = TRUE;
+  int allvars = true;
   fid_t fid;
-  int rc = TRUE;
+  int rc = true;
 
   if ( !get_procedure(head, &proc, thehead, GP_CREATE) )
     fail;
 
   def = getProcDefinition(proc);
-  if ( true(def, P_FOREIGN) )
+  if ( ison(def, P_FOREIGN) )
     return PL_error(NULL, 0, NULL, ERR_MODIFY_STATIC_PROC, proc);
-  if ( false(def, P_DYNAMIC) )
+  if ( isoff(def, P_DYNAMIC) )
   { if ( isDefinedProcedure(proc) )
       return PL_error(NULL, 0, NULL, ERR_MODIFY_STATIC_PROC, proc);
-    if ( !setDynamicDefinition(def, TRUE) )
+    if ( !setDynamicDefinition(def, true) )
       fail;
     succeed;				/* nothing to retract */
   }
 
   if ( !retractall_event(def, thehead, FUNCTOR_start1) )
-    return FALSE;
+    return false;
 
   argv = valTermRef(thehead);
   deRef(argv);
@@ -3313,12 +3316,12 @@ PRED_IMPL("retractall", 1, retractall, PL_FA_NONDETERMINISTIC|PL_FA_ISO)
 
     allvars = allVars(arity, argv);
   } else
-  { allvars = TRUE;
+  { allvars = true;
     argv = NULL;
   }
 
   if ( !(dref=pushPredicateAccessObj(def)) )
-    return FALSE;
+    return false;
   setGenerationFrameVal(environment_frame, dref->generation);
   enterDefinition(def);
   fid = PL_open_foreign_frame();
@@ -3333,32 +3336,32 @@ PRED_IMPL("retractall", 1, retractall, PL_FA_NONDETERMINISTIC|PL_FA_ISO)
     acquire_def(def);
     for(cref = def->impl.clauses.first_clause; cref; cref = cref->next)
     { if ( visibleClauseCNT(cref->value.clause, gen) )
-      { if ( !(rc=retractClauseDefinition(def, cref->value.clause, TRUE)) )
+      { if ( !(rc=retractClauseDefinition(def, cref->value.clause, true)) )
 	{ if ( PL_exception(0) )
 	    break;
 	}
       }
     }
     release_def(def);
-    rc = TRUE;
+    rc = true;
   } else
   { struct clause_choice chp;
 
     if ( !(cref = firstClause(argv, environment_frame, def, &chp)) )
     { popPredicateAccess(def);
       leaveDefinition(def);
-      return TRUE;
+      return true;
     }
 
     while( cref )
     { if ( decompileHead(cref->value.clause, thehead) )
-      { if ( !(rc=retractClauseDefinition(def, cref->value.clause, TRUE)) )
+      { if ( !(rc=retractClauseDefinition(def, cref->value.clause, true)) )
 	{ if ( PL_exception(0) )
 	    break;
 	}
       } else
       { if ( PL_exception(0) )
-	{ rc = FALSE;
+	{ rc = false;
 	  break;
 	}
       }
@@ -3368,7 +3371,7 @@ PRED_IMPL("retractall", 1, retractall, PL_FA_NONDETERMINISTIC|PL_FA_ISO)
       if ( !chp.cref )
       { popPredicateAccess(def);
 	leaveDefinition(def);
-	return TRUE;
+	return true;
       }
 
       if ( argv )				/* may be shifted */
@@ -3377,7 +3380,7 @@ PRED_IMPL("retractall", 1, retractall, PL_FA_NONDETERMINISTIC|PL_FA_ISO)
       }
 
       cref = nextClause(&chp, argv, environment_frame, def);
-      rc = TRUE;
+      rc = true;
     }
   }
   popPredicateAccess(def);
@@ -3397,7 +3400,7 @@ PRED_IMPL("retractall", 1, retractall, PL_FA_NONDETERMINISTIC|PL_FA_ISO)
 		*       PROLOG PREDICATES       *
 		*********************************/
 
-static word
+static foreign_t
 do_abolish(Module m, term_t atom, term_t arity)
 { GET_LD
   functor_t f;
@@ -3416,14 +3419,14 @@ do_abolish(Module m, term_t atom, term_t arity)
   if ( !(proc = isCurrentProcedure(f, m)) )
     succeed;
 
-  if ( truePrologFlag(PLFLAG_ISO) && false(proc->definition, P_DYNAMIC) )
+  if ( truePrologFlag(PLFLAG_ISO) && isoff(proc->definition, P_DYNAMIC) )
     return PL_error(NULL, 0, NULL, ERR_MODIFY_STATIC_PROC, proc);
 
   return abolishProcedure(proc, m);
 }
 
 
-word
+foreign_t
 pl_abolish(term_t name, term_t arity)	/* Name, Arity */
 { GET_LD
   Module m = NULL;
@@ -3434,7 +3437,7 @@ pl_abolish(term_t name, term_t arity)	/* Name, Arity */
 }
 
 
-word
+foreign_t
 pl_abolish1(term_t spec)		/* Name/Arity */
 { GET_LD
   term_t name  = PL_new_term_ref();
@@ -3442,7 +3445,7 @@ pl_abolish1(term_t spec)		/* Name/Arity */
   Module m = NULL;
 
   if ( !PL_strip_module(spec, &m, spec) )
-    return FALSE;
+    return false;
 
   if ( !PL_is_functor(spec, FUNCTOR_divide2) )
     return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_predicate_indicator, spec);
@@ -3516,7 +3519,7 @@ num_visible_clauses(DECL_LD Definition def, atom_t key, gen_t gen)
     count = def->impl.clauses.number_of_rules;
 
   if ( count > 0 &&
-       (LD->reload.generation != GEN_INVALID || true(def, P_DYNAMIC)) )
+       (LD->reload.generation != GEN_INVALID || ison(def, P_DYNAMIC)) )
   { ClauseRef c;
 
     if ( !gen )
@@ -3526,7 +3529,7 @@ num_visible_clauses(DECL_LD Definition def, atom_t key, gen_t gen)
     acquire_def(def);
     for(c = def->impl.clauses.first_clause; c; c = c->next)
     { Clause cl = c->value.clause;
-      if ( key == ATOM_number_of_rules && true(cl, UNIT_CLAUSE) )
+      if ( key == ATOM_number_of_rules && ison(cl, UNIT_CLAUSE) )
 	continue;
       if ( visibleClause(cl, gen) )
 	count++;
@@ -3540,12 +3543,15 @@ num_visible_clauses(DECL_LD Definition def, atom_t key, gen_t gen)
 
 size_t
 sizeof_predicate(Definition def)
-{ GET_LD
+{
+#if O_PLMT
+  GET_LD
+#endif
   size_t size = sizeof(*def);
 
   size += sizeof_supervisor(def->codes);
 
-  if ( false(def, P_FOREIGN) )
+  if ( isoff(def, P_FOREIGN) )
   { ClauseRef c;
 
     acquire_def(def);
@@ -3583,7 +3589,7 @@ PRED_IMPL("$get_predicate_attribute", 3, get_predicate_attribute,
        !PL_get_functor(head, &fd) ||
        ( !(proc = visibleProcedure(fd, module)) &&
 	 !(proc = isCurrentProcedure(fd, module)) ) )
-    fail;
+    return false;
 
   def = proc->definition;
 
@@ -3592,13 +3598,13 @@ PRED_IMPL("$get_predicate_attribute", 3, get_predicate_attribute,
 
   if ( key == ATOM_imported )
   { if ( module == def->module )
-      fail;
+      return false;
     return PL_unify_atom(value, def->module->name);
   } else if ( key == ATOM_indexed )
   { return unify_index_pattern(proc, value);
   } else if ( key == ATOM_meta_predicate )
-  { if ( false(def, P_META) )
-      fail;
+  { if ( isoff(def, P_META) )
+      return false;
     return unify_meta_pattern(proc, value);
   } else if ( key == ATOM_exported )
   { return PL_unify_integer(value, isPublicModule(module, proc));
@@ -3614,9 +3620,9 @@ PRED_IMPL("$get_predicate_attribute", 3, get_predicate_attribute,
   } else if ( key == ATOM_line_count || key == ATOM_file )
   { int line;
     Clause clause;
-    int rc = FALSE;
+    int rc = false;
 
-    if ( false(def, P_FOREIGN|P_THREAD_LOCAL) )
+    if ( isoff(def, P_FOREIGN|P_THREAD_LOCAL) )
     { acquire_def(def);
       if ( def->impl.clauses.first_clause &&
 	   (clause = def->impl.clauses.first_clause->value.clause) &&
@@ -3635,24 +3641,24 @@ PRED_IMPL("$get_predicate_attribute", 3, get_predicate_attribute,
 
     return rc;
   } else if ( key == ATOM_foreign )
-  { return PL_unify_integer(value, true(def, P_FOREIGN) ? 1 : 0);
+  { return PL_unify_integer(value, ison(def, P_FOREIGN) ? 1 : 0);
   } else if ( key == ATOM_number_of_clauses )
   { size_t num_clauses;
     if ( def->flags & P_FOREIGN )
-      fail;
+      return false;
 
     def = getProcDefinition(proc);
     num_clauses = num_visible_clauses(def, key, 0);
-    if ( num_clauses == 0 && false(def, P_DYNAMIC) )
-      fail;
+    if ( num_clauses == 0 && isoff(def, P_DYNAMIC) )
+      return false;
     return PL_unify_int64(value, num_clauses);
   } else if ( key == ATOM_last_modified_generation )
   { gen_t g;
 
     if ( def->flags & P_FOREIGN )
-      fail;
+      return false;
     def = getProcDefinition(proc);
-    if ( true(def, P_TRANSACT) && LD->transaction.generation )
+    if ( ison(def, P_TRANSACT) && LD->transaction.generation )
       g = transaction_last_modified_predicate(def);
     else
       g = def->last_modified;
@@ -3660,50 +3666,60 @@ PRED_IMPL("$get_predicate_attribute", 3, get_predicate_attribute,
     return PL_unify_int64(value, g);
   } else if ( key == ATOM_number_of_rules )
   { if ( def->flags & P_FOREIGN )
-      fail;
+      return false;
 
     def = getProcDefinition(proc);
-    if ( def->impl.clauses.number_of_clauses == 0 && false(def, P_DYNAMIC) )
-      fail;
+    if ( def->impl.clauses.number_of_clauses == 0 && isoff(def, P_DYNAMIC) )
+      return false;
     return PL_unify_integer(value, num_visible_clauses(def, key, 0));
   } else if ( key == ATOM_size )
   { def = getProcDefinition(proc);
     return PL_unify_integer(value, sizeof_predicate(def));
+  } else if ( key == ATOM_primary_index )
+  { const ClauseList clist = &def->impl.clauses;
+    if ( !clist->pindex_verified )
+    { LOCKDEF(def);
+      update_primary_index(def);
+      UNLOCKDEF(def);
+    }
+    if ( !clist->unindexed )
+      return PL_unify_integer(value, (int)clist->primary_index+1);
+    return false;
   } else if ( tbl_is_predicate_attribute(key) )
   { return tbl_get_predicate_attribute(def, key, value);
   } else if ( (att = attribute_mask(key)) )
   { return PL_unify_integer(value, (def->flags & att) ? 1 : 0);
   } else
-  { return FALSE;
+  { return false;
   }
 }
 
 
 static int
 setDetDefinition(Definition def, bool isdet)
-{ if ( ( isdet &&  true(def, P_DET)) ||
-       (!isdet && false(def, P_DET)) )
-    return TRUE;
+{ if ( ( isdet &&  ison(def, P_DET)) ||
+       (!isdet && isoff(def, P_DET)) )
+    return true;
 
   if ( isdet )				/* nondet --> det */
   { set(def, P_DET);
-    freeCodesDefinition(def, TRUE);	/* reset to S_VIRGIN */
+    freeCodesDefinition(def, true);	/* reset to S_VIRGIN */
   } else				/* det --> nondet */
   { clear(def, P_DET);
-    freeCodesDefinition(def, TRUE);	/* reset to S_VIRGIN */
+    freeCodesDefinition(def, true);	/* reset to S_VIRGIN */
   }
 
-  return TRUE;
+  return true;
 }
 
 
-static int
+static bool
 setDynamicDefinition_unlocked(Definition def, bool isdyn)
 { GET_LD
 
-  if ( ( isdyn &&  true(def, P_DYNAMIC)) ||
-       (!isdyn && false(def, P_DYNAMIC)) )
-    return TRUE;
+  if ( ( isdyn &&  ison(def, P_DYNAMIC)) ||
+       (!isdyn && isoff(def, P_DYNAMIC)) )
+    return true;
 
   if ( isdyn )				/* static --> dynamic */
   { if ( truePrologFlag(PLFLAG_PROTECT_STATIC_CODE) &&
@@ -3711,19 +3727,19 @@ setDynamicDefinition_unlocked(Definition def, bool isdyn)
       return PL_error(NULL, 0, NULL, ERR_MODIFY_STATIC_PREDICATE, def);
 
     set(def, P_DYNAMIC|P_TRANSACT);
-    freeCodesDefinition(def, TRUE);	/* reset to S_VIRGIN */
+    freeCodesDefinition(def, true);	/* reset to S_VIRGIN */
   } else				/* dynamic --> static */
   { clear(def, P_DYNAMIC|P_TRANSACT);
-    freeCodesDefinition(def, TRUE);	/* reset to S_VIRGIN */
+    freeCodesDefinition(def, true);	/* reset to S_VIRGIN */
   }
 
-  return TRUE;
+  return true;
 }
 
 
-int
+bool
 setDynamicDefinition(Definition def, bool isdyn)
-{ int rc;
+{ bool rc;
 
   LOCKDEF(def);
   rc = setDynamicDefinition_unlocked(def, isdyn);
@@ -3732,16 +3748,15 @@ setDynamicDefinition(Definition def, bool isdyn)
   return rc;
 }
 
-int
+bool
 setThreadLocalDefinition(Definition def, bool val)
 {
 #ifdef O_ENGINES
-
   LOCKDEF(def);
-  if ( (val && true(def, P_THREAD_LOCAL)) ||
-       (!val && false(def, P_THREAD_LOCAL)) )
+  if ( (val && ison(def, P_THREAD_LOCAL)) ||
+       (!val && isoff(def, P_THREAD_LOCAL)) )
   { UNLOCKDEF(def);
-    return TRUE;
+    return true;
   }
 
   if ( val )				/* static --> local */
@@ -3756,7 +3771,7 @@ setThreadLocalDefinition(Definition def, bool val)
     def->codes = SUPERVISOR(thread_local);
 
     UNLOCKDEF(def);
-    return TRUE;
+    return true;
   } else				/* local --> static */
   { UNLOCKDEF(def);
     return PL_error(NULL, 0, "predicate is thread-local",
@@ -3770,12 +3785,12 @@ setThreadLocalDefinition(Definition def, bool val)
   else
     clear(def, P_VOLATILE|P_THREAD_LOCAL);
 
-  succeed;
+  return true;
 #endif
 }
 
 
-static int
+static bool
 setClausableDefinition(Definition def, int val)
 { GET_LD
 
@@ -3788,12 +3803,12 @@ setClausableDefinition(Definition def, int val)
   { clear(def, P_CLAUSABLE);
   }
 
-  return TRUE;
+  return true;
 }
 
-int
-setAttrDefinition(Definition def, uint64_t attr, int val)
-{ int rc;
+bool
+setAttrDefinition(Definition def, uint64_t attr, bool val)
+{ bool rc;
 
   if ( attr == P_DYNAMIC )
   { rc = setDynamicDefinition(def, val);
@@ -3810,7 +3825,7 @@ setAttrDefinition(Definition def, uint64_t attr, int val)
     { set(def, attr);
     }
 
-    rc = TRUE;
+    rc = true;
   }
 
   return rc;
@@ -3821,9 +3836,9 @@ setAttrDefinition(Definition def, uint64_t attr, int val)
 static int
 get_bool_or_int_ex(DECL_LD term_t t, int *val)
 { if ( PL_get_bool(t, val) )
-    return TRUE;
+    return true;
   if ( PL_get_integer(t, val) && !(*val & ~1) )
-    return TRUE;			/* accept 0 and 1 */
+    return true;			/* accept 0 and 1 */
   return PL_get_bool_ex(t, val);	/* generate an error */
 }
 
@@ -3842,29 +3857,29 @@ PRED_IMPL("$set_predicate_attribute", 3, set_predicate_attribute,
   uint64_t att;
 
   if ( !PL_get_atom_ex(what, &key) )
-    return FALSE;
+    return false;
   if ( tbl_is_predicate_attribute(key) )
   { if ( get_procedure(pred, &proc, 0, GP_DEFINE|GP_NAMEARITY) )
       return tbl_set_predicate_attribute(proc->definition, key, value);
 
-    return FALSE;
+    return false;
   }
 
   if ( !get_bool_or_int_ex(value, &val) ||
        !(att = attribute_mask(key)) )
-    return FALSE;
+    return false;
 
   if ( (att&SPY_ME) )
   { if ( !get_procedure(pred, &proc, 0, GP_RESOLVE) )
-      fail;
+      return false;
   } else
   { if ( !get_procedure(pred, &proc, 0, GP_DEFINE|GP_NAMEARITY) )
-      fail;
+      return false;
   }
   def = proc->definition;
 
   if ( ReadingSource && MODULE_parse == def->module )
-  { SourceFile sf = lookupSourceFile(source_file_name, TRUE);
+  { SourceFile sf = lookupSourceFile(source_file_name, true);
     int rc = setAttrProcedureSource(sf, proc, att, val);
     releaseSourceFile(sf);
     return rc;
@@ -3881,10 +3896,10 @@ PRED_IMPL("$default_predicate", 2, default_predicate, PL_FA_TRANSPARENT)
   if ( get_procedure(A1, &p1, 0, GP_FIND) &&
        get_procedure(A2, &p2, 0, GP_FIND) )
   { if ( p1->definition == p2->definition || !isDefinedProcedure(p1) )
-      succeed;
+      return true;
   }
 
-  fail;
+  return false;
 }
 
 
@@ -3900,7 +3915,7 @@ PRED_IMPL("$get_clause_attribute", 3, get_clause_attribute, 0)
 
   if ( !PL_get_clref(ref, &clause) ||
        !PL_get_atom_ex(att, &a) )
-    return FALSE;
+    return false;
 
   if ( a == ATOM_line_count )
   { if ( clause->line_no )
@@ -3921,7 +3936,7 @@ PRED_IMPL("$get_clause_attribute", 3, get_clause_attribute, 0)
     return PL_unify_int64(value, size);
   } else if ( a == ATOM_fact )
   { return PL_unify_atom(value,
-			 true(clause, UNIT_CLAUSE) ? ATOM_true
+			 ison(clause, UNIT_CLAUSE) ? ATOM_true
 						   : ATOM_false);
   } else if ( a == ATOM_erased )
   { atom_t erased;
@@ -3936,7 +3951,7 @@ PRED_IMPL("$get_clause_attribute", 3, get_clause_attribute, 0)
   { if ( unify_definition(MODULE_user, value,
 			  clause->predicate, 0,
 			  GP_QUALIFY|GP_NAMEARITY) )
-      return TRUE;
+      return true;
   } else if ( a == ATOM_module )
   { return PL_unify_atom(value, clauseBodyContext(clause)->name);
   }
@@ -3957,43 +3972,43 @@ running predicate is reloaded because the clauses cannot be wiped.
 seen this predicate, so it isn't there.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+bool
 redefineProcedure(Procedure proc, SourceFile sf, unsigned int suppress)
 { GET_LD
   Definition def = proc->definition;
 
-  if ( true(def, P_FOREIGN) )
+  if ( ison(def, P_FOREIGN) )
   {			/* first call printMessage() */
 			/* so we can provide info about the old definition */
     if ( !printMessage(ATOM_warning,
 		       PL_FUNCTOR_CHARS, "redefined_procedure", 2,
 			 PL_CHARS, "foreign",
 			 _PL_PREDICATE_INDICATOR, proc) )
-      return FALSE;
+      return false;
 			/* ... then abolish */
-    abolishProcedure(proc, def->module);
-  } else if ( false(def, P_MULTIFILE) )
+    return abolishProcedure(proc, def->module);
+  } else if ( isoff(def, P_MULTIFILE) )
   { ClauseRef first;
 
     def = getLocalProcDefinition(def);
     if ( !(first = hasClausesDefinition(def)) )
-      return TRUE;				/* (*) see above */
+      return true;				/* (*) see above */
 
     if ( first->value.clause->owner_no == sf->index )
     { if ( sf->reload && !reloadHasClauses(sf, proc) )
-	return TRUE;				/* (**) see above */
+	return true;				/* (**) see above */
 
       if ( ((debugstatus.styleCheck & ~suppress) & DISCONTIGUOUS_STYLE) &&
-	   false(def, P_DISCONTIGUOUS) &&
+	   isoff(def, P_DISCONTIGUOUS) &&
 	   sf->current_procedure )
       { if ( !printMessage(ATOM_warning,
 			   PL_FUNCTOR_CHARS, "discontiguous", 2,
 			     _PL_PREDICATE_INDICATOR, proc,
 			     _PL_PREDICATE_INDICATOR, sf->current_procedure) )
-	  return FALSE;
+	  return false;
       }
     } else if ( !hasProcedureSourceFile(sf, proc) )
-    { if ( true(def, P_THREAD_LOCAL) )
+    { if ( ison(def, P_THREAD_LOCAL) )
 	return PL_error(NULL, 0, NULL, ERR_MODIFY_THREAD_LOCAL_PROC, proc);
 
       if ( first )
@@ -4001,14 +4016,14 @@ redefineProcedure(Procedure proc, SourceFile sf, unsigned int suppress)
 			   PL_FUNCTOR_CHARS, "redefined_procedure", 2,
 			     PL_CHARS, "static",
 			     _PL_PREDICATE_INDICATOR, proc) )
-	  return FALSE;
+	  return false;
       }
 			/* again, _after_ the printMessage() */
-      abolishProcedure(proc, def->module);
+      return abolishProcedure(proc, def->module);
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -4021,9 +4036,9 @@ Copy all clauses of From into To. To is created as a dynamic predicate.
 static void
 remoduleClause(Clause cl, Module old, Module new)
 { Code PC, end;
-  int in_body = FALSE;
+  int in_body = false;
 
-  if ( true(cl, UNIT_CLAUSE) )
+  if ( ison(cl, UNIT_CLAUSE) )
     return;
 
   PC  = cl->codes;
@@ -4038,23 +4053,24 @@ remoduleClause(Clause cl, Module old, Module new)
       for(an=0; ats[an]; an++)
       { switch(ats[an])
 	{ case CA1_PROC:
-	  { Procedure op = (Procedure)PC[an+1];
+	  case CA1_LPROC:
+	  { Procedure op = code2ptr(Procedure, PC[an+1]);
 
 	    if ( op->definition->module != MODULE_system )
 	    { functor_t f = op->definition->functor->functor;
 
-	      PC[an+1] = (code)lookupProcedure(f, new);
+	      PC[an+1] = ptr2code(lookupProcedure(f, new));
 	    }
 	    break;
 	  }
 	  case CA1_MODULE:
-	  { if ( old == (Module)PC[an+1] )
-	      PC[an+1] = (code)new;
+	  { if ( old == code2ptr(Module, PC[an+1]) )
+	      PC[an+1] = ptr2code(new);
 	  }
 	}
       }
     } else if ( op == I_ENTER )
-    { in_body = TRUE;
+    { in_body = true;
     }
   }
 }
@@ -4075,20 +4091,20 @@ PRED_IMPL("copy_predicate_clauses", 2, copy_predicate_clauses, PL_FA_TRANSPARENT
   def = getProcDefinition(from);
   generation = global_generation();		/* take a consistent snapshot */
 
-  if ( true(def, P_FOREIGN) )
+  if ( ison(def, P_FOREIGN) )
     return PL_error(NULL, 0, NULL, ERR_PERMISSION_PROC,
 		    ATOM_access, ATOM_private_procedure, from);
 
   if ( !get_procedure(A2, &to, 0, GP_NAMEARITY|GP_CREATE) )
-    return FALSE;
+    return false;
 
   copy_def = getProcDefinition(to);
-  if ( true(copy_def, P_FOREIGN) )
+  if ( ison(copy_def, P_FOREIGN) )
     return PL_error(NULL, 0, NULL, ERR_MODIFY_STATIC_PROC, to);
-  if ( false(copy_def, P_DYNAMIC) )
+  if ( isoff(copy_def, P_DYNAMIC) )
   { if ( isDefinedProcedure(to) )
       return PL_error(NULL, 0, NULL, ERR_MODIFY_STATIC_PROC, to);
-    if ( !setDynamicDefinition(copy_def, TRUE) )
+    if ( !setDynamicDefinition(copy_def, true) )
       fail;
   }
 
@@ -4105,20 +4121,14 @@ PRED_IMPL("copy_predicate_clauses", 2, copy_predicate_clauses, PL_FA_TRANSPARENT
       copy->predicate = copy_def;
       if ( def->module != copy_def->module )
 	remoduleClause(copy, def->module, copy_def->module);
-#ifdef O_ATOMGC
-#ifdef O_DEBUG_ATOMGC
-      forAtomsInClause(copy, register_atom_clause);
-#else
-      forAtomsInClause(copy, PL_register_atom);
-#endif
-#endif
+      forAtomsInClause(copy, register_atom_clause, NULL);
       assertProcedure(to, copy, CL_END);
     }
   }
   release_def(def);
   leaveDefinition(def);
 
-  return TRUE;
+  return true;
 }
 
 
@@ -4148,7 +4158,7 @@ listGenerations(Definition def)
 	     clause, i,
 	     generationName(clause->generation.created),
 	     generationName(clause->generation.erased),
-	     true(clause, CL_ERASED) ? " erased" : "",
+	     ison(clause, CL_ERASED) ? " erased" : "",
 	     visibleClause(clause, gen) ? " v " : " X ",
 	     keyName(cref->d.key));
   }
@@ -4160,7 +4170,10 @@ listGenerations(Definition def)
 
 void
 checkDefinition(Definition def)
-{ GET_LD
+{
+#if O_PLMT
+  GET_LD
+#endif
   unsigned int nc;
   ClauseRef cref;
   unsigned int erased = 0;
@@ -4171,7 +4184,7 @@ checkDefinition(Definition def)
   for(nc=0, cref = def->impl.clauses.first_clause; cref; cref=cref->next)
   { Clause clause = cref->value.clause;
 
-    if ( false(clause, CL_ERASED) )
+    if ( isoff(clause, CL_ERASED) )
     { nc++;
     } else
     { erased++;
@@ -4196,7 +4209,7 @@ pl_check_procedure(term_t desc)
     fail;
   def = getProcDefinition(proc);
 
-  if ( true(def, P_FOREIGN) )
+  if ( ison(def, P_FOREIGN) )
     fail;
 
   LOCKDEF(def);
@@ -4217,7 +4230,7 @@ pl_list_generations(term_t desc)
     fail;
   def = getProcDefinition(proc);
 
-  if ( true(def, P_FOREIGN) )
+  if ( ison(def, P_FOREIGN) )
     fail;				/* permission error */
 
   listGenerations(def);
@@ -4241,6 +4254,7 @@ BeginPredDefs(proc)
 	   PL_FA_TRANSPARENT)
   PRED_DEF("$default_predicate", 2, default_predicate, PL_FA_TRANSPARENT)
   PRED_DEF("meta_predicate", 1, meta_predicate, PL_FA_TRANSPARENT)
+  PRED_DEF("mode", 1, mode, PL_FA_TRANSPARENT)
   PRED_DEF("$get_clause_attribute", 3, get_clause_attribute, 0)
   PRED_DEF("retract", 1, retract,
 	   PL_FA_TRANSPARENT|PL_FA_NONDETERMINISTIC|PL_FA_ISO)

@@ -3,10 +3,10 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2022, University of Amsterdam
-                         VU University Amsterdam
-		         CWI, Amsterdam
-			 SWI-Prolog Solutions b.v.
+    Copyright (c)  2022-2025, University of Amsterdam
+                              VU University Amsterdam
+			      CWI, Amsterdam
+			      SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -39,11 +39,15 @@
 #define PL_COMP_H_INCLUDED
 
 #if USE_LD_MACROS
-#define	initWamTable(_)							LDFUNC(initWamTable, _)
-#define	get_head_and_body_clause(clause, head, body, m, flags)		LDFUNC(get_head_and_body_clause, clause, head, body, m, flags)
-#define	compileClause(cp, head, body, proc, module, warnings, flags)	LDFUNC(compileClause, cp, head, body, proc, module, warnings, flags)
-#define	assert_term(term, m, where, owner, loc, flags)			LDFUNC(assert_term, term, m, where, owner, loc, flags)
-#define	det_goal_error(fr, PC, found)					LDFUNC(det_goal_error, fr, PC, found)
+#define	initWamTable(_) LDFUNC(initWamTable, _)
+#define	get_head_and_body_clause(clause, head, body, m, flags) \
+	LDFUNC(get_head_and_body_clause, clause, head, body, m, flags)
+#define	compileClause(cp, head, body, proc, module, warnings, flags) \
+	LDFUNC(compileClause, cp, head, body, proc, module, warnings, flags)
+#define	assert_term(term, m, where, owner, loc, flags) \
+	LDFUNC(assert_term, term, m, where, owner, loc, flags)
+#define	det_goal_error(fr, PC, found) LDFUNC(det_goal_error, fr, PC, found)
+#define unify_functor(t, fd, how) LDFUNC(unify_functor, t, fd, how)
 #endif /*USE_LD_MACROS*/
 
 #define LDFUNC_DECLARATIONS
@@ -53,34 +57,38 @@ void		cleanupWamTable(void);
 void		separate_vmi(int nop);
 void		freeVarDefs(PL_local_data_t *ld);
 int		get_head_and_body_clause(term_t clause,
-				 term_t head, term_t body,
-				 Module *m, int *flags);
+					 term_t head, term_t body,
+					 Module *m, int *flags);
 Procedure	lookupBodyProcedure(functor_t functor, Module tm);
 int		compileClause(Clause *cp, Word head, Word body,
 			      Procedure proc, Module module,
 			      term_t warnings, int flags);
 Clause		assert_term(term_t term, Module m, ClauseRef where,
 			    atom_t owner, SourceLoc loc, int flags);
-void		forAtomsInClause(Clause clause, void (func)(atom_t a));
+int		forAtomsInCodes(size_t size, Code PC,
+				int (func)(atom_t a, void*), void *ctx);
+int		forAtomsInClause(Clause clause,
+				 int (func)(atom_t a, void*), void *ctx);
 Code		stepDynPC(Code PC, const code_info *ci);
 bool		decompileHead(Clause clause, term_t head);
 int		det_goal_error(LocalFrame fr, Code PC,
 			       atom_t found);
-Code		skipArgs(Code PC, int skip);
-int		argKey(Code PC, int skip, word *key);
-int		arg1Key(Code PC, word *key);
+Code		skipArgs(Code PC, int skip, int *in_hvoid);
+bool		argKey(Code PC, int skip, word *key);
+bool		arg1Key(Code PC, word *key);
+const Code	prevPC(const Clause clause, const Code pc);
 bool		decompile(Clause clause, term_t term, term_t bindings);
 word		pl_nth_clause(term_t p, term_t n, term_t ref,
 			      control_t h);
 void		wamListClause(Clause clause);
 Code		wamListInstruction(IOSTREAM *out, Code relto, Code bp);
-int		unify_definition(Module ctx, term_t head, Definition def,
+bool		unify_definition(Module ctx, term_t head, Definition def,
 				 term_t thehead, int flags);
 void		cleanupBreakPoints(void);
 code		replacedBreak(Code PC);
 code		replacedBreakUnlocked(Code PC);
 int		clearBreakPointsClause(Clause clause) WUNUSED;
-int		unify_functor(term_t t, functor_t fd, int how);
+bool		unify_functor(term_t t, functor_t fd, int how);
 void		vm_list(Code code, Code end);
 Module		clauseBodyContext(const Clause cl);
 
@@ -125,6 +133,27 @@ stepPC_unlocked(Code PC)
     return stepDynPC(PC, &codeTable[op]);
   else
     return PC + codeTable[op].arguments;
+}
+
+
+static inline Code
+code_get_indirect(Code pc, Word mp, Word *data)
+{ Word wpc = (Word)pc;		/* TBD: May not be aligned */
+  word m = *wpc++;
+  *data = wpc;
+  wpc += wsizeofInd(m);
+  *mp = m;
+
+  return (Code)wpc;
+}
+
+
+static inline Code
+code_get_word(Code pc, Word wp)
+{ Word wpc = (Word)pc;		/* TBD: May not be aligned */
+  *wp = *wpc++;
+
+  return (Code)wpc;
 }
 
 

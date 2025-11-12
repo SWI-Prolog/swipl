@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2012-2021, VU University Amsterdam
+    Copyright (c)  2012-2024, VU University Amsterdam
 			      CWI, Amsterdam
 			      SWI-Prolog Solutions b.v.
     All rights reserved.
@@ -90,11 +90,12 @@ void	linger_always(linger_list** list, void (*func)(void *), void *obj);
 #define	allocGlobal(words)			LDFUNC(allocGlobal, words)
 #define	allocGlobalNoShift(words)		LDFUNC(allocGlobalNoShift, words)
 #define	f_pushArgumentStack(p)			LDFUNC(f_pushArgumentStack, p)
-#define	allocString(len)			LDFUNC(allocString, len)
+#define	globalBlob(len, tag)			LDFUNC(globalBlob, len, tag)
+#define globalString(len, s)			LDFUNC(globalString, len, s)
+#define globalWString(len, s)			LDFUNC(globalWString, len, s)
 #define	getCharsString(w, len)			LDFUNC(getCharsString, w, len)
 #define	getCharsWString(w, len)			LDFUNC(getCharsWString, w, len)
 #define	put_double(p, f, flags)			LDFUNC(put_double, p, f, flags)
-#define	put_int64(p, i, flags)			LDFUNC(put_int64, p, i, flags)
 #define	VM_globalIndirectFromCode(pc)		LDFUNC(VM_globalIndirectFromCode, pc)
 #define	VM_equalIndirectFromCode(a, pc)		LDFUNC(VM_equalIndirectFromCode, a, pc)
 #endif /*USE_LD_MACROS*/
@@ -111,22 +112,20 @@ void		freeHeap(void *mem, size_t n);
 #endif /*DMALLOC*/
 int		enableSpareStack(Stack s, int always);
 void		enableSpareStacks(void);
-int		outOfStack(void *stack, stack_overflow_action how);
-int		raiseStackOverflow(int which);
+bool		outOfStack(void *stack, stack_overflow_action how);
+bool		raiseStackOverflow(int which);
 void		outOfCore(void) NORETURN;
 Word		allocGlobal(size_t words);
 Word		allocGlobalNoShift(size_t words);
 void		f_pushArgumentStack(Word p);
 void		initMemAlloc(void);
-Word		allocString(size_t len);
+Word		globalBlob(size_t len, int tag);
 word		globalString(size_t len, const char *s);
 word		globalWString(size_t len, const pl_wchar_t *s);
 char *		getCharsString(word w, size_t *len);
 pl_wchar_t *	getCharsWString(word w, size_t *len);
 Word		newTerm(void);
 int		put_double(Word p, double f, int flags);
-int		put_int64(Word p, int64_t i, int flags);
-/* valBignum(word w) moved to pl-inline.h */
 int		equalIndirect(word r1, word r2);
 ALLOC_INLINE
 size_t		gsizeIndirectFromCode(Code PC);

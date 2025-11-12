@@ -97,7 +97,7 @@ findReset(DECL_LD LocalFrame fr, term_t ball, term_t *rframe)
 
     if ( rc )
     { *rframe = consTermRef(fr);
-      return TRUE;
+      return true;
     }
   }
 
@@ -150,7 +150,7 @@ put_environment(term_t env, LocalFrame fr, Code pc, int for_copy)
   char tmp[128];
   char *buf;
   bit_vector *active;
-  int rc = TRUE;
+  int rc = true;
   Word p;
   atom_t cref;
 
@@ -173,7 +173,7 @@ put_environment(term_t env, LocalFrame fr, Code pc, int for_copy)
   { int rc;
     term_t fr_ref = consTermRef(fr);
 
-    if ( (rc=ensureGlobalSpace(1+slots, ALLOW_GC|ALLOW_SHIFT)) != TRUE )
+    if ( (rc=ensureGlobalSpace(1+slots, ALLOW_GC|ALLOW_SHIFT)) != true )
       return raiseStackOverflow(rc);
 
     fr = (LocalFrame)valTermRef(fr_ref);
@@ -184,7 +184,7 @@ put_environment(term_t env, LocalFrame fr, Code pc, int for_copy)
 
   cref = lookup_clref(cl);
   *p++ = env_functor(slots);
-  if ( false(fr->predicate, P_TRANSPARENT) )
+  if ( isoff(fr->predicate, P_TRANSPARENT) )
     *p++ = ATOM_nil;
   else
     *p++ = contextModule(fr)->name;
@@ -274,13 +274,13 @@ is_last_call(Code PC)
     switch( c )
     { case I_EXIT:
       case I_EXITFACT:
-	return TRUE;
+	return true;
       case C_JMP:
 	PC += (int)PC[1]+2;
         c = fetchop(PC);
 	goto again;
       default:
-	return FALSE;
+	return false;
     }
   }
 }
@@ -301,7 +301,7 @@ put_continuation(term_t cont, LocalFrame resetfr, LocalFrame fr, Code pc,
   for(fr2=fr; fr2 != resetfr; fr2=fr2->parent)
     depth++;
   if ( !(contv = PL_new_term_refs(depth)) )
-    return FALSE;
+    return false;
   resetfr = (LocalFrame)valTermRef(reset_ref);
   fr      = (LocalFrame)valTermRef(fr_ref);
 
@@ -330,9 +330,9 @@ put_continuation(term_t cont, LocalFrame resetfr, LocalFrame fr, Code pc,
 	     PL_cons_functor(contv, FUNCTOR_call1, contv) )
 	  depth = 0;
 	else
-	  return FALSE;
+	  return false;
       } else if ( !put_environment(contv+depth, fr, pc, for_copy) )
-	return FALSE;
+	return false;
 
       resetfr = (LocalFrame)valTermRef(reset_ref);
       fr      = (LocalFrame)valTermRef(fr_ref);
@@ -375,7 +375,7 @@ shift(DECL_LD term_t ball, int for_copy)
 { term_t reset;
   int rc;
 
-  if ( (rc=findReset(environment_frame, ball, &reset)) == TRUE )
+  if ( (rc=findReset(environment_frame, ball, &reset)) == true )
   { term_t cont = PL_new_term_ref();
     LocalFrame resetfr;
     LocalFrame fr;
@@ -388,7 +388,7 @@ shift(DECL_LD term_t ball, int for_copy)
 			   environment_frame->programPointer,
 			   for_copy) )
     { DEBUG(MSG_CONTINUE, Sdprintf("Failed to collect continuation\n"));
-      return FALSE;			/* resource error */
+      return false;			/* resource error */
     }
 
     DEBUG(CHK_SECURE, PL_check_data(cont));
@@ -471,11 +471,11 @@ retry:
     Word ap;
     ClauseRef cref;
     Clause cl;
-    intptr_t pcoffset;
+    size_t pcoffset;
     size_t lneeded, lroom;
     int i;
-    atom_t mname = *ep++;
-    word blob = *ep++;
+    atom_t mname = word2atom(*ep++);
+    atom_t blob  = word2atom(*ep++);
 
     if ( !(cref = clause_clref(blob)) ||
 	 arityFunctor(f->definition) != cref->value.clause->variables + 3 )
@@ -484,7 +484,7 @@ retry:
     }
 
     cl = cref->value.clause;
-    pcoffset = valInt(*ep++);
+    pcoffset = (size_t)valInt(*ep++);
 
     lneeded = sizeof(word) +
 	      (size_t)argFrameP((LocalFrame)NULL, cl->variables);
@@ -493,7 +493,7 @@ retry:
     { int rc;
 
       if ( (rc=growLocalSpace(roomStack(local)*2, ALLOW_SHIFT))
-	   != TRUE )
+	   != true )
       { raiseStackOverflow(rc);
 	return NULL;
       }
@@ -512,7 +512,7 @@ retry:
 
     for(; i<cl->variables; i++, ep++, ap++)
     { if ( isTaggedInt(*ep) )
-      { intptr_t ichp = valInt(*ep);
+      { sword ichp = valInt(*ep);
 	Choice ch, chp;
 
 	ch = (Choice)valTermRef(ichp);

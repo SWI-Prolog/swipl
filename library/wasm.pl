@@ -2,8 +2,8 @@
 
     Author:        Jan Wielemaker
     E-mail:        jan@swi-prolog.org
-    WWW:           http://www.swi-prolog.org
-    Copyright (c)  2022, SWI-Prolog Solutions b.v.
+    WWW:           https://www.swi-prolog.org
+    Copyright (c)  2022-2025, SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -33,17 +33,17 @@
 */
 
 :- module(wasm,
-          [ wasm_query_loop/0,
-            wasm_abort/0,
+          [ wasm_query/1,               % +Query:string
             wasm_call_string/3,         % +String, +Input, -Output
-	    wasm_call_string_with_heartbeat/3,
-				        % +String, +Input, -Output
+	    wasm_call_string_with_heartbeat/4,
+				        % +String, +Input, -Output, Rate
             is_object/1,                % @Term
             is_object/2,                % @Term,?Class
             (:=)/2,                     % -Result, +Call
-	    await/2,			% +Request, - Result
+	    await/2,			% +Request, =Result
             is_async/0,
-            sleep/1,
+            must_be_async/1,            % +ForWhat
+            sleep/1,                    % +Time
             js_script/2,                % +String, +Options
             fetch/3,			% +URL, +Type, -Value
 
@@ -52,45 +52,58 @@
             op(40,  yf,  [])            % Expr[Expr]
           ]).
 :- autoload(library(apply), [exclude/3, maplist/3]).
-:- autoload(library(terms), [mapsubterms/3]).
-:- autoload(library(error), [instantiation_error/1, existence_error/2]).
-:- autoload(library(option), [dict_options/2]).
-
-:- use_module(library(uri), [uri_is_global/1, uri_normalized/3]).
+:- autoload(library(terms), [mapsubterms/3, foldsubterms/5]).
+:- autoload(library(error),
+            [instantiation_error/1, existence_error/2, permission_error/3]).
+:- use_module(library(uri), [uri_is_global/1, uri_normalized/3, uri_normalized/2]).
 :- use_module(library(debug), [debug/3]).
+:- autoload(library(dcg/high_order), [sequence/5]).
+
+:- set_prolog_flag(generate_debug_info, false).
 
 /** <module> WASM version support
+
+This library is only available in the   WASM version. It provides helper
+predicates for the JavaScript part as  well as Prolog utility predicates
+that help in communicating with JavaScript.
+
+@see library(dom) implements a Tau-Prolog compatible Prolog interface to
+the browser's DOM.
 */
 
 :- meta_predicate
-   wasm_call_string(:, +, -),
-   wasm_call_string_with_heartbeat(:, +, -),
-   with_heartbeat(0).
+    wasm_query(:),
+    wasm_call_string(:, +, -),
+    wasm_call_string_with_heartbeat(:, +, -, +),
+    with_heartbeat(0, +).
 
-%!  wasm_query_loop
+:- create_prolog_flag(wasm_heartbeat, 10_000, [type(integer), keep(true)]).
 
-wasm_query_loop :-
-    with_heartbeat('$toplevel':'$query_loop').
-
-%!  wasm_abort
+%   wasm_query(:Query:string)
 %
-%   Execution aborted by userthe
+%   Execute a single query as done by  the regular Prolog toplevel. This
+%   is used by SWI-Tinker, the SWI-Prolog WASM shell.  The query loop is
+%   in JavaScript, allowing for multiple concurrent queries on different
+%   SWI-Prolog _engines_.
 
-wasm_abort :-
-    print_message(error, '$aborted'),
-    abort.
+wasm_query(M:String) :-
+    term_string(Query, String, [variable_names(Bindings)]),
+    current_prolog_flag(wasm_heartbeat, Rate),
+    with_heartbeat(
+        '$execute_query'(M:Query, Bindings, _Truth),
+        Rate).
 
-with_heartbeat(Goal) :-
+with_heartbeat(Goal, Rate) :-
     current_prolog_flag(heartbeat, Old),
     setup_call_cleanup(
-        set_prolog_flag(heartbeat, 10 000),
+        set_prolog_flag(heartbeat, Rate),
 	call(Goal),
         set_prolog_flag(heartbeat, Old)).
 
 :- multifile
     prolog:heartbeat/0.
 
-%!  prolog:heartbeat
+%   prolog:heartbeat
 %
 %   Called after setting the Prolog  flag   `heartbeat`  to non-zero. If
 %   possible, we yield control back to JavaScript
@@ -106,7 +119,9 @@ prolog:heartbeat :-
     ;   true
     ).
 
-%!  wasm_call_string(+Goal:string, +Input, -Result) is nondet.
+%   wasm_call_string(+Goal:string, +Input, -Result) is nondet.
+%   wasm_call_string_with_heartbeat(+Goal:string, +Input, -Result,
+%                                   ?Rate) is nondet.
 %
 %   Run a Prolog goal from  a  string,   returning  a  dict  holding the
 %   variable bindings in Result. Variables   starting with an underscore
@@ -117,6 +132,11 @@ prolog:heartbeat :-
 %       console.log(answer.X);
 %     }
 %   ```
+%
+%   The   wasm_call_string_with_heartbeat/4   variation   is   used   by
+%   Prolog.forEach() to run a Prolog goal  with auto-yielding every Rate
+%   inferences. If Rate is unbound, it is   unified  to the value of the
+%   Prolog flag `wasm_heartbeat`.
 
 wasm_call_string(M:String, Input, Dict) :-
     term_string(Goal, String, [variable_names(Map)]),
@@ -130,21 +150,36 @@ not_in_projection(Input, Name=Value) :-
     ;   sub_atom(Name, 0, _, _, '_')
     ).
 
-wasm_call_string_with_heartbeat(String, Input, Dict) :-
-    with_heartbeat(wasm_call_string(String, Input, Dict)).
+wasm_call_string_with_heartbeat(String, Input, Dict, Rate) :-
+    (   var(Rate)
+    ->  current_prolog_flag(wasm_heartbeat, Rate)
+    ;   true
+    ),
+    with_heartbeat(wasm_call_string(String, Input, Dict), Rate).
 
 
-%!  await(+Request, -Result) is det.
+%!  await(+Request, =Result) is det.
 %
-%   Call asynchronous behavior.  Request is normally a JavaScript
-%   Promise instance.
+%   Call asynchronous behavior. Request is normally a JavaScript Promise
+%   instance. If we want Prolog to wait   for  some task to complete, we
+%   first write a JavaScript function  that   returns  a  `Promise` that
+%   resolves when the task is complete. Next,   we use `:=/2` to get the
+%   `Promise` and finally we use await/2 to   wait for the `Promise`. On
+%   success, Result is unified to the value with which the `Promise` was
+%   resolved. If the `Promise` is  rejected,   this  predicate raises an
+%   exception using the value passed to `reject()`.
+%
+%   @see sleep/1, fetch/3 and wait/3 in this library use await/2.
+%   @error permission_error(run, goal, Goal) if the current query is
+%   not aynchronous.
 
 await(Request, Result) :-
+    must_be_async(await(Request, Result)),
     '$await'(Request, Result0),
     (   is_dict(Result0),
         get_dict('$error', Result0, Error)
-    ->  (   Error == abort
-        ->  wasm_abort
+    ->  (   Error == "abort"
+        ->  abort
         ;   throw(Error)
         )
     ;   Result = Result0
@@ -159,18 +194,52 @@ await(Request, Result) :-
 is_async :-
     '$can_yield'.
 
+%!  must_be_async(+Message) is det.
+%
+%   True when the engine is in async state (see is_async/0).
+%
+%   @error permission_error(run, goal, Message) if the  system is not in
+%   async state.
 
-%!  sleep(+Seconds)
+must_be_async(_) :-
+    is_async,
+    !.
+must_be_async(Message) :-
+    permission_error(run, goal, Message).
+
+                /*******************************
+                *       ALLOW . IN :=/2        *
+                *******************************/
+
+:- multifile
+    system:goal_expansion/2.
+
+system:goal_expansion(In, Out) :-
+    In = (_Left := _Right),
+    mapsubterms(dot_list, In, Out),
+    Out \== In.
+
+dot_list(Dot, List) :-
+    compound(Dot),
+    compound_name_arguments(Dot,  '.', [A1, A2]),
+    List = A1[A2].
+
+%!  sleep(+Seconds) is det.
 %
 %   Sleep by yielding when possible. Note   that this defines sleep/1 in
 %   `user`, overruling system:sleep/1.
 
 sleep(Seconds) :-
     (   is_async
-    ->  Promise := prolog[promise_sleep(Seconds)],
+    ->  Promise := prolog.promise_sleep(Seconds),
         await(Promise, _)
     ;   system:sleep(Seconds)
     ).
+
+
+                /*******************************
+                *      JAVASCRIPT CALLING      *
+                *******************************/
 
 %!  is_object(@Term) is semidet.
 %!  is_object(@Term, ?Class) is semidet.
@@ -239,7 +308,8 @@ call1(Getter, One), atom(Getter) =>
 call1(Call, One), is_func(Call) =>
     call_func(Call, One).
 
-call_first(#Value, One) =>
+call_first(#Value0, One) =>
+    unwrap_hash(Value0, Value),
     One = _{v:Value}.
 call_first(Getter, One), atom(Getter) =>
     One = Getter.
@@ -258,19 +328,10 @@ call_func(Call, One) :-
     maplist(call_chain, Args, Chains),
     One = _{f:Pred, args:Chains}.
 
-
-:- multifile
-    system:goal_expansion/2.
-
-system:goal_expansion(In, Out) :-
-    In = (_Left := _Right),
-    mapsubterms(dot_list, In, Out),
-    Out \== In.
-
-dot_list(Dot, List) :-
-    compound(Dot),
-    compound_name_arguments(Dot,  '.', [A1, A2]),
-    List = A1[A2].
+unwrap_hash(#V0, V), acyclic_term(V0) =>
+    unwrap_hash(V0, V).
+unwrap_hash(V0, V) =>
+    V = V0.
 
 %!  js_script(+String, +Options) is det.
 %
@@ -297,14 +358,18 @@ js_script(String, _Options) :-
     _ := eval(String).
 
 
-%!  user:prolog_load_file(:File, +Options) is semidet.
+%   user:prolog_load_file(:File, +Options) is semidet.
 %
 %   Hook for load_files/2 that allows loading files from URLs.
 
-:- multifile user:prolog_load_file/2.
+:- multifile
+    user:prolog_load_file/2,
+    system:term_expansion/2.
 
 user:prolog_load_file(Module:File, Options) :-
     file_url(File, URL),
+    debug(load_file(url), '~p resolves to ~p', [File, URL]),
+    must_be_async(load_file(File, URL)),
     load_options(URL, Options, Options1, Modified),
     (   already_loaded(URL, Modified)
     ->  '$already_loaded'(File, URL, Module, Options)
@@ -317,9 +382,24 @@ user:prolog_load_file(Module:File, Options) :-
             close(In))
     ).
 
-file_url(File, _), compound(File), compound_name_arity(File, _, 1) =>
-    !,
-    fail.                               % Alias(Path)
+:- multifile system:term_expansion/2.
+system:term_expansion((:- include(Path)), Expansion) :-
+    file_url(Path, URL),
+    must_be_async(include(Path)),
+    fetch(URL, text, String),
+    open_string(String, Stream),
+    Expansion = (:- include(stream(URL, Stream, [close(true)]))).
+
+%!  file_url(+FileSpec, -URL) is semidet.
+%
+%   True when FileSpec refers to a URL, i.e., we must load the file from
+%   the internet.
+
+file_url(Spec, URL), compound(Spec), compound_name_arity(Spec, _, 1) =>
+    absolute_file_name(Spec, URL0, [solutions(all)]),
+    uri_is_global(URL0),
+    ensure_extension(URL0, pl, URL1),
+    uri_normalized(URL1, URL).
 file_url(File, URL), atom(File), uri_is_global(File) =>
     URL = File.
 file_url(File, URL), relative_path(File, Path) =>
@@ -467,7 +547,7 @@ fetch(URL, As, Data) :-
     ).
 
 
-%!  prolog:confirm(+Message, -Boolean) is semidet.
+%   prolog:confirm(+Message, -Boolean) is semidet.
 %
 %   Conform  some  action.   Currently uses  the  browser's  confirm()
 %   method.
@@ -492,5 +572,33 @@ prolog:message(JsError) -->
       Msg := JsError.toString()
     },
     [ 'JavaScript: ~w'-[Msg] ].
+prolog:message(error(permission_error(yield, engine, _Engine),
+                     context(system:'$await'/2, _))) -->
+    [ 'await/2 is only allowed in Prolog.forEach() queries' ].
 prolog:error_message(js_error(Msg)) -->
     [ 'JavaScript: ~w'-[Msg] ].
+prolog:error_message(js_eval_error(Msg, Chain)) -->
+    [ 'JavaScript: Could not evaluate ' ],
+    sequence(msg_call1, [.], Chain),
+    msg_noeval(Msg).
+
+msg_call1(Dict) -->
+    { is_dict(Dict),
+      _{f:Name, args:Args} :< Dict,
+      !,
+      compound_name_arguments(Term, Name, Args)
+    },
+    [ '~p'-[Term] ].
+msg_call1(Dict) -->
+    { is_dict(Dict),
+      _{v:Value} :< Dict,
+      !
+    },
+    [ '~p'-[Value] ].
+msg_call1(Term) -->
+    [ '~p'-[Term] ].
+
+msg_noeval('TypeError: obj is undefined') -->
+    [ ' (undefined)' ].
+msg_noeval(Msg) -->
+    [ ': ~w'-[Msg] ].

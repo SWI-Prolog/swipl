@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        jan@swi-prolog.org
     WWW:           https://www.swi-prolog.org
-    Copyright (c)  2023, SWI-Prolog Solutions b.v.
+    Copyright (c)  2023-2025, SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -67,8 +67,8 @@ qlf(update, Argv) =>
     argv_options(qlf_update:Argv, Files, Options),
     cli_qlf_update(Files, Options).
 qlf(info, Argv) =>
-    argv_options(qlf_info:Argv, [File], Options),
-    cli_qlf_info(File, Options).
+    argv_options(qlf_info:Argv, Files, Options),
+    cli_qlf_info(Files, Options).
 qlf(list, Argv) =>
     argv_options(qlf_list:Argv, Pos, Options),
     cli_qlf_list(Pos, Options).
@@ -109,18 +109,22 @@ qlf_info:opt_type(source,    source,    boolean).
 qlf_info:opt_type(s,         source,    boolean).
 qlf_info:opt_type(version,   version,   boolean).
 qlf_info:opt_type(v,         version,   boolean).
+qlf_info:opt_type(exports,   exports,   boolean).
+qlf_info:opt_type(e,         exports,   boolean).
 
 qlf_info:opt_help(help(usage),
-                  " info [option ...] file").
+                  " info [option ...] file ...").
 qlf_info:opt_help(source,
                   "List the source files from which this QLF file was created").
+qlf_info:opt_help(exports,
+                  "List exported predicates").
 qlf_info:opt_help(version,
                   "List version information about QLF file").
 
 qlf_list:opt_type(recursive, recursive, boolean).
 qlf_list:opt_type(r,         recursive, boolean).
-qlf_list:opt_type(all,       all,       boolean).
-qlf_list:opt_type(a,         all,       boolean).
+qlf_list:opt_type(update,    update,    boolean).
+qlf_list:opt_type(u,         update,    boolean).
 
 qlf_list:opt_help(help(header),
                    [ansi(bold, "List .qlf files and their status.", [])]).
@@ -128,18 +132,22 @@ qlf_list:opt_help(help(usage),
                   " list [option ...] [file-or-directory ...]").
 qlf_list:opt_help(recursive,
                   "Recurse into subdirectories").
-qlf_list:opt_help(all,
-                  "Also act on valid and up-to-date QLF files").
+qlf_list:opt_help(update,
+                  "Only list files that need updating").
 
-qlf_clean:opt_type(Flag, Opt, Type) :- qlf_list:opt_type(Flag, Opt, Type).
+qlf_clean:opt_type(recursive, recursive, boolean).
+qlf_clean:opt_type(r,         recursive, boolean).
+qlf_clean:opt_type(all,       all,       boolean).
+qlf_clean:opt_type(a,         all,       boolean).
+
 qlf_clean:opt_help(help(header),
                    [ansi(bold, "Delete out-of-date .qlf files.", [])]).
 qlf_clean:opt_help(help(usage),
                    " clean [option ...] [file-or-directory ...]").
-qlf_clean:opt_help(Opt, Message) :-
-    qlf_list:opt_help(Opt, Message),
-    atom(Opt).
-
+qlf_clean:opt_help(recursive,
+                  "Recurse into subdirectories").
+qlf_clean:opt_help(all,
+                  "Clean all .qlf files").
 
 %!  usage
 %
@@ -181,23 +189,76 @@ commands -->
 		 *          SUB COMMANDS	*
 		 *******************************/
 
-cli_qlf_info(File, Options) :-
+cli_qlf_info([], _Options) :-
+    argv_usage(qlf_info:debug),
+    halt(1).
+cli_qlf_info([File], Options) :-
+    cli_qlf_info_1(File, Options).
+cli_qlf_info(Files, Options) :-
+    forall(member(File, Files),
+           cli_qlf_info_n(File, Options)).
+
+cli_qlf_info_n(File, Options) :-
+    ansi_format(bold, '~w~n', [File]),
+    cli_qlf_info_1(File, [indent(2)|Options]).
+
+cli_qlf_info_1(File, Options) :-
     option(source(true), Options),
     !,
+    cli_qlf_info_source(File, Options).
+cli_qlf_info_1(File, Options) :-
+    option(exports(true), Options),
+    !,
+    cli_qlf_info_exports(File, Options).
+cli_qlf_info_1(File, Options) :-
+    option(version(true), Options),
+    !,
+    cli_qlf_info_version(File, Options).
+cli_qlf_info_1(File, Options) :-
+    select_option(indent(OldIndent), Options, Options1, 0),
+    Indent is OldIndent+2,
+    SectionOptions = [indent(Indent)|Options1],
+    ansi_format(bold, '~t~*|Versions~n', [OldIndent]),
+    cli_qlf_info_version(File, SectionOptions),
+    ansi_format(bold, '~t~*|Sources~n', [OldIndent]),
+    cli_qlf_info_source(File, SectionOptions),
+    ansi_format(bold, '~t~*|Exports~n', [OldIndent]),
+    cli_qlf_info_exports(File, SectionOptions).
+
+
+cli_qlf_info_source(File, Options) :-
     '$qlf_sources'(File, Sources),
     forall(member(F, Sources),
-           writeln(F)).
-cli_qlf_info(File, _Options) :-
+           write_source(F, Options)).
+
+write_source(Dep, Options) :-
+    dep(Dep, Indicator, File),
+    option(indent(Indent), Options, 0),
+    format('~t~*|~w ~w~n', [Indent, Indicator, File]).
+
+dep(source(File),     s, File).
+dep(include(File),    i, File).
+dep(dependency(File), d, File).
+
+cli_qlf_info_exports(File, Options) :-
+    '$qlf_module'(File, Info),
+    option(indent(Indent), Options, 0),
+    forall(member(PI, Info.exports),
+           format('~t~*|~q~n', [Indent, PI])).
+
+cli_qlf_info_version(File, Options) :-
     '$qlf_versions'(File, CurrentVersion, MinLOadVersion, FileVersion,
                     CurrentSignature, FileSignature),
-    format('QLF version: ~p (current ~p, compatibility ~p)~n',
-           [ FileVersion, CurrentVersion, MinLOadVersion ]),
-    format('VM signature: 0x~16r (compatibility ox~16r)~n',
-           [ FileSignature, CurrentSignature ]),
-    (   catch('$qlf_is_compatible'(File), _, fail)
+    option(indent(Indent), Options, 0),
+    format('~t~*|QLF version: ~p (current ~p, compatibility ~p)~n',
+           [ Indent, FileVersion, CurrentVersion, MinLOadVersion ]),
+    format('~t~*|VM signature: 0x~16r (compatibility ox~16r)~n',
+           [ Indent, FileSignature, CurrentSignature ]),
+    (   catch('$qlf_is_compatible'(File), error(_,_), fail)
     ->  true
     ;   ansi_format(warning,
-                    'QLF file is incompatible with this version of Prolog~n', [])
+                    '~t~*|QLF file is incompatible with this \c
+                    version of Prolog~n', [Indent])
     ).
 
 %!  cli_qlf_clean(+Files, +Options) is det.
@@ -260,28 +321,56 @@ qlf_update(File, _) :-
     !,
     ansi_format(warning, 'Ignoring ~w: not a QLF file~n', [File]).
 qlf_update(File, Options) :-
-    qlf_up_to_date(File),
-    !,
-    (   option(all(true), Options)
-    ->  print_message(informational, qlf(recompile(File, all))),
+    qlf_up_to_date(File, Status),
+    (   Status == up_to_date
+    ->  (   option(all(true), Options)
+        ->  print_message(informational, qlf(recompile(File, all))),
+            cli_qlf_compile(File, Options)
+        ;   true
+        )
+    ;   Status == no_source
+    ->  true
+    ;   print_message(informational, qlf(recompile(File, update))),
         cli_qlf_compile(File, Options)
-    ;   true
     ).
-qlf_update(File, Options) :-
-    print_message(informational, qlf(recompile(File, update))),
-    cli_qlf_compile(File, Options).
 
-qlf_up_to_date(File) :-
-    '$qlf_versions'(File, CurrentVersion, _MinLOadVersion, FileVersion,
+%!  qlf_up_to_date(+QlfFile, -Status) is det.
+%
+%   Status is one of
+%
+%     - no_source
+%     - up_to_date
+%     - out_of_date(Modified)
+
+qlf_up_to_date(File, Status) :-
+    '$qlf_versions'(File, CurrentVersion, MinLoadVersion, FileVersion,
                     CurrentSignature, FileSignature),
+    up_to_date(File, CurrentVersion, MinLoadVersion, FileVersion,
+               CurrentSignature, FileSignature, Status).
+
+up_to_date(File, CurrentVersion, _MinLoadVersion, FileVersion,
+           CurrentSignature, FileSignature, Status) :-
     FileVersion == CurrentVersion,
     CurrentSignature == FileSignature,
+    !,
     time_file(File, TQLF),
     '$qlf_sources'(File, Sources),
-    E = error(_,_),
-    forall(member(S, Sources),
-          ( catch(time_file(S, TS), E, fail),
-            TS < TQLF)).
+    maplist(arg(1), Sources, Files),
+    (   forall(member(S, Files), \+ exists_file(S))
+    ->  Status = no_source
+    ;   include(outofdate(TQLF), Files, Modified)
+    ->  (   Modified == []
+        ->  Status = up_to_date
+        ;   Status = out_of_date(Modified)
+        )
+    ).
+up_to_date(_File, _CurrentVersion, _MinLoadVersion, _FileVersion,
+           _CurrentSignature, _FileSignature, incompatible).
+
+
+outofdate(TQLF, Source) :-
+    catch(time_file(Source, TS), error(_,_), fail),
+    TS > TQLF.
 
 %!  cli_qlf_list(+Files, +Options) is det.
 %
@@ -308,12 +397,24 @@ qlf_list(File, _) :-
          user:prolog_file_type(Ext, qlf) ),
     !,
     ansi_format(warning, 'Ignoring ~w: not a QLF file~n', [File]).
-qlf_list(File, _Options) :-
-    qlf_up_to_date(File),
-    !,
-    print_message(information, qlf(list(File, "up to date"))).
-qlf_list(File, _Options) :-
-    print_message(warning,     qlf(list(File, "needs to be rebuild"))).
+qlf_list(File, Options) :-
+    qlf_up_to_date(File, Status),
+    list_status(Status, Indicator, Level),
+    (   option(update(true), Options)
+    ->  (   Status = out_of_date(_)
+        ->  format('~w~n', [File])
+        ;   true
+        )
+    ;   (   stream_property(current_output, tty(true))
+        ->  print_message(Level, qlf(list(File, Status)))
+        ;   format('~w ~w~n', [Indicator, File])
+        )
+    ).
+
+list_status(no_source,      'b', information).
+list_status(up_to_date,     's', information).
+list_status(out_of_date(_), 'u', warning).
+list_status(incompatible,   'I', warning).
 
 
 		 /*******************************
@@ -359,9 +460,10 @@ cli_qlf_compile(File, Options) :-
     (   option(expect_deps(Deps), Options)
     ->  file_name_extension(Base, qlf, QlfFile),
         '$qlf_sources'(QlfFile, Sources),
-        maplist(absolute_file_name, Deps, Canonical),
-        subtract(Sources, Canonical, Missing),
-        subtract(Canonical, Sources, Extra),
+        maplist(arg(1), Sources, Files),
+        maplist(absolute_deb, Deps, Canonical),
+        subtract(Files, Canonical, Missing),
+        subtract(Canonical, Files, Extra),
         (   Missing == []
         ->  true
         ;   print_message(warning, qcompile(missing, Base, Missing))
@@ -372,6 +474,16 @@ cli_qlf_compile(File, Options) :-
         )
     ;   true
     ).
+
+absolute_deb(Deb, File) :-
+    catch(term_string(Term, Deb), error(_,_), fail),
+    absolute_file_name(Term, File,
+                       [ access(read),
+                         file_type(source)
+                       ]),
+    !.
+absolute_deb(Deb, File) :-
+    absolute_file_name(Deb, File).
 
 preload(X) :-
     atom_concat('lib:', File, X),
@@ -389,14 +501,20 @@ preload(X) :-
 
 prolog:message(qcompile(missing, File, Dependencies)) -->
     [ 'The following dependencies for ~p are not listed'-[File], nl ],
-    sequence(file, Dependencies, [nl]).
+    sequence(file, [nl], Dependencies).
 prolog:message(qcompile(extra, File, Dependencies)) -->
     [ 'The following dependencies for ~p are not needed'-[File], nl ],
-    sequence(file, Dependencies, [nl]).
+    sequence(file, [nl], Dependencies).
 prolog:message(qlf(delete_file(File, Reason))) -->
     [ 'Deleting ~w (~w)'-[File, Reason] ].
-prolog:message(qlf(list(File, Reason))) -->
-    [ '~w (~w)'-[File, Reason] ].
+prolog:message(qlf(list(File, no_source))) -->
+    [ '~w (no source)'-[File] ].
+prolog:message(qlf(list(File, up_to_date))) -->
+    [ '~w (up to date)'-[File] ].
+prolog:message(qlf(list(File, out_of_date(_Modified)))) -->
+    [ '~w (needs to be rebuild)'-[File] ].
+prolog:message(qlf(list(File, incompatible))) -->
+    [ '~w (incompatible)'-[File] ].
 
 file(File) -->
     [ '  ', url(File) ].

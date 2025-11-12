@@ -123,6 +123,9 @@ endif()
   set(v_test OFF)
 
   add_custom_target(${target})
+if(INSTALL_QLF)
+  add_dependencies(library_qlf ${target})
+endif()
 
   set(mode)
 
@@ -243,8 +246,10 @@ endif()
     if(${subdir_var})
       prepend(_genlibs ${CMAKE_CURRENT_BINARY_DIR}/ ${${subdir_var}})
       string(REPLACE "/" "_" src_target "plugin_${name}_${sd}_pl_libs")
-      install(FILES ${_genlibs}
-	      DESTINATION ${SWIPL_INSTALL_LIBRARY}/ext/${SWIPL_PKG}/${sd})
+      install_prolog_src(
+	  FILES ${_genlibs}
+	  DESTINATION ${SWIPL_INSTALL_LIBRARY}/ext/${SWIPL_PKG}/${sd})
+      install_qlfs(${SWIPL_INSTALL_LIBRARY}/ext/${SWIPL_PKG}/${sd} ${_genlibs})
     endif()
   endforeach()
 

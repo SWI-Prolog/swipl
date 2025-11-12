@@ -3,9 +3,10 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2008-2020, University of Amsterdam
+    Copyright (c)  2008-2024, University of Amsterdam
                               VU University Amsterdam
                               CWI Amsterdam
+                              SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -35,11 +36,12 @@
 */
 
 :- module(aggregate,
-          [ foreach/2,                  % :Generator, :Goal
-            aggregate/3,                % +Templ, :Goal, -Result
+          [ aggregate/3,                % +Templ, :Goal, -Result
             aggregate/4,                % +Templ, +Discrim, :Goal, -Result
             aggregate_all/3,            % +Templ, :Goal, -Result
             aggregate_all/4,            % +Templ, +Discrim, :Goal, -Result
+            foldall/4,			% :Folder, :Goal, +V0, -V)
+            foreach/2,                  % :Generator, :Goal
             free_variables/4            % :Generator, :Template, +Vars0, -Vars
           ]).
 :- autoload(library(apply),[maplist/4,maplist/5]).
@@ -49,15 +51,17 @@
 	    [append/3,member/2,sum_list/2,max_list/2,min_list/2]).
 :- autoload(library(ordsets),[ord_intersection/3]).
 :- autoload(library(pairs),[pairs_values/2]).
+:- autoload(library(prolog_code), [mkconj/3]).
 
 :- set_prolog_flag(generate_debug_info, false).
 
 :- meta_predicate
-    foreach(0,0),
     aggregate(?,^,-),
     aggregate(?,?,^,-),
     aggregate_all(?,0,-),
-    aggregate_all(?,?,0,-).
+    aggregate_all(?,?,0,-),
+    foldall(2,0,+,-),
+    foreach(0,0).
 
 /** <module> Aggregation operators on backtrackable predicates
 
@@ -74,29 +78,29 @@ smallest_country(Name, Area) :-
     aggregate(min(A, N), country(N, A), min(Area, Name)).
 ```
 
-There are four aggregation predicates (aggregate/3, aggregate/4, aggregate_all/3 and aggregate/4), distinguished on two properties.
+There  are  four  aggregation    predicates  (aggregate/3,  aggregate/4,
+aggregate_all/3 and aggregate/4), distinguished on two properties.
 
-    $ aggregate vs. aggregate_all :
-    The aggregate predicates use setof/3 (aggregate/4) or bagof/3
-    (aggregate/3), dealing with existential qualified variables
-    (`Var^Goal`) and providing multiple solutions for the remaining free
-    variables in `Goal`. The aggregate_all/3 predicate uses findall/3,
-    implicitly qualifying all free variables and providing exactly one
-    solution, while aggregate_all/4 uses sort/2 over solutions that
-    Discriminator (see below) generated using findall/3.
+    - aggregate vs. aggregate_all <br>
+      The aggregate predicates use setof/3 (aggregate/4) or bagof/3
+      (aggregate/3), dealing with existential qualified variables
+      (`Var^Goal`) and providing multiple solutions for the remaining
+      free variables in `Goal`. The aggregate_all/3 predicate uses
+      findall/3, implicitly qualifying all free variables and providing
+      exactly one solution, while aggregate_all/4 uses sort/2 over
+      solutions that Discriminator (see below) generated using
+      findall/3.
 
-    $ The Discriminator argument :
-    The versions with 4 arguments deduplicate redundant solutions of
-    Goal. Solutions for which both the template variables and
-    Discriminator are identical will be treated as one solution. For
-    example, if we wish to compute the total population of all
-    countries, and for some reason =|country(belgium, 11000000)|= may
-    succeed twice, we can use the following to avoid counting the
-    population of Belgium twice:
+    - The Discriminator argument <br>
+      The versions with 4 arguments deduplicate redundant solutions of
+      Goal. Solutions for which both the template variables and
+      Discriminator are identical will be treated as one solution. For
+      example, if we wish to compute the total population of all
+      countries, and for some reason =|country(belgium, 11000000)|= may
+      succeed twice, we can use the following to avoid counting the
+      population of Belgium twice:
 
-    ==
-        aggregate(sum(P), Name, country(Name, P), Total)
-    ==
+          aggregate(sum(P), Name, country(Name, P), Total)
 
 All aggregation predicates support  the   following  operators  below in
 Template. In addition, they allow for  an arbitrary named compound term,
@@ -104,28 +108,28 @@ where each of the arguments is a term  from the list below. For example,
 the term r(min(X), max(X)) computes both the minimum and maximum binding
 for X.
 
-        * count
-        Count number of solutions.  Same as sum(1).
-        * sum(Expr)
-        Sum of Expr for all solutions.
-        * min(Expr)
-        Minimum of Expr for all solutions.
-        * min(Expr, Witness)
-        A term min(Min, Witness), where Min is the minimal version
-        of Expr over all solutions, and Witness is any other template
-        applied to solutions that produced Min.  If multiple
-        solutions provide the same minimum, Witness corresponds to
-        the first solution.
-        * max(Expr)
-        Maximum of Expr for all solutions.
-        * max(Expr, Witness)
-        As min(Expr, Witness), but producing the maximum result.
-        * set(X)
-        An ordered set with all solutions for X.
-        * bag(X)
-        A list of all solutions for X.
+  - count
+    Count number of solutions.  Same as sum(1).
+  - sum(Expr)
+    Sum of Expr for all solutions.
+  - min(Expr)
+    Minimum of Expr for all solutions.
+  - min(Expr, Witness)
+    A term min(Min, Witness), where Min is the minimal version of
+    Expr over all solutions, and Witness is any other template
+    applied to solutions that produced Min. If multiple solutions
+    provide the same minimum, Witness corresponds to the first
+    solution.
+  - max(Expr)
+    Maximum of Expr for all solutions.
+  - max(Expr, Witness)
+    As min(Expr, Witness), but producing the maximum result.
+  - set(X)
+    An ordered set with all solutions for X.
+  - bag(X)
+    A list of all solutions for X.
 
-*Acknowledgements*
+__Acknowledgements__
 
 _|The development of this library was sponsored by SecuritEase,
   http://www.securitease.com
@@ -133,7 +137,8 @@ _|The development of this library was sponsored by SecuritEase,
 
 @compat Quintus, SICStus 4. The forall/2 is a SWI-Prolog built-in and
         term_variables/3 is a SWI-Prolog built-in with
-        *|different semantics|*.
+        __different semantics__.  The foldall/4 primitive is a
+        SWI-Prolog addition.
 @tbd    Analysing the aggregation template and compiling a predicate
         for the list aggregation can be done at compile time.
 @tbd    aggregate_all/3 can be rewritten to run in constant space using
@@ -176,6 +181,8 @@ aggregate(Template, Discriminator, Goal0, Result) :-
 %   The Template values `count`, sum(X),   max(X),  min(X), max(X,W) and
 %   min(X,W) are processed incrementally rather than using findall/3 and
 %   run in constant memory.
+%
+%   @see foldall/4 to "fold" over all answers.
 
 aggregate_all(Var, _, _) :-
     var(Var),
@@ -203,7 +210,7 @@ aggregate_all(max(X), Goal, Max) :-
            nb_setarg(1, State, M),
            fail
     ;  arg(1, State, Max),
-           nonvar(Max)
+       nonvar(Max)
     ).
 aggregate_all(min(X), Goal, Min) :-
     !,
@@ -214,7 +221,7 @@ aggregate_all(min(X), Goal, Min) :-
            nb_setarg(1, State, M),
            fail
     ;  arg(1, State, Min),
-           nonvar(Min)
+       nonvar(Min)
     ).
 aggregate_all(max(X,W), Goal, max(Max,Witness)) :-
     !,
@@ -298,19 +305,14 @@ add_existential_vars([H|T], G0, H^G1) :-
 
 %!  clean_body(+Goal0, -Goal) is det.
 %
-%   Remove redundant =true= from Goal0.
+%   Remove redundant `true` from Goal0.
 
-clean_body((Goal0,Goal1), Goal) :-
-    !,
+clean_body((Goal0,Goal1), Goal) =>
     clean_body(Goal0, GoalA),
     clean_body(Goal1, GoalB),
-    (   GoalA == true
-    ->  Goal = GoalB
-    ;   GoalB == true
-    ->  Goal = GoalA
-    ;   Goal = (GoalA,GoalB)
-    ).
-clean_body(Goal, Goal).
+    mkconj(GoalA, GoalB, Goal).
+clean_body(Goal0, Goal) =>
+    Goal = Goal0.
 
 
 %!  template_to_pattern(+Template, -Pattern, -Post, -Vars, -Aggregate)
@@ -318,11 +320,11 @@ clean_body(Goal, Goal).
 %   Determine which parts of the goal we must remember in the
 %   findall/3 pattern.
 %
-%   @param Post is a body-term that evaluates expressions to reduce
+%   @arg Post is a body-term that evaluates expressions to reduce
 %               storage requirements.
-%   @param Vars is a list of intermediate variables that must be
+%   @arg Vars is a list of intermediate variables that must be
 %               added to the existential variables for bagof/3.
-%   @param Aggregate defines the aggregation operation to execute.
+%   @arg Aggregate defines the aggregation operation to execute.
 
 template_to_pattern(Term, Pattern, Goal, Vars, Aggregate) :-
     templ_to_pattern(Term, Pattern, Goal, Vars, Aggregate),
@@ -538,6 +540,38 @@ state0(sum,   0, _).
 state1(bag, X, L, [X|L]) :- !.
 state1(set, X, L, [X|L]) :- !.
 state1(_,   X, X, _).
+
+
+		 /*******************************
+		 *             FOLDALL		*
+		 *******************************/
+
+%!  foldall(:Folder, :Goal, +V0, -V) is det.
+%
+%   Use Folder to fold V0 to V using all answers of Goal. This predicate
+%   generates all answers  for  Goal  and   for  each  answer  it  calls
+%   call(Folder,V0,V1). This predicate  provides   behaviour  similar to
+%   aggregate_all/3-4, but operates in  constant   space  and allows for
+%   custom aggregation (Folder) operators. The example below uses plus/3
+%   to realise aggregate_all(sum(X), between(1,10,X), Sum).
+%
+%       ?- foldall(plus(X), between(1,10,X), 0, Sum).
+%       Sum = 55
+%
+%   The implementation uses  nb_setarg/3   for  non-backtrackable  state
+%   updates.
+%
+%   @see aggregate_all/3-4, foldl/4-7, nb_setarg/3.
+
+foldall(Op, Goal, V0, V) :-
+    State = state(V0),
+    (   call(Goal),
+          arg(1, State, S0),
+          call(Op, S0, S),
+          nb_setarg(1, State, S),
+          fail
+    ;   arg(1, State, V)
+    ).
 
 
                  /*******************************

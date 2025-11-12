@@ -3,9 +3,10 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2020, University of Amsterdam
+    Copyright (c)  1985-2024, University of Amsterdam
                               VU University Amsterdam
 			      CWI, Amsterdam
+			      SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -50,14 +51,16 @@
 #define	skip_list(l, tailp)		LDFUNC(skip_list, l, tailp)
 #define	is_acyclic(p)			LDFUNC(is_acyclic, p)
 #define	numberVars(t, opts, n)		LDFUNC(numberVars, t, opts, n)
-#define	duplicate_term(in, copy)	LDFUNC(duplicate_term, in, copy)
 #define	pl_statistics_ld(k, value, ld)	LDFUNC(pl_statistics_ld, k, value, ld)
 #define	ground(p)			LDFUNC(ground, p)
 #define	PL_same_term(t1, t2)		LDFUNC(PL_same_term, t1, t2)
+#define do_unify(t1, t2)		LDFUNC(do_unify, t1, t2)
+#define setarg(n, term, value, flags)   LDFUNC(setarg, n, term, value, flags)
 #endif /*USE_LD_MACROS*/
 
 #define LDFUNC_DECLARATIONS
 
+int		do_unify(Word t1, Word t2);
 int		unify_ptrs(Word t1, Word t2, int flags);
 void		unify_vp(Word vp, Word val);
 bool		can_unify(Word t1, Word t2, term_t ex);
@@ -67,27 +70,29 @@ intptr_t	skip_list(Word l, Word *tailp);
 intptr_t	lengthList(term_t list, int errors);
 int		is_acyclic(Word p);
 intptr_t	numberVars(term_t t, nv_options *opts, intptr_t n);
-int		duplicate_term(term_t in, term_t copy);
 word		stringToList(char *s);
 foreign_t	pl_sub_atom(term_t atom,
 			    term_t before, term_t len, term_t after,
 			    term_t sub, control_t h);
-word		pl_repeat(control_t h);
-word		pl_fail(void);
-word		pl_true(void);
-word		pl_halt(term_t code);
+foreign_t	pl_repeat(control_t h);
+foreign_t	pl_fail(void);
+foreign_t	pl_true(void);
 int		pl_statistics_ld(term_t k, term_t value,
 				 PL_local_data_t *ld);
 int		set_pl_option(const char *name, const char *value);
-word		pl_novice(term_t old, term_t new);
+foreign_t	pl_novice(term_t old, term_t new);
 Word		ground(Word p);
 int		PL_factorize_term(term_t term,
 				  term_t template, term_t factors);
 int		PL_var_occurs_in(term_t var, term_t value);
 void		raiseInferenceLimitException(void);
 int		PL_same_term(term_t t1, term_t t2);
+bool		setarg(size_t argn, term_t term, term_t value,
+		       unsigned int flags);
 
 #undef LDFUNC_DECLARATIONS
 
+#define SETARG_BACKTRACKABLE    0x1
+#define SETARG_LINK		0x2
 
 #endif /*_PL_PRIMS_H*/

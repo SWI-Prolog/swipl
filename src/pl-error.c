@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1997-2023, University of Amsterdam
+    Copyright (c)  1997-2024, University of Amsterdam
 			      VU University Amsterdam
 			      SWI-Prolog Solutions b.v.
     All rights reserved.
@@ -51,7 +51,7 @@ throw(error(<Formal>, <SWI-Prolog>))
 #include <errno.h>
 #endif
 
-static int
+static bool
 put_name_arity(term_t t, functor_t f)
 { GET_LD
   FunctorDef fdef = valueFunctor(f);
@@ -64,7 +64,7 @@ put_name_arity(term_t t, functor_t f)
 	    PL_cons_functor(t, FUNCTOR_divide2, a+0, a+1));
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -94,7 +94,7 @@ rewrite_callable(atom_t *expected, term_t actual)
 }
 
 
-static int
+static bool
 evaluation_error(term_t formal, atom_t which)
 { GET_LD
   return PL_unify_term(formal,
@@ -102,20 +102,22 @@ evaluation_error(term_t formal, atom_t which)
 			 PL_ATOM, which);
 }
 
-int
+bool
 PL_error(const char *pred, int arity, const char *msg, PL_error_code id, ...)
 { GET_LD
   char msgbuf[50];
   Definition caller;
   term_t except, formal, swi, msgterm=0;
   va_list args;
-  int do_throw = FALSE;
   fid_t fid;
-  int rc;
+#if O_THROW
+  bool do_throw = false;
+#endif
+  bool rc;
   int msg_rep = REP_UTF8;
 
   if ( exception_term )			/* do not overrule older exception */
-    return FALSE;
+    return false;
 
   if ( environment_frame )
     caller = environment_frame->predicate;
@@ -128,12 +130,12 @@ PL_error(const char *pred, int arity, const char *msg, PL_error_code id, ...)
 
   if ( msg == MSG_ERRNO )
   { if ( errno == EPLEXCEPTION )
-      return FALSE;
+      return false;
     msg = OsError();
     msg_rep = REP_MB;
   }
 
-  LD->exception.processing = TRUE;	/* allow using spare stack */
+  LD->exception.processing = true;	/* allow using spare stack */
 
   if ( !(fid = PL_open_foreign_frame()) )
     goto nomem;
@@ -386,6 +388,18 @@ PL_error(const char *pred, int arity, const char *msg, PL_error_code id, ...)
 			   PL_ATOM, ATOM_execute,
 			   PL_ATOM, ATOM_vmi,
 			   PL_CHARS, vmi);
+      break;
+    }
+    case ERR_PERMISSION_YIELD:
+    { term_t t;
+      rc = ( (t=PL_new_term_ref()) &&
+	     pl_thread_self(t) &&
+	     PL_unify_term(formal,
+			   PL_FUNCTOR, FUNCTOR_permission_error3,
+			     PL_ATOM, ATOM_yield,
+			     PL_ATOM, ATOM_engine,
+			     PL_TERM, t) );
+      PL_reset_term_refs(t);
       break;
     }
     case ERR_NOT_IMPLEMENTED_PROC:
@@ -720,7 +734,11 @@ PL_error(const char *pred, int arity, const char *msg, PL_error_code id, ...)
 			 PL_FUNCTOR, FUNCTOR_existence_error2,
 			   PL_ATOM, ATOM_stream,
 			   PL_POINTER, s);
-      do_throw = TRUE;
+#if O_THROW
+      do_throw = true;
+#else
+      PL_fatal_error("ERR_CLOSED_STREAM not supported without PL_throw()");
+#endif
       break;
     }
     case ERR_BUSY:
@@ -757,7 +775,7 @@ PL_error(const char *pred, int arity, const char *msg, PL_error_code id, ...)
       break;
     }
     default:
-      rc = FALSE;
+      rc = false;
       assert(0);
   }
   va_end(args);
@@ -800,9 +818,11 @@ PL_error(const char *pred, int arity, const char *msg, PL_error_code id, ...)
     fatalError("Cannot report error: no memory");
   }
 
+#if O_THROW
   if ( do_throw )
     rc = PL_throw(except);
   else
+#endif
     rc = PL_raise_exception(except);
 
   PL_close_foreign_frame(fid);
@@ -815,19 +835,20 @@ PL_error(const char *pred, int arity, const char *msg, PL_error_code id, ...)
 		 *	  TYPICAL ERRORS	*
 		 *******************************/
 
-int
+bool
 PL_instantiation_error(term_t actual)
 { (void)actual;
 
   return PL_error(NULL, 0, NULL, ERR_INSTANTIATION);
 }
 
-int
+bool
 PL_uninstantiation_error(term_t actual)
-{ return PL_error(NULL, 0, NULL, ERR_UNINSTANTIATION, 0, actual);
+{ valid_term_t(actual);
+  return PL_error(NULL, 0, NULL, ERR_UNINSTANTIATION, 0, actual);
 }
 
-int
+bool
 PL_representation_error(const char *representation)
 { atom_t r = PL_new_atom(representation);
   int rc = PL_error(NULL, 0, NULL, ERR_REPRESENTATION, r);
@@ -837,15 +858,17 @@ PL_representation_error(const char *representation)
 }
 
 
-int
+bool
 PL_type_error(const char *expected, term_t actual)
-{ return PL_error(NULL, 0, NULL, ERR_CHARS_TYPE, expected, actual);
+{ valid_term_t(actual);
+  return PL_error(NULL, 0, NULL, ERR_CHARS_TYPE, expected, actual);
 }
 
 
-int
+bool
 PL_domain_error(const char *expected, term_t actual)
-{ atom_t a = PL_new_atom(expected);
+{ valid_term_t(actual);
+  atom_t a = PL_new_atom(expected);
   int rc = PL_error(NULL, 0, NULL, ERR_DOMAIN, a, actual);
   PL_unregister_atom(a);
 
@@ -853,9 +876,10 @@ PL_domain_error(const char *expected, term_t actual)
 }
 
 
-int
+bool
 PL_existence_error(const char *type, term_t actual)
-{ atom_t a = PL_new_atom(type);
+{ valid_term_t(actual);
+  atom_t a = PL_new_atom(type);
   int rc = PL_error(NULL, 0, NULL, ERR_EXISTENCE, a, actual);
   PL_unregister_atom(a);
 
@@ -863,9 +887,10 @@ PL_existence_error(const char *type, term_t actual)
 }
 
 
-int
+bool
 PL_permission_error(const char *op, const char *type, term_t obj)
-{ atom_t t = PL_new_atom(type);
+{ valid_term_t(obj);
+  atom_t t = PL_new_atom(type);
   atom_t o = PL_new_atom(op);
   int rc = PL_error(NULL, 0, NULL, ERR_PERMISSION, o, t, obj);
 
@@ -875,8 +900,7 @@ PL_permission_error(const char *op, const char *type, term_t obj)
   return rc;
 }
 
-
-int
+bool
 PL_resource_error(const char *resource)
 { atom_t r = PL_new_atom(resource);
   int rc = PL_error(NULL, 0, NULL, ERR_RESOURCE, r);
@@ -887,13 +911,13 @@ PL_resource_error(const char *resource)
 }
 
 
-int
+bool
 PL_no_memory(void)
 { return PL_error(NULL, 0, NULL, ERR_RESOURCE, ATOM_memory);
 }
 
 
-int
+bool
 PL_syntax_error(const char *msg, IOSTREAM *in)
 { GET_LD
   term_t ex, loc;
@@ -924,14 +948,14 @@ PL_syntax_error(const char *msg, IOSTREAM *in)
 	}
       }
 
-      return FALSE;
+      return false;
     }
 
   ok:
     return PL_raise_exception(ex);
   }
 
-  return FALSE;
+  return false;
 }
 
 		 /*******************************
@@ -945,16 +969,16 @@ Calls print_message(severity, term), where  ...   are  arguments  as for
 PL_unify_term(). This predicate saves possible   pending  exceptions and
 restores them to make the call from B_THROW possible.
 
-Returns FALSE if there was an   exception while executing printMessage()
-and TRUE if the printing succeeded or merely failed.
+Returns false if there was an   exception while executing printMessage()
+and true if the printing succeeded or merely failed.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 #define OK_RECURSIVE 10
 
-int
+bool
 printMessage(atom_t severity, ...)
 { va_list args;
-  int rc;
+  bool rc;
 
   va_start(args, severity);
   rc = printMessagev(severity, args);
@@ -963,19 +987,20 @@ printMessage(atom_t severity, ...)
   return rc;
 }
 
-int
+bool
 printMessagev(atom_t severity, va_list args)
 { GET_LD
+  valid_atom_t(severity);
   wakeup_state wstate;
   term_t av;
   predicate_t pred = PROCEDURE_print_message2;
-  int rc;
+  bool rc;
 
   if ( ++LD->in_print_message >= OK_RECURSIVE*3 )
     fatalError("printMessage(): recursive call\n");
-  if ( !saveWakeup(&wstate, TRUE) )
+  if ( !saveWakeup(&wstate, true) )
   { LD->in_print_message--;
-    return FALSE;
+    return false;
   }
 
   av = PL_new_term_refs(2);
@@ -983,26 +1008,39 @@ printMessagev(atom_t severity, va_list args)
   rc = PL_unify_termv(av+1, args);
 
   if ( rc )
-  { if ( isDefinedProcedure(pred) && LD->in_print_message <= OK_RECURSIVE )
-    { rc = PL_call_predicate(NULL, PL_Q_NODEBUG|PL_Q_PASS_EXCEPTION,
-			     pred, av);
-    } else if ( LD->in_print_message <= OK_RECURSIVE*2 )
-    { Sfprintf(Serror, "print_message/2: recursive call: ");
-      if ( ReadingSource )
-	Sfprintf(Serror, "%s:%d ",
-		 PL_atom_chars(source_file_name), (int)source_line_no);
-      rc = PL_write_term(Serror, av+1, 1200, 0);
-      Sfprintf(Serror, "\n");
-      PL_backtrace(5, 1);
-    } else				/* in_print_message == 2 */
-    { Sfprintf(Serror, "printMessage(): recursive call\n");
+  { if ( !Sferror(Suser_error) )
+    { if ( isDefinedProcedure(pred) &&
+	   LD->in_print_message <= OK_RECURSIVE )
+      { rc = PL_call_predicate(NULL, PL_Q_NODEBUG|PL_Q_PASS_EXCEPTION,
+			       pred, av);
+      } else
+      { if ( LD->in_print_message <= OK_RECURSIVE*2 )
+	{ Sdprintf("print_message/2: recursive call: ");
+	  if ( ReadingSource )
+	    Sdprintf("%s:%d ",
+		     PL_atom_chars(source_file_name), (int)source_line_no);
+	  rc = PL_write_term(Serror, av+1, 1200, 0);
+	  Sdprintf("\n");
+	  PL_backtrace(5, 1);
+	} else				/* in_print_message == 2 */
+	{ Sdprintf("printMessage(): recursive call\n");
+	}
+      }
+    } else
+    { if ( !Sferror(Serror) && truePrologFlag(PLFLAG_DEBUG_ON_ERROR) )
+      { Sdprintf("[%d] printMessage(): Cannot write to user_error:\n",
+		 PL_thread_self());
+	rc = PL_write_term(Serror, av+1, 1200, 0);
+	Sdprintf("\n");
+      } else
+	rc = false;
     }
   }
 
   if ( !rc && PL_exception(0) )
     set(&wstate, WAKEUP_KEEP_URGENT_EXCEPTION);
   else
-    rc = TRUE;
+    rc = true;
 
   restoreWakeup(&wstate);
   LD->in_print_message--;
@@ -1015,7 +1053,7 @@ printMessagev(atom_t severity, va_list args)
 		 *    ERROR-CHECKING *_get()	*
 		 *******************************/
 
-int
+bool
 PL_get_atom_ex(DECL_LD term_t t, atom_t *a)
 { if ( PL_get_atom(t, a) )
     succeed;
@@ -1024,14 +1062,17 @@ PL_get_atom_ex(DECL_LD term_t t, atom_t *a)
 }
 
 
-API_STUB(int)
+API_STUB(bool)
 (PL_get_atom_ex)(term_t t, atom_t *a)
-( return PL_get_atom_ex(t, a); )
+( valid_term_t(t);
+  return PL_get_atom_ex(t, a);
+)
 
 
-int
+bool
 PL_get_integer_ex(term_t t, int *i)
 { GET_LD
+  valid_term_t(t);
 
   if ( PL_get_integer(t, i) )
     succeed;
@@ -1042,13 +1083,10 @@ PL_get_integer_ex(term_t t, int *i)
   return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_integer, t);
 }
 
-
-int
-PL_get_long_ex(term_t t, long *i)
-{ GET_LD
-
-  if ( PL_get_long(t, i) )
-    succeed;
+bool
+PL_get_long_ex(DECL_LD term_t t, long *i)
+{ if ( PL_get_long(t, i) )
+    return true;
 
   if ( PL_is_integer(t) )
     return PL_error(NULL, 0, NULL, ERR_REPRESENTATION, ATOM_long);
@@ -1056,13 +1094,16 @@ PL_get_long_ex(term_t t, long *i)
   return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_integer, t);
 }
 
+API_STUB(bool)
+(PL_get_long_ex)(term_t t, long *i)
+( valid_term_t(t);
+  return PL_get_long_ex(t, i);
+)
 
-int
-PL_get_int64_ex(term_t t, int64_t *i)
-{ GET_LD
-
-  if ( PL_get_int64(t, i) )
-    succeed;
+bool
+PL_get_int64_ex(DECL_LD term_t t, int64_t *i)
+{ if ( PL_get_int64(t, i) )
+    return true;
 
   if ( PL_is_integer(t) )
     return PL_error(NULL, 0, NULL, ERR_REPRESENTATION, ATOM_int64_t);
@@ -1070,9 +1111,14 @@ PL_get_int64_ex(term_t t, int64_t *i)
   return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_integer, t);
 }
 
+API_STUB(bool)
+(PL_get_int64_ex)(term_t t, int64_t *i)
+( valid_term_t(t);
+  return PL_get_int64_ex(t, i);
+)
 
-int
-PL_get_intptr_ex(term_t t, intptr_t *i)
+bool
+PL_get_intptr_ex(DECL_LD term_t t, intptr_t *i)
 {
 #if SIZEOF_LONG != SIZEOF_VOIDP && SIZEOF_VOIDP == 8
    return PL_get_int64_ex(t, i);
@@ -1080,6 +1126,12 @@ PL_get_intptr_ex(term_t t, intptr_t *i)
    return PL_get_long_ex(t, (long*)i);
 #endif
 }
+
+API_STUB(bool)
+(PL_get_intptr_ex)(term_t t, intptr_t *i)
+( valid_term_t(t);
+  return PL_get_intptr_ex(t, i);
+)
 
 #if SIZEOF_VOIDP < 8
 #ifndef UINTPTR_MAX
@@ -1089,25 +1141,30 @@ PL_get_intptr_ex(term_t t, intptr_t *i)
 static int
 fits_size(int64_t val)
 { if ( (uintptr_t)val <= (uintptr_t)UINTPTR_MAX )
-    return TRUE;
+    return true;
   return PL_error(NULL, 0, NULL, ERR_REPRESENTATION, ATOM_size_t);
 }
 #else
-#define fits_size(v) TRUE
+#define fits_size(v) true
 #endif
 
-int
+bool
 PL_get_size_ex(DECL_LD term_t t, size_t *i)
 { number n;
   Word p = valTermRef(t);
 
   deRef(p);
   if ( isTaggedInt(*p) )
-  { intptr_t v = valInt(*p);
+  { sword v = valInt(*p);
 
     if ( v >= 0 )
-    { *i = v;
-      return TRUE;
+    {
+#if SIZEOF_VOIDP < SIZEOF_WORD
+      if ( v > SIZE_MAX )
+	return PL_error(NULL, 0, NULL, ERR_REPRESENTATION, ATOM_size_t);
+#endif
+      *i = (size_t)v;
+      return true;
     }
     return PL_error(NULL, 0, NULL, ERR_DOMAIN,
 		    ATOM_not_less_than_zero, t);
@@ -1118,10 +1175,10 @@ PL_get_size_ex(DECL_LD term_t t, size_t *i)
     { case V_INTEGER:
 	if ( n.value.i >= 0 )
 	{ if ( fits_size(n.value.i) )
-	  { *i = n.value.i;
-	    return TRUE;
+	  { *i = (size_t)n.value.i;
+	    return true;
 	  }
-	  return FALSE;
+	  return false;
 	} else
 	{ return PL_error(NULL, 0, NULL, ERR_DOMAIN,
 			  ATOM_not_less_than_zero, t);
@@ -1133,7 +1190,7 @@ PL_get_size_ex(DECL_LD term_t t, size_t *i)
 	switch(mpz_to_uint64(n.value.mpz, &v))
 	{ case 0:
 	    *i = v;
-	    return TRUE;
+	    return true;
 	  case -1:
 	    return PL_error(NULL, 0, NULL, ERR_DOMAIN,
 			    ATOM_not_less_than_zero, t);
@@ -1141,7 +1198,7 @@ PL_get_size_ex(DECL_LD term_t t, size_t *i)
 	    return PL_error(NULL, 0, NULL, ERR_REPRESENTATION, ATOM_size_t);
 	  default:
 	    assert(0);
-	    return FALSE;
+	    return false;
 	}
       }
 #else
@@ -1156,22 +1213,22 @@ PL_get_size_ex(DECL_LD term_t t, size_t *i)
 }
 
 
-int
+bool
 pl_get_uint64(DECL_LD term_t t, uint64_t *i, int ex)
 { number n;
   Word p = valTermRef(t);
 
   deRef(p);
   if ( isTaggedInt(*p) )
-  { intptr_t v = valInt(*p);
+  { sword v = valInt(*p);
 
     if ( v >= 0 )
     { *i = v;
-      return TRUE;
+      return true;
     }
     return ex ? PL_error(NULL, 0, NULL, ERR_DOMAIN,
 			 ATOM_not_less_than_zero, t)
-	      : FALSE;
+	      : false;
   }
 
   if ( PL_get_number(t, &n) )
@@ -1179,11 +1236,11 @@ pl_get_uint64(DECL_LD term_t t, uint64_t *i, int ex)
     { case V_INTEGER:
 	if ( n.value.i >= 0 )
 	{ *i = n.value.i;
-	  return TRUE;
+	  return true;
 	} else
 	{ return ex ? PL_error(NULL, 0, NULL, ERR_DOMAIN,
 			       ATOM_not_less_than_zero, t)
-		    : FALSE;
+		    : false;
 	}
 #if O_BIGNUM
       case V_MPZ:
@@ -1192,59 +1249,64 @@ pl_get_uint64(DECL_LD term_t t, uint64_t *i, int ex)
 	switch(mpz_to_uint64(n.value.mpz, &v))
 	{ case 0:
 	    *i = v;
-	    return TRUE;
+	    return true;
 	  case -1:
 	    return ex ? PL_error(NULL, 0, NULL, ERR_DOMAIN,
 				 ATOM_not_less_than_zero, t)
-		      : FALSE;
+		      : false;
 	  case 1:
-	    return ex ? PL_representation_error("uint64_t") : FALSE;
+	    return ex ? PL_representation_error("uint64_t") : false;
 	  default:
 	    assert(0);
-	    return FALSE;
+	    return false;
 	}
       }
 #else
-      return ex ? PL_representation_error("uint64_t") : FALSE;
+      return ex ? PL_representation_error("uint64_t") : false;
 #endif
       default:
 	break;
     }
   }
 
-  return ex ? PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_integer, t) : FALSE;
+  return ex ? PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_integer, t) : false;
 }
 
-int
+bool
 PL_get_uint64_ex(DECL_LD term_t t, uint64_t *i)
-{ return pl_get_uint64(t, i, TRUE);
+{ return pl_get_uint64(t, i, true);
 }
 
-API_STUB(int)
+API_STUB(bool)
 (PL_get_size_ex)(term_t t, size_t *i)
-( return PL_get_size_ex(t, i); )
+( valid_term_t(t);
+  return PL_get_size_ex(t, i);
+)
 
-int
+bool
 PL_get_bool_ex(term_t t, int *i)
-{ if ( PL_get_bool(t, i) )
+{ valid_term_t(t);
+  if ( PL_get_bool(t, i) )
     succeed;
 
   return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_bool, t);
 }
 
 
-int
+bool
 PL_get_char_ex(term_t t, int *p, int eof)
-{ if ( PL_get_char(t, p, eof) )
+{ valid_term_t(t);
+  if ( PL_get_char(t, p, eof) )
     succeed;
 
   return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_character, t);
 }
 
 
-int
+bool
 PL_get_pointer_ex(term_t t, void **addrp)
 { GET_LD
+  valid_term_t(t);
   if ( PL_get_pointer(t, addrp) )
     succeed;
 
@@ -1252,9 +1314,12 @@ PL_get_pointer_ex(term_t t, void **addrp)
 }
 
 
-int
+bool
 PL_unify_list_ex(term_t l, term_t h, term_t t)
 { GET_LD
+  valid_term_t(l);
+  valid_term_t(h);
+  valid_term_t(t);
 
   if ( PL_unify_list(l, h, t) )
     succeed;
@@ -1266,9 +1331,10 @@ PL_unify_list_ex(term_t l, term_t h, term_t t)
 }
 
 
-int
+bool
 PL_unify_nil_ex(term_t l)
-{ if ( PL_unify_nil(l) )
+{ valid_term_t(l);
+  if ( PL_unify_nil(l) )
     succeed;
 
   if ( PL_is_list(l) )
@@ -1278,9 +1344,12 @@ PL_unify_nil_ex(term_t l)
 }
 
 
-int
+bool
 PL_get_list_ex(term_t l, term_t h, term_t t)
 { GET_LD
+  valid_term_t(l);
+  valid_term_t(h);
+  valid_term_t(t);
 
   if ( PL_get_list(l, h, t) )
     succeed;
@@ -1291,24 +1360,26 @@ PL_get_list_ex(term_t l, term_t h, term_t t)
   return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_list, l);
 }
 
-int
+bool
 PL_get_nil_ex(term_t l)
 { if ( PL_exception(0) )
-    return FALSE;
+    return false;
 
+  valid_term_t(l);
   if ( PL_get_nil(l) )
-    return TRUE;
+    return true;
 
   if ( PL_is_list(l) )
-    return FALSE;
+    return false;
 
   return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_list, l);
 }
 
-int
+bool
 PL_unify_bool_ex(term_t t, int val)
 { GET_LD
-  bool v;
+  int v;
+  valid_term_t(t);
 
   if ( PL_is_variable(t) )
     return PL_unify_atom(t, val ? ATOM_true : ATOM_false);
@@ -1322,28 +1393,31 @@ PL_unify_bool_ex(term_t t, int val)
 }
 
 
-int
-PL_get_arg_ex(int n, term_t term, term_t arg)
+bool
+PL_get_arg_ex(size_t n, term_t term, term_t arg)
 { GET_LD
+  valid_term_t(term);
+  valid_term_t(arg);
 
   if ( PL_get_arg(n, term, arg) )
-  { succeed;
+  { return true;
   } else
-  { term_t a = PL_new_term_ref();
+  { term_t a;
 
-    PL_put_integer(a, n);
-
-    return PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_natural, a);
+    return ( (a=PL_new_term_ref()) &&
+	     PL_put_uint64(a, n) &&
+	     PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_natural, a) );
   }
 }
 
 
-int
+bool
 PL_get_module_ex(term_t name, Module *m)
-{ if ( !PL_get_module(name, m) )
+{ valid_term_t(name);
+  if ( !PL_get_module(name, m) )
     return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_atom, name);
 
-  succeed;
+  return true;
 }
 
 
@@ -1361,10 +1435,10 @@ PRED_IMPL("$inc_message_count", 1, inc_message_count, 0)
       LD->statistics.warnings++;
     } /* else ignore other levels */
 
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 BeginPredDefs(error)

@@ -228,6 +228,8 @@ defined:
 \begin{description}
     \termitem{abort}{}
 Abort execution.  See abort/0.
+    \termitem{halt}{}
+Terminate execution.  See halt/0.
     \termitem{continue}{}
 Continue (i.e., \jargon{creep} in the command line debugger).
     \termitem{fail}{}
@@ -235,7 +237,9 @@ Make the current goal fail.
     \termitem{ignore}{}
 Step over the current goal without executing it.
     \termitem{nodebug}{}
-Continue execution in normal nodebugging mode.  See nodebug/0.
+Continue execution in normal nodebug mode.  See nodebug/0.
+    \termitem{leap}{}
+Continue execution in normal debug mode.  See debug/0.
     \termitem{retry}{}
 Retry the current frame.
     \termitem{retry}{Frame}
@@ -243,8 +247,13 @@ Retry the given frame.  This must be a parent of the current
 frame.
     \termitem{skip}{}
 Skip over the current goal (i.e., \jargon{skip} in the command line debugger).
+    \termitem{skip}{Frame}
+Skip to the end the execution of \arg{Frame}.  This is used to implement
+\jargon{finish} on an arbitrary frame in the GUI debugger.
     \termitem{up}{}
 Skip to the parent goal (i.e., \jargon{up} in the command line debugger).
+This is the same as \term{skip}{Frame} using the parent frame of the
+current frame.
 \end{description}
 
 Together with the predicates described in \secref{debugger}
@@ -283,14 +292,6 @@ user:prolog_trace_interception(Port, Frame, Choice, Action) :-
     ).
 \end{code}
 
-    \predicate{prolog_skip_frame}{1}{-Frame}
-Indicate \arg{Frame} as a skipped frame and set the `skip level' (see
-prolog_skip_level/2 to the recursion depth of \arg{Frame}.  The effect
-of the skipped flag is that a redo on a child of this frame is handled
-differently.  First, a \const{redo} trace is called for the child, where
-the skip level is set to \const{redo_in_skip}.  Next, the skip level is
-set to skip level of the skipped frame.
-
     \predicate{prolog_skip_level}{2}{-Old, +New}
 Unify \arg{Old} with the old value of `skip level' and then set this
 level according to \arg{New}. \arg{New} is an integer, the atom
@@ -300,7 +301,7 @@ Prolog thread that disables the debugger on all recursion levels deeper
 than the level of the variable.  See also prolog_skip_frame/1.
 \end{description}
 
-\section{Simmulating a debugger interrupt}
+\section{Simulating a debugger interrupt}
 \label{sec:interrupt}
 
 \begin{description}
@@ -558,7 +559,7 @@ Called by abort/0.
     \termitem{erase}{DbRef}
 Called on an erased recorded database reference or clause. Note that a
 retracted clauses is not immediately removed. Clauses are reclaimed by
-garbage_collect_clauses/0, which is normally executed automatially in
+garbage_collect_clauses/0, which is normally executed automatically in
 the \const{gc} thread. This specific channel is used by clause_info/5 to
 reclaim source layout of reclaimed clauses.  User applications should
 typically use the \arg{PredicateIndicator} channel.
@@ -624,7 +625,7 @@ Updated p/1: retractall end(user:p(_12294))
     The hook is called before the clause is removed.  If the hook
     fails, the clause is not removed.
 	\termitem{retractall}{}
-    The begining and end of retractall/1 is indicated with
+    The beginning and end of retractall/1 is indicated with
     the \arg{Action} \const{retractall}.  The context argument
     is \term{start}{Head} or \term{end}{Head}.
         \termitem{rollback}{Action}
@@ -679,11 +680,12 @@ nospy/1.
     \termitem{nospyall}{}
 Hook in nospyall/0.  Should remove all spy points.  This hook is
 called in a failure-driven loop.
-    \termitem{debugging}{}
-Hook in debugging/0.  It can be used in two ways.  It can report
-the status of the additional debug points controlled by the above
-hooks and fail to let the system report the others, or it succeeds,
-overruling the entire behaviour of debugging/0.
+    \termitem{debugging}{DebugMode}
+Hook in debugging/0. \arg{DebugMode} holds the current value of the
+\prologflag{debug} flag. The hook can be used in two ways. It can report
+the status of the additional debug points controlled by the above hooks
+and fail to let the system report the others, or it succeeds, overruling
+the entire behaviour of debugging/0.
 \end{description}
 
     \predicate{prolog:help_hook}{1}{+Action}

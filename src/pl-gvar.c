@@ -3,8 +3,9 @@
     Author:        Jan Wielemaker and Anjo Anjewierden
     E-mail:        J.Wielemaker@cs.vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2004-2020, University of Amsterdam
+    Copyright (c)  2004-2024, University of Amsterdam
                               VU University Amsterdam
+			      SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -38,6 +39,7 @@
 #include "pl-gc.h"
 #include "pl-wam.h"
 #include "pl-prims.h"
+#include "pl-copyterm.h"
 #undef LD
 #define LD LOCAL_LD
 
@@ -78,7 +80,7 @@ free_nb_linkval_name(atom_t name)
 static void
 free_nb_linkval_value(word value)
 { if ( isAtom(value) )
-    PL_unregister_atom(value);
+    PL_unregister_atom(word2atom(value));
   else if ( storage(value) == STG_GLOBAL )
   { GET_LD
     LD->gvar.grefs--;
@@ -87,7 +89,7 @@ free_nb_linkval_value(word value)
 
 
 static void
-free_nb_linkval_symbol(void *name, void* value)
+free_nb_linkval_symbol(table_key_t name, table_value_t value)
 { free_nb_linkval_value((word)value);
   free_nb_linkval_name((atom_t)name);
 }
@@ -103,7 +105,7 @@ new_gvar(DECL_LD atom_t name, atom_t value)
     LD->gvar.nb_vars->free_symbol = free_nb_linkval_symbol;
   }
 
-  addNewHTable(LD->gvar.nb_vars, (void*)name, (void*)old);
+  addNewHTable(LD->gvar.nb_vars, (table_key_t)name, (table_value_t)old);
   PL_register_atom(name);
 
   return old;
@@ -114,11 +116,27 @@ new_gvar(DECL_LD atom_t name, atom_t value)
 static word
 lookup_gvar(DECL_LD atom_t name)
 { if ( LD->gvar.nb_vars )
-    return (word)lookupHTable(LD->gvar.nb_vars, (void*)name);
+    return (word)lookupHTable(LD->gvar.nb_vars, (table_key_t)name);
 
   return 0;
 }
 
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Get a global variable value.   Flags is reserved to do/do not allow for
+lazy definition of the variable.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+int
+PL_getval(atom_t name, term_t val, unsigned int flags)
+{ GET_LD
+  word w = lookup_gvar(name);
+  if ( w )
+  { *valTermRef(val) = w;
+    return true;
+  }
+
+  return false;
+}
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -131,20 +149,51 @@ SHIFT-SAFE: TrailAssignment() takes at most g+t=1+2.  One more Trail and
 	    2 more allocGlobal(1) makes g+t<3+3
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-#define setval(var, value, backtrackable) LDFUNC(setval, var, value, backtrackable)
-static int
-setval(DECL_LD term_t var, term_t value, int backtrackable)
+#define setval_duplicate(new, old) \
+	LDFUNC(setval_duplicate, new, old)
+
+static word
+setval_duplicate(DECL_LD word new, word old)
+{ if ( isTerm(new) )
+  { term_t from = PL_new_term_ref();
+    term_t copy = PL_new_term_ref();
+    term_t shared = 0;
+    size_t nshared = 0;
+    *valTermRef(from) = new;
+
+    if ( isTerm(old) )
+    { shared = PL_new_term_ref();
+      *valTermRef(shared) = old;
+      nshared = 1;
+    }
+    if ( duplicate_term(from, copy, nshared, shared) )
+      return *valTermRef(copy);
+    else
+      return 0;
+  } else
+  { return new;
+  }
+}
+
+#define SETVAL_BACKTRACKABLE 0x1
+#define SETVAL_LINK	     0x2
+
+#define setval(var, value, backtrackable) \
+	LDFUNC(setval, var, value, backtrackable)
+
+static bool
+setval(DECL_LD term_t var, term_t value, unsigned int flags)
 { atom_t name;
   Word p;
   word w, old;
 
   if ( !PL_get_atom_ex(var, &name) )
-    fail;
+    return false;
 
   if ( !hasGlobalSpace(3) )		/* also ensures trail for */
   { int rc;				/* TrailAssignment() */
 
-    if ( (rc=ensureGlobalSpace(3, ALLOW_GC)) != TRUE )
+    if ( (rc=ensureGlobalSpace(3, ALLOW_GC)) != true )
       return raiseStackOverflow(rc);
   }
 
@@ -168,11 +217,11 @@ setval(DECL_LD term_t var, term_t value, int backtrackable)
     old = new_gvar(name, ATOM_no_value);
 
   if ( w == old )
-    succeed;
+    return true;
   if ( isAtom(old) )
-    PL_unregister_atom(old);
+    PL_unregister_atom(word2atom(old));
 
-  if ( backtrackable )
+  if ( (flags&SETVAL_BACKTRACKABLE) )
   { Word p;
 
     if ( isRef(old) )
@@ -183,25 +232,32 @@ setval(DECL_LD term_t var, term_t value, int backtrackable)
       freezeGlobal();		/* The value location must be */
       if ( storage(old) != STG_GLOBAL )	/* preserved */
 	LD->gvar.grefs++;
-      updateHTable(LD->gvar.nb_vars, (void*)name, (void*)makeRefG(p));
+      updateHTable(LD->gvar.nb_vars,
+		   (table_key_t)name, (table_value_t)makeRefG(p));
     }
 
     TrailAssignment(p);
     *p = w;
   } else
-  { if ( storage(old) == STG_GLOBAL )
+  { bool old_on_global = storage(old) == STG_GLOBAL;
+
+    if ( !(flags&SETVAL_LINK) )
+    { if ( !(w = setval_duplicate(w, old)) )
+	return false;
+    }
+    if ( old_on_global )
       LD->gvar.grefs--;
 
-    updateHTable(LD->gvar.nb_vars, (void*)name, (void*)w);
+    updateHTable(LD->gvar.nb_vars, (table_key_t)name, (table_value_t)w);
 
     if ( storage(w) == STG_GLOBAL )
     { freezeGlobal();
       LD->gvar.grefs++;
     } else if ( isAtom(w) )
-      PL_register_atom(w);
+      PL_register_atom(word2atom(w));
   }
 
-  succeed;
+  return true;
 }
 
 
@@ -264,22 +320,22 @@ auto_define_gvar(atom_t name)
    fix this if this function is to be used for other purposes.
 */
 
-int
+bool
 gvar_value(DECL_LD atom_t name, Word p)
 { if ( LD->gvar.nb_vars )
   { word w;
-    if ( (w = (word)lookupHTable(LD->gvar.nb_vars, (void*)name)) )
+    if ( (w = (word)lookupHTable(LD->gvar.nb_vars, (table_key_t)name)) )
     { *p = w;
-      return TRUE;
+      return true;
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
 #define is_gval(w) LDFUNC(is_gval, w)
-static int
+static bool
 is_gval(DECL_LD word w)
 { if ( isRef(w) )
     w = *unRef(w);
@@ -288,14 +344,16 @@ is_gval(DECL_LD word w)
 }
 
 
-#define getval(var, value, raise_error) LDFUNC(getval, var, value, raise_error)
-static int
-getval(DECL_LD term_t var, term_t value, int raise_error)
+#define getval(var, value, raise_error) \
+	LDFUNC(getval, var, value, raise_error)
+
+static bool
+getval(DECL_LD term_t var, term_t value, bool raise_error)
 { atom_t name;
   int i;
 
   if ( !PL_get_atom_ex(var, &name) )
-    fail;
+    return false;
 
   for(i=0; i<2; i++)
   { word w;
@@ -313,12 +371,12 @@ getval(DECL_LD term_t var, term_t value, int raise_error)
     switch(auto_define_gvar(name))
     { case gvar_fail:
 	new_gvar(name, ATOM_no_value);
-	return FALSE;
+	return false;
       case gvar_retry:
 	continue;
       case gvar_error:
 	if ( exception_term )
-	  return FALSE;				/* error from handler */
+	  return false;				/* error from handler */
         new_gvar(name, ATOM_no_value);
         goto error;
     }
@@ -329,15 +387,22 @@ error:
     return PL_error(NULL, 0, NULL, ERR_EXISTENCE,
 		    ATOM_variable, var);
   else
-    return FALSE;
+    return false;
 }
 
+
+static
+PRED_IMPL("nb_setval", 2, nb_setval, 0)
+{ PRED_LD
+
+  return setval(A1, A2, 0);
+}
 
 static
 PRED_IMPL("nb_linkval", 2, nb_linkval, 0)
 { PRED_LD
 
-  return setval(A1, A2, FALSE);
+  return setval(A1, A2, SETVAL_LINK);
 }
 
 
@@ -345,7 +410,7 @@ static
 PRED_IMPL("nb_getval", 2, nb_getval, 0)
 { PRED_LD
 
-  return getval(A1, A2, TRUE);
+  return getval(A1, A2, true);
 }
 
 
@@ -353,14 +418,14 @@ static
 PRED_IMPL("b_setval", 2, b_setval, 0)
 { PRED_LD
 
-  return setval(A1, A2, TRUE);
+  return setval(A1, A2, SETVAL_BACKTRACKABLE);
 }
 
 static
 PRED_IMPL("b_getval", 2, b_getval, 0)
 { PRED_LD
 
-  return getval(A1, A2, TRUE);
+  return getval(A1, A2, true);
 }
 
 
@@ -370,7 +435,7 @@ PRED_IMPL("nb_delete", 1, nb_delete, 0)
   atom_t name;
 
   if ( !PL_get_atom_ex(A1, &name) )
-    return FALSE;
+    return false;
 
   if ( LD->gvar.nb_vars )
   { word w;
@@ -378,7 +443,8 @@ PRED_IMPL("nb_delete", 1, nb_delete, 0)
     if ( (w = lookup_gvar(name)) )
     { if ( w != ATOM_no_value )
       { free_nb_linkval_value(w);
-	updateHTable(LD->gvar.nb_vars, (void*)name, (void*)ATOM_no_value);
+	updateHTable(LD->gvar.nb_vars,
+		     (table_key_t)name, (table_value_t)ATOM_no_value);
       }
     } else
     { new_gvar(name, ATOM_no_value);
@@ -393,14 +459,12 @@ static
 PRED_IMPL("nb_current", 2, nb_current, PL_FA_NONDETERMINISTIC)
 { PRED_LD
   TableEnum e;
-  atom_t name;
-  word val;
   fid_t fid;
 
   switch( CTX_CNTRL )
   { case FRG_FIRST_CALL:
       if ( PL_is_atom(A1) )
-	return getval(A1, A2, FALSE);
+	return getval(A1, A2, false);
       if ( !PL_is_variable(A1) )
 	return PL_type_error("atom", A1);
       if ( LD->gvar.nb_vars )
@@ -423,10 +487,16 @@ PRED_IMPL("nb_current", 2, nb_current, PL_FA_NONDETERMINISTIC)
 
   if ( !(fid = PL_open_foreign_frame()) )
   { freeTableEnum(e);
-    return FALSE;
+    return false;
   }
-  while( advanceTableEnum(e, (void**)&name, (void**)&val) )
-  { if ( !is_gval(val) )
+
+  table_key_t tk;
+  table_value_t tv;
+  while( advanceTableEnum(e, &tk, &tv) )
+  { atom_t name = (atom_t)tk;
+    word val = (word)tv;
+
+    if ( !is_gval(val) )
       continue;
     if ( PL_unify_atom(A1, name) &&
 	 unify_ptrs(valTermRef(A2), &val, 0) )
@@ -450,6 +520,7 @@ PRED_IMPL("nb_current", 2, nb_current, PL_FA_NONDETERMINISTIC)
 BeginPredDefs(gvar)
   PRED_DEF("b_setval",   2, b_setval,   0)
   PRED_DEF("b_getval",   2, b_getval,   0)
+  PRED_DEF("nb_setval",  2, nb_setval,  0)
   PRED_DEF("nb_linkval", 2, nb_linkval, 0)
   PRED_DEF("nb_getval",  2, nb_getval,  0)
   PRED_DEF("nb_current", 2, nb_current, PL_FA_NONDETERMINISTIC)

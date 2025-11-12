@@ -1,21 +1,56 @@
 set(CMAKE_POLICY_DEFAULT_CMP0074 NEW)
 set(CMAKE_POLICY_DEFAULT_CMP0075 NEW)
 set(CMAKE_POLICY_DEFAULT_CMP0079 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0177 NEW)
 
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.10)
 project(SWI-Prolog)
+
+if(CMAKE_BINARY_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  message(FATAL_ERROR
+	  " Can not build in the source directory.\n"
+	  " Please create a subdirectory and build in that directory.  E.g.\n"
+	  "     mkdir build\n"
+	  "     cd build\n"
+	  "     cmake [option ...] ..")
+endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 # While GCC is good at optimization large   functions, MSVC is bad at it
 # and using VMI functions more then   doubles the performance. For Clang
 # the picture is less clear. The difference  is small, with a slight win
-# on either depending on CPU and workload.
+# on either depending on  CPU  and   workload.  Using  Emscripten (WASM)
+# however, using a switch produces the fastest and smallest binary.
 
-if(MSVC OR CMAKE_C_COMPILER_ID STREQUAL Clang)
+if(EMSCRIPTEN)
+  set(DEFAULT_VMI_FUNCTIONS OFF)
+  set(O_LABEL_ADDRESSES OFF)
+elseif(MSVC OR CMAKE_C_COMPILER_ID STREQUAL Clang)
   set(DEFAULT_VMI_FUNCTIONS ON)
 else()
   set(DEFAULT_VMI_FUNCTIONS OFF)
+endif()
+
+if(APPLE)
+# tcmalloc breaks setlocale() on MacOS 12 (Monterey)
+  set(DEFAULT_USE_TCMALLOC OFF)
+else()
+  set(DEFAULT_USE_TCMALLOC ON)
+endif()
+
+if(EMSCRIPTEN)
+  set(DEFAULT_EPILOG OFF)
+  set(DEFAULT_CCACHE OFF)
+else()
+  set(DEFAULT_EPILOG ON)
+  set(DEFAULT_CCACHE ON)
+endif()
+
+if(WIN32)
+  set(DEFAULT_SWIPL_INSTALL_AS_LINK OFF)
+else()
+  set(DEFAULT_SWIPL_INSTALL_AS_LINK ON)
 endif()
 
 option(MULTI_THREADED
@@ -23,7 +58,7 @@ option(MULTI_THREADED
        ON)
 option(ENGINES
        "Enable multiple Prolog engines"
-       OFF)
+       ON)
 option(VMI_FUNCTIONS
        "Create a function for each VM instruction"
        ${DEFAULT_VMI_FUNCTIONS})
@@ -33,16 +68,9 @@ option(USE_SIGNALS
 option(USE_GMP
        "Use GNU MP Bignum library (LGPL)"
        ON)
-if(APPLE)
-# tcmalloc breaks setlocale() on MacOS 12 (Monterey)
 option(USE_TCMALLOC
        "Use Google tcmalloc instead of default malloc"
-       OFF)
-else()
-option(USE_TCMALLOC
-       "Use Google tcmalloc instead of default malloc"
-       ON)
-endif()
+       ${DEFAULT_USE_TCMALLOC})
 option(SWIPL_SHARED_LIB
        "Put kernel in a shared library"
        ON)
@@ -58,15 +86,9 @@ option(SWIPL_INSTALL_IN_LIB
 option(SWIPL_INSTALL_IN_SHARE
        "Install docs in ${CMAKE_INSTALL_PREFIX}/share/swipl"
        OFF)
-if(WIN32)
 option(SWIPL_INSTALL_AS_LINK
        "Install public binaries using a symlink"
-       OFF)
-else()
-option(SWIPL_INSTALL_AS_LINK
-       "Install public binaries using a symlink"
-       ON)
-endif()
+       ${DEFAULT_SWIPL_INSTALL_AS_LINK})
 option(SWIPL_M32
        "Build 32-bit version on 64-bit Linux using multilib and gcc -m32"
        OFF)
@@ -97,20 +119,34 @@ option(BUILD_SWIPL_LD
 option(INSTALL_TESTS
        "Install script and files needed to run tests of the final installation"
        OFF)
+option(INSTALL_QLF
+       "Build and install .qlf files for all libraries"
+       ON)
+option(INSTALL_PROLOG_SRC
+       "Install the Prolog sources (.pl files)"
+       ON)
 option(GCOV
        "Compile for coverage analysis using gcov (gcc)"
        OFF)
 option(STATIC_EXTENSIONS
        "Add foreign extensions statically"
        OFF)
-if(EMSCRIPTEN)
-  set(DEFAULT_CCACHE OFF)
-else()
-  set(DEFAULT_CCACHE ON)
-endif()
 option(CCACHE
        "Use ccache when available"
        ${DEFAULT_CCACHE})
+option(VALIDATE_API
+       "Add runtime argument checks for PL_*() functions"
+       ON)
+if(MULTI_THREADED)
+option(EPILOG
+       "Configure Prolog for using the XPCE Epilog interface"
+       ${DEFAULT_EPILOG})
+else()
+set(EPILOG OFF)
+endif()
+option(WASM_EXCEPTIONS
+       "Use -fwasm-exceptions -sSUPPORT_LONGJMP=wasm"
+       OFF)
 
 set(JNIDIR ""
     CACHE STRING "Directory for linking Java JNI components")
@@ -259,17 +295,55 @@ if(INSTALL_DOCUMENTATION)
 	  DESTINATION ${SWIPL_INSTALL_DOC}/packages)
 endif(INSTALL_DOCUMENTATION)
 
+################################################################
+# Testing
+
+set(SWIPL_TEST_DIRS unprotected core db attvar debug tabling library
+    compile charset eclipse clp GC save files transaction
+    xsb/basic_tests xsb/ai_tests xsb/ptq xsb/neg_tests xsb/delay_tests
+    xsb/wfs_tests xsb/table_tests xsb/incremental_tests xsb/nonmt_tests
+    xsb/sub_tests xsb/attv_tests)
+if(MULTI_THREADED)
+  list(APPEND SWIPL_TEST_DIRS thread thread_wait signals)
+endif()
+if(ENGINES)
+  list(APPEND SWIPL_TEST_DIRS engines)
+endif()
+if(O_BIGNUM)
+  list(APPEND SWIPL_TEST_DIRS rational)
+endif()
+
+add_test(NAME swipl:abi-version
+	 COMMAND ${PROG_SWIPL} --abi-version)
+add_test(NAME swipl:basic
+	 COMMAND ${PROG_SWIPL} -f none --no-packs --on-error=status
+	 -q ${CMAKE_CURRENT_SOURCE_DIR}/tests/test.pl --no-subdirs)
+foreach(test ${SWIPL_TEST_DIRS})
+  add_test(NAME swipl:${test}
+	   COMMAND ${PROG_SWIPL} -f none --no-packs --on-error=status
+	   -q ${CMAKE_CURRENT_SOURCE_DIR}/tests/test.pl --no-core ${test})
+endforeach()
+
 # Install a prolog script to run tests on target device
 # in which ctest is not available
 if(INSTALL_TESTS)
   set(INSTALL_TESTS_DIR ${SWIPL_INSTALL_PREFIX}/test)
   set(PKGS_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/packages)
   set(INSTALL_TESTS_DB ${CMAKE_BINARY_DIR}/cmake_pkg_tests.db)
+
+# Use a function to scope CMAKE_INSTALL_DEFAULT_COMPONENT_NAME
+function(install_tests)
+  set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME Tests)
+  install(DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}/tests/
+          DESTINATION ${INSTALL_TESTS_DIR}
+	  PATTERN "*~" EXCLUDE)
   #Move test db to installation
   install(FILES       ${INSTALL_TESTS_DB}
-	  DESTINATION ${INSTALL_TESTS_DIR}
-	  COMPONENT   Tests)
+	  DESTINATION ${INSTALL_TESTS_DIR})
   file(REMOVE ${INSTALL_TESTS_DB})
+endfunction()
+
+install_tests()
 endif(INSTALL_TESTS)
 
 # Add the packages
@@ -289,6 +363,9 @@ endif()
 
 # Check for environment variables that may cause the build to fail
 include(CheckEnv)
+
+# Configure and install desktop integration files.
+include(Desktop)
 
 # Packaging
 include(Pack)

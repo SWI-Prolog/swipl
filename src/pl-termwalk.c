@@ -71,50 +71,31 @@ initTermAgenda(term_agenda *a, size_t size, Word p)
 
 static inline void
 clearTermAgenda(term_agenda *a)
-{ clearSegStack(&a->stack);
+{ discardSegStack(&a->stack);
+}
+
+
+static inline Word
+nextTermAgendaNoDeRef(term_agenda *a)
+{ if ( unlikely(a->work.size == 0) &&
+       !popSegStack(&a->stack, &a->work, aNode) )
+    return NULL;
+
+  a->work.size--;
+  return a->work.location++;
 }
 
 
 #define nextTermAgenda(a) LDFUNC(nextTermAgenda, a)
 static inline Word
 nextTermAgenda(DECL_LD term_agenda *a)
-{ Word p;
+{ Word p = nextTermAgendaNoDeRef(a);
 
-  if ( a->work.size > 0 )
-  { ok:
-    a->work.size--;
-    p = a->work.location++;
+  if ( p )
     deRef(p);
 
-    return p;
-  }
-
-  if ( popSegStack(&a->stack, &a->work, aNode) )
-    goto ok;
-
-  return NULL;
+  return p;
 }
-
-
-static inline Word
-nextTermAgendaNoDeRef(term_agenda *a)
-{ Word p;
-
-  if ( a->work.size > 0 )
-  { ok:
-    a->work.size--;
-    p = a->work.location++;
-
-    return p;
-  }
-
-  if ( popSegStack(&a->stack, &a->work, aNode) )
-    goto ok;
-
-  return NULL;
-}
-
-
 
 
 		 /*******************************
@@ -123,14 +104,16 @@ nextTermAgendaNoDeRef(term_agenda *a)
 
 static inline int
 pushWorkAgenda(term_agenda *a, size_t amount, Word start)
-{ if ( a->work.size > 0 )
-  { if ( !pushSegStack(&a->stack, a->work, aNode) )
-      return FALSE;
+{ if ( amount )
+  { if ( a->work.size > 0 )
+    { if ( !pushSegStack(&a->stack, a->work, aNode) )
+	return false;
+    }
+    a->work.location = start;
+    a->work.size = amount;
   }
-  a->work.location = start;
-  a->work.size = amount;
 
-  return TRUE;
+  return true;
 }
 
 #endif /*!AC_TERM_WALK*/
@@ -201,16 +184,16 @@ ac_pushTermAgenda(DECL_LD ac_term_agenda *a, word w, functor_t *fp)
 { Functor term = valueTerm(w);
 
   if ( is_marked((Word)&term->definition) )
-    return FALSE;			/* hit cycle */
+    return false;			/* hit cycle */
   if ( !pushSegStack(&a->stack, a->work, acNode) )
     return -1;				/* no memory */
   a->work.term     = term;
   a->work.location = term->arguments;
   a->work.size     = arityFunctor(term->definition);
-  *fp              = term->definition;
+  *fp              = word2functor(term->definition);
   set_marked((Word)&term->definition);
 
-  return TRUE;
+  return true;
 }
 
 #endif /*AC_TERM_WALK*/
@@ -281,11 +264,11 @@ nextTermAgenda_P(DECL_LD term_agenda_P *a)
 		 *	  PUSH VARIATIONS	*
 		 *******************************/
 
-static inline int
+static inline bool
 pushWorkAgenda_P(term_agenda_P *a, size_t amount, Word start)
 { if ( a->work.size > 0 )
   { if ( !pushSegStack(&a->stack, a->work, aNode_P) )
-      return FALSE;
+      return false;
     a->work.depth = 1;
   } else
     a->work.depth++;
@@ -293,7 +276,19 @@ pushWorkAgenda_P(term_agenda_P *a, size_t amount, Word start)
   a->work.location = start;
   a->work.size     = amount;
 
-  return TRUE;
+  return true;
+}
+
+static inline bool		/* Avoid last-argument POP merge */
+pushWorkAgenda_P0(term_agenda_P *a, size_t amount, Word start)
+{ if ( !pushSegStack(&a->stack, a->work, aNode_P) )
+    return false;
+  a->work.depth = 1;
+
+  a->work.location = start;
+  a->work.size     = amount;
+
+  return true;
 }
 
 #endif /*!AC_TERM_WALK_POP*/
@@ -337,7 +332,7 @@ initTermAgendaLR0(term_agendaLR *a)
 
 static void
 clearTermAgendaLR(term_agendaLR *a)
-{ clearSegStack(&a->stack);
+{ discardSegStack(&a->stack);
 }
 
 
@@ -349,13 +344,13 @@ nextTermAgendaLR(term_agendaLR *a, Word *lp, Word *rp)
     *lp = a->work.left++;
     *rp = a->work.right++;
 
-    return TRUE;
+    return true;
   }
 
   if ( popSegStack(&a->stack, &a->work, aNodeLR) )
     goto ok;
 
-  return FALSE;
+  return false;
 }
 
 
@@ -363,13 +358,13 @@ static inline int
 pushWorkAgendaLR(term_agendaLR *a, size_t amount, Word left, Word right)
 { if ( a->work.size > 0 )
   { if ( !pushSegStack(&a->stack, a->work, aNodeLR) )
-      return FALSE;
+      return false;
   }
   a->work.left  = left;
   a->work.right = right;
   a->work.size  = amount;
 
-  return TRUE;
+  return true;
 }
 
 #endif /*AC_TERM_WALK_LR*/
@@ -427,13 +422,13 @@ nextTermAgendaLRD(term_agendaLRD *a, Word *lp, Word *rp)
     *lp = a->work.left++;
     *rp = a->work.right++;
 
-    return TRUE;
+    return true;
   }
 
   if ( popSegStack(&a->stack, &a->work, aNodeLRD) )
     goto ok;
 
-  return FALSE;
+  return false;
 }
 
 
@@ -441,14 +436,14 @@ static inline int
 pushWorkAgendaLRD(term_agendaLRD *a, size_t amount, Word left, Word right)
 { if ( a->work.size > 0 )
   { if ( !pushSegStack(&a->stack, a->work, aNodeLRD) )
-      return FALSE;
+      return false;
   }
   a->work.left  = left;
   a->work.right = right;
   a->work.size  = amount;
   a->work.depth++;
 
-  return TRUE;
+  return true;
 }
 
 #endif /*AC_TERM_WALK_LRD*/
@@ -511,21 +506,21 @@ nextTermAgendaLRS(DECL_LD term_agendaLRS *a, Word *lp, Word *rp)
   { (*a->pop)(a->work.left, a->work.right, a->work.data);
     a->work.arg = -1;
     if ( !popSegStack(&a->stack, &a->work, aNodeLRS) )
-      return FALSE;
+      return false;
   }
 
   deRef2(&a->work.left->arguments[a->work.arg], p); *lp = p;
   deRef2(&a->work.right->arguments[a->work.arg],p); *rp = p;
   a->work.arg++;
 
-  return TRUE;
+  return true;
 }
 
 
 static int
 pushWorkAgendaLRS(term_agendaLRS *a, Functor left, Functor right, void *data)
 { if ( !pushSegStack(&a->stack, a->work, aNodeLRS) )
-    return FALSE;
+    return false;
 
   a->work.data  = data;
   a->work.left  = left;
@@ -533,8 +528,7 @@ pushWorkAgendaLRS(term_agendaLRS *a, Functor left, Functor right, void *data)
   a->work.arg   = 0;
   a->work.arity = arityFunctor(left->definition);
 
-  return TRUE;
+  return true;
 }
 
 #endif /*AC_TERM_WALK_LRS*/
-

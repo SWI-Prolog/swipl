@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2012-2022, University of Amsterdam
+    Copyright (c)  2012-2024, University of Amsterdam
 			      VU University Amsterdam
 			      CWI, Amsterdam
 			      SWI-Prolog Solutions b.v.
@@ -98,9 +98,13 @@ option  parsing,  initialisation  and  handling  of errors and warnings.
 #include <mcheck.h>
 #endif
 
-static int	usage(void);
-static int	giveVersionInfo(const char *a);
+static bool	usage(void);
+static bool	giveVersionInfo(const char *a);
 static bool	vsysError(const char *errtype, const char *fm, va_list args);
+static const char* abi_version(void);
+
+#define ABI_MAX 50
+static char abi_version_buf[ABI_MAX];
 
 #define	optionString(s) { if (argc > 1) \
 			  { if ( s ) remove_string(s); \
@@ -185,28 +189,28 @@ is_bool_opt(const char *opt, const char *name, int *val)
 	 strcasecmp(optval, "true") == 0 ||
 	 strcasecmp(optval, "yes") == 0 ||
 	 strcasecmp(optval, "y") == 0 )
-    { *val = TRUE;
-      return TRUE;
+    { *val = true;
+      return true;
     }
     if ( strcasecmp(optval, "false") == 0 ||
 	 strcasecmp(optval, "no") == 0 ||
 	 strcasecmp(optval, "n") == 0 )
-    { *val = FALSE;
-      return TRUE;
+    { *val = false;
+      return true;
     }
 
     return -1;
   } else if ( strncmp(opt, "no", 2) == 0 &&
 	      (optval=is_longopt(skip_wsep(opt+2),name)) )
   { if ( *optval == EOS )
-    { *val = FALSE;
-      return TRUE;
+    { *val = false;
+      return true;
     }
 
     return -1;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -221,8 +225,77 @@ opt_append(opt_list **l, const char *s)
     l = &(*l)->next;
   *l = n;
 
-  return TRUE;
+  return true;
 }
+
+static void
+remove_trailing_whitespace(char *s)
+{ char *e = s+strlen(s);
+  while(e>s && e[-1] <= ' ')
+    e--;
+  *e = EOS;
+}
+
+
+#define BAD_HOME_NO_ABI       -1
+#define BAD_HOME_BAD_ABI      -2
+#define BAD_HOME_ABI_MISMATCH -3
+#define BAD_HOME_NO_DIR       -4
+
+static int
+match_abi_version(const char *required, const char *match)
+{ return strcmp(required, match) == 0 ? 1 : BAD_HOME_ABI_MISMATCH;
+}
+
+static int
+check_home(const char *dir)
+{ char abi_file_name[PATH_MAX];
+  char abi_buf[ABI_MAX];
+  IOSTREAM *fd;
+
+  Ssnprintf(abi_file_name, sizeof(abi_file_name),
+	    "%s/ABI", dir);
+  if ( (fd = Sopen_file(abi_file_name, "r")) )
+  { char *abi_string = Sfgets(abi_buf, sizeof(abi_buf), fd);
+    Sclose(fd);
+    if ( abi_string )
+    { remove_trailing_whitespace(abi_string);
+      return match_abi_version(abi_version(), abi_string);
+    } else
+    { return BAD_HOME_BAD_ABI;
+    }
+  } else
+  { if ( ExistsDirectory(dir) )
+      return BAD_HOME_NO_ABI;
+    else
+      return BAD_HOME_NO_DIR;
+  }
+
+  return false;
+}
+
+static void
+warn_bad_home(const char *prefix, const char *dir, int code)
+{ const char *why = "?";
+
+  switch(code)
+  { case BAD_HOME_NO_ABI:
+      why = "no ABI file";
+      break;
+    case BAD_HOME_BAD_ABI:
+      why = "invalid ABI file";
+      break;
+    case BAD_HOME_ABI_MISMATCH:
+      why = "ABI mismatch";
+      break;
+    case BAD_HOME_NO_DIR:
+      why = "no such directory";
+      break;
+  }
+
+  Sdprintf("%s%s: %s\n", prefix, dir, why);
+}
+
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -240,127 +313,244 @@ If `--home` is given (without a dir),   follow the above steps exept for
 status 1.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static char *
-findHome(const char *symbols, int argc, const char **argv)
-{ char *home = NULL;
-  char *maybe_home;
-  char envbuf[PATH_MAX];
-  char plp[PATH_MAX];
-  const char *homeopt = find_longopt("home", argc, argv);
-  const char *val;
-  const char *envvar;
+/* Try to find the home directory from PLHOMEVAR_1 or PLHOMEVAR_2
+ */
 
-  if ( homeopt && (val=is_longopt(homeopt, "home")) && val[0] )
-  { if ( (home=PrologPath(val, plp, sizeof(plp))) )
-      return store_string(home);
-    return NULL;
-  }
+#if defined(PLHOMEVAR_1) || defined(PLHOMEVAR_2)
+static char *
+findHomeFromEnvironment(char *buf, size_t size)
+{ char envbuf[PATH_MAX];
+  const char *envvar;
+  char *home;
 
 #ifdef PLHOMEVAR_1
-  if ( !(maybe_home = Getenv((envvar=PLHOMEVAR_1), envbuf, sizeof(envbuf))) )
+  if ( !(home = Getenv((envvar=PLHOMEVAR_1), envbuf, sizeof(envbuf))) )
   {
 #ifdef PLHOMEVAR_2
-    maybe_home = Getenv((envvar=PLHOMEVAR_2), envbuf, sizeof(envbuf));
+    home = Getenv((envvar=PLHOMEVAR_2), envbuf, sizeof(envbuf));
 #endif
   }
-  if ( maybe_home &&
-       (maybe_home = PrologPath(maybe_home, plp, sizeof(plp))) &&
-       ExistsDirectory(maybe_home) )
-  { home = maybe_home;
-    DEBUG(MSG_INITIALISE,
-	  Sdprintf("Found home using env %s\n", envvar));
-    goto out;
+
+  if ( home && (home = PrologPath(home, buf, size)) )
+  { DEBUG(MSG_INITIALISE,
+	  Sdprintf("Trying home from env %s\n", envvar));
   }
   (void)envvar;
+
+  return home;
+#endif
+
+  return NULL;
+}
 #endif
 
 #ifdef PLHOMEFILE
-  if ( (maybe_home = (char*)symbols) )
-  { char buf[PATH_MAX];
+static char *
+findHomeFromExecutable(const char *symbols, char *buf, size_t size)
+{ char *home;
+
+  if ( (home = (char*)symbols) )
+  { char linkfile[PATH_MAX];	/* PLHOMEFILE ("swipl.home") */
     char parent[PATH_MAX];
     IOSTREAM *fd;
     char *pparent;
 
-    if ( !(pparent=DirName(DirName(AbsoluteFile(maybe_home,parent,sizeof(parent)),
+    if ( !(pparent=DirName(DirName(AbsoluteFile(home,parent,sizeof(parent)),
 				   parent),
 			   parent)) ||
 	 strlen(PLHOMEFILE) + 1 + strlen(pparent) + 1 > sizeof(parent) )
-      fatalError("File name too long: %s", home);
+    { fatalError("File name too long: %s", home);
+      return NULL;
+    }
 
-    Ssnprintf(buf, sizeof(buf), "%s/" PLHOMEFILE, pparent);
+    Ssnprintf(linkfile, sizeof(linkfile), "%s/" PLHOMEFILE, pparent);
 
-    if ( (fd = Sopen_file(buf, "r")) )
-    { DEBUG(MSG_INITIALISE, Sdprintf("Found home link file %s\n", buf));
+    if ( (fd = Sopen_file(linkfile, "r")) )
+    { char linkbuf[PATH_MAX];
+      char *link = Sfgets(linkbuf, sizeof(linkbuf), fd);
 
-      if ( Sfgets(buf, sizeof(buf), fd) )
-      { size_t l = strlen(buf);
+      Sclose(fd);
+      DEBUG(MSG_INITIALISE, Sdprintf("Found home link file %s\n", linkfile));
 
-	while(l > 0 && buf[l-1] <= ' ')
-	  l--;
-	buf[l] = EOS;
+      if ( link )
+      { remove_trailing_whitespace(link);
 
 #if O_XOS
-      { char buf2[PATH_MAX];
-	_xos_canonical_filename(buf, buf2, PATH_MAX, 0);
-	strcpy(buf, buf2);
-      }
+	char buf2[PATH_MAX];
+	_xos_canonical_filename(link, buf2, sizeof(buf2), 0);
+	strcpy(link, buf2);
 #endif
-
-	if ( !IsAbsolutePath(buf) )
+	if ( !IsAbsolutePath(link) )
 	{ char buf2[PATH_MAX];
 
-	  if ( Ssnprintf(buf2, sizeof(buf2), "%s/%s", parent, buf) < 0 ||
-	       !(maybe_home = AbsoluteFile(buf2, plp, sizeof(plp))) )
-	    fatalError("Path name too long: %s/%s", parent, buf);
+	  if ( Ssnprintf(buf2, sizeof(buf2), "%s/%s", parent, link) < 0 ||
+	       !(home = AbsoluteFile(buf2, buf, size)) )
+	  { fatalError("Path name too long: %s/%s", parent, link);
+	    return NULL;
+	  }
 	} else
-	{ if ( !(maybe_home = AbsoluteFile(buf, plp, sizeof(plp))) )
-	    fatalError("Path name too long: %s/%s", buf);
+	{ if ( !(home = AbsoluteFile(link, buf, size)) )
+	  { fatalError("Path name too long: %s", link);
+	    return NULL;
+	  }
 	}
 
-	if ( ExistsDirectory(maybe_home) )
-	{ home = maybe_home;
-	  DEBUG(MSG_INITIALISE,
-		Sdprintf("Found home %s using link file\n", home));
-	}
+	DEBUG(MSG_INITIALISE,
+	      Sdprintf("Trying home %s from link file\n", home));
+	return home;
       }
-      Sclose(fd);
     }
   }
+
+  return NULL;
+}
 #endif /*PLHOMEFILE*/
+
+/* Find home is absoluteFile(dirName(symbols)+"/"+PLRELHOME)
+ */
+
 #ifdef PLRELHOME
-  if ( !home && symbols )
+static char *
+findRelHome(const char *symbols, char *buf, size_t size)
+{ char *home;
+
+  if ( symbols )
   { char bindir[PATH_MAX];
     char *o;
 
     strcpy(bindir, symbols);
     DirName(bindir, bindir);
     if ( strlen(bindir)+strlen(PLRELHOME)+2 > sizeof(bindir) )
-      fatalError("Executable path name too long");
+    { fatalError("Executable path name too long");
+      return NULL;
+    }
     o = bindir+strlen(bindir);
     *o++ = '/';
     strcpy(o, PLRELHOME);
-    if ( ExistsDirectory(bindir) )
-    { if ( !(home=AbsoluteFile(bindir, plp, sizeof(plp))) )
-	fatalError("Executable path name too long");
-      DEBUG(MSG_INITIALISE,
-	    Sdprintf("Found home using %s from %s\n", PLRELHOME, symbols));
+    if ( !(home=AbsoluteFile(bindir, buf, size)) )
+    { fatalError("Executable path name too long");
+      return NULL;
+    }
+    DEBUG(MSG_INITIALISE,
+	  Sdprintf("Trying home %s from dir(%s)/" PLRELHOME "\n", home, symbols));
+    return home;
+  }
+
+  return NULL;
+}
+#endif
+
+
+static char *
+searchHome(const char *symbols, bool verbose)
+{
+#ifdef __WINDOWS__
+#define ENVA "%"
+#define ENVZ "%"
+#else
+#define ENVA "$"
+#define ENVZ ""
+#endif
+
+  for(int i=0; ; i++)
+  { char plp[PATH_MAX];
+    char *home = NULL;
+    const char *source = NULL;
+    const char *ctx = NULL;
+
+    switch(i)
+    { case 0:
+#if defined(PLHOMEVAR_1) || defined(PLHOMEVAR_2)
+	source = "environment " ENVA PLHOMEVAR_1 ENVZ
+		 " or " ENVA PLHOMEVAR_2 ENVZ;
+	home = findHomeFromEnvironment(plp, sizeof(plp));
+#endif
+	break;
+      case 1:
+#ifdef PLHOMEFILE
+	source = "using \"" PLHOMEFILE "\" from";
+	ctx = symbols;
+	home = findHomeFromExecutable(symbols, plp, sizeof(plp));
+#endif
+	break;
+      case 2:
+#ifdef PLRELHOME
+	source = PLRELHOME " relative relative to";
+	ctx = symbols;
+	home = findRelHome(symbols, plp, sizeof(plp));
+#endif
+	break;
+      case 3:
+#ifdef PLHOME
+	source = "compiled in";
+	home = PrologPath(PLHOME, plp, sizeof(plp));
+#endif
+	break;
+      default:
+	return NULL;
+    }
+
+    if ( !source )
+      continue;
+
+    int rc = 0;
+    if ( home && (rc=check_home(home)) > 0 )
+    { char abs[PATH_MAX];
+
+      if ( !IsAbsolutePath(home) &&
+	   !(home=AbsoluteFile(home, abs, sizeof(abs))) )
+      { fatalError("Executable path name too long");
+	return NULL;
+      }
+
+      return store_string(home);
+    } else if ( verbose )
+    { if ( ctx )
+	Sdprintf("  Tried source: %s \"%s\"\n", source, ctx);
+      else
+	Sdprintf("  Tried source: %s\n", source);
+      if ( home )
+	warn_bad_home("    Found ", home, rc);
     }
   }
-#endif
+}
 
-#ifdef PLHOME
-  if ( !home &&
-       ( (maybe_home = PrologPath(PLHOME, plp, sizeof(plp))) &&
-	 ExistsDirectory(maybe_home)
-       ) )
-  { home = maybe_home;
-    DEBUG(MSG_INITIALISE, Sdprintf("Using compiled-in home at %s\n", PLHOME));
+static bool
+is_boot_session(int argc, const char **argv)
+{ for(int i=0; i<argc && argv[i]; i++)
+  { if ( strcmp(argv[i], "-b") == 0 )
+      return true;
+    if ( strcmp(argv[i], "--") == 0 )
+      break;
   }
-#endif
 
-out:
-  if ( home )
-    home = store_string(home);
+  return false;
+}
+
+static char *
+findHome(const char *symbols, int argc, const char **argv)
+{ char *home = NULL;
+  const char *homeopt = find_longopt("home", argc, argv);
+  const char *val;
+
+  if ( homeopt && (val=is_longopt(homeopt, "home")) && val[0] )
+  { char tmp[PATH_MAX];
+    char plp[PATH_MAX];
+
+    if ( (home=PrologPath(val, tmp, sizeof(tmp))) &&
+	 (home=AbsoluteFile(home, plp, sizeof(plp))) )
+    { home = store_string(home);
+      int rc = check_home(home);
+      if ( rc < 0 && !is_boot_session(argc, argv) )
+	warn_bad_home("WARNING: Invalid SWI-Prolog home directory ", home, rc);
+      return home;
+    } else
+    { fatalError("--home option too long");
+      return NULL;
+    }
+  }
+
+  home = searchHome(symbols, false);
 
   if ( homeopt )
   { if ( home )
@@ -373,6 +563,17 @@ out:
   }
 
   return home;
+}
+
+static void
+fatalNoResources(void)
+{ if ( systemDefaults.home )
+  { fatalError("Could not find system resources at %s", systemDefaults.home);
+  } else
+  { Sdprintf("FATAL: could not find SWI-Prolog home\n");
+    searchHome(GD->paths.executable, true);
+    exit(1);
+  }
 }
 
 /*
@@ -416,13 +617,13 @@ is_hash_bang_file(const char *s)
 { char fb[PATH_MAX];
   char *fn;
   IOSTREAM *fd;
-  int rc = FALSE;
+  int rc = false;
 
   if ( (fn = PrologPath(s, fb, sizeof(fb))) &&
        (fd = Sopen_file(fb, "r")) )
   { if ( Sgetc(fd) == '#' &&
 	 Sgetc(fd) == '!' )
-      rc = TRUE;
+      rc = true;
 
     Sclose(fd);
   }
@@ -498,17 +699,15 @@ setupGNUEmacsInferiorMode(void)
   if ( ((s = Getenv("EMACS", envbuf, sizeof(envbuf))) && s[0]) ||
        ((s = Getenv("INSIDE_EMACS", envbuf, sizeof(envbuf))) && s[0]) ||
        ((s = Getenv("INFERIOR", envbuf, sizeof(envbuf))) && streq(s, "yes")) )
-  { GET_LD
-
-    clearPrologFlagMask(PLFLAG_TTY_CONTROL);
-    val = TRUE;
+  { PL_set_prolog_flag("tty_control", PL_BOOL, false);
+    val = true;
 #ifdef __WINDOWS__
     Sinput->flags  |= SIO_ISATTY;
     Soutput->flags |= SIO_ISATTY;
     Serror->flags  |= SIO_ISATTY;
 #endif
   } else
-  { val = FALSE;
+  { val = false;
   }
 
   PL_set_prolog_flag("emacs_inferior_process", PL_BOOL|FF_READONLY, val);
@@ -633,17 +832,19 @@ initDefaults(void)
   getDefaultsFromRegistry();
 #endif
 
-  GD->io_initialised	     = FALSE;
-  GD->initialised	     = FALSE;
-  GD->bootsession	     = FALSE;
+  GD->io_initialised	     = false;
+  GD->initialised	     = false;
+  GD->bootsession	     = false;
 #ifdef SIG_ALERT
   GD->signals.sig_alert      = SIG_ALERT;
 #endif
 
-  if ( systemDefaults.notty )
-    clearPrologFlagMask(PLFLAG_TTY_CONTROL);
-  else
-    setPrologFlagMask(PLFLAG_TTY_CONTROL);
+  if ( !current_prolog_flag("tty_control") )
+  { if ( systemDefaults.notty )
+      clearPrologFlagMask(PLFLAG_TTY_CONTROL);
+    else
+      setPrologFlagMask(PLFLAG_TTY_CONTROL);
+  }
 
   setPrologFlagMask(PLFLAG_DEBUGINFO);
   setPrologFlagMask(PLFLAG_GCTHREAD);
@@ -673,7 +874,7 @@ again:
   for(;;)
   { switch(c = Sgetc(s))
     { case EOF:
-	return FALSE;
+	return false;
       case '=':
 	addBuffer(name, EOS, char);
 	goto do_value;
@@ -681,7 +882,7 @@ again:
 	discardBuffer(name);
 	goto again;
       default:
-	addBuffer(name, c, char);
+	addBuffer(name, (char)c, char);
     }
   }
 
@@ -691,9 +892,9 @@ do_value:
     { case EOF:
       case '\n':
 	addBuffer(value, EOS, char);
-	return TRUE;
+	return true;
       default:
-	addBuffer(value, c, char);
+	addBuffer(value, (char)c, char);
     }
   }
 }
@@ -701,7 +902,7 @@ do_value:
 
 static int
 loadStateOptions(IOSTREAM *opts)
-{ int rc = FALSE;
+{ int rc = false;
   tmp_buffer name;
   tmp_buffer val;
 
@@ -709,7 +910,7 @@ loadStateOptions(IOSTREAM *opts)
   { set_pl_option(baseBuffer(&name, char), baseBuffer(&val, char));
     discardBuffer(&name);
     discardBuffer(&val);
-    rc = TRUE;		/* check really modified? */
+    rc = true;		/* check really modified? */
   }
 
   return rc;
@@ -741,11 +942,11 @@ initDefaultOptions(void)
 
 int
 setTraditional(void)
-{ GD->options.traditional = TRUE;
+{ GD->options.traditional = true;
   if ( GD->atoms.table )
     resetListAtoms();
 
-  return TRUE;
+  return true;
 }
 
 
@@ -784,52 +985,49 @@ parseCommandLineOptions(int argc0, char **argv0, char **argvleft)
 	break;
 
       if ( (rc=is_bool_opt(s, "quiet", &b)) )
-      { if ( rc == TRUE )
+      { if ( rc == true )
 	{ if ( b )
-	    GD->options.silent = TRUE;
+	    GD->options.silent = true;
 	} else
 	  return -1;
       } else if ( (rc=is_bool_opt(s, "debug_on_interrupt", &b)) )
-      { if ( rc == TRUE )
+      { if ( rc == true )
 	{ if ( b )
 	    setPrologFlagMask(PLFLAG_DEBUG_ON_INTERRUPT);
 	} else
 	  return -1;
       } else if ( (rc=is_bool_opt(s, "debug", &b)) )
-      { if ( rc == TRUE )
+      { if ( rc == true )
 	{ if ( !b )
 	    clearPrologFlagMask(PLFLAG_DEBUGINFO);
 	} else
 	  return -1;
       } else if ( (rc=is_bool_opt(s, "signals", &b)) )
-      { if ( rc == TRUE )
+      { if ( rc == true )
 	{ if ( !b )
 	  { clearPrologFlagMask(PLFLAG_SIGNALS);
-	    GD->options.nosignals = TRUE;
+	    GD->options.nosignals = true;
 	  }
 	} else
 	  return -1;
       } else if ( (rc=is_bool_opt(s, "threads", &b)) )
-      { if ( rc == TRUE )
+      { if ( rc == true )
 	{ if ( !b )
-	    GD->options.nothreads = TRUE;
+	    GD->options.nothreads = true;
 	} else
 	  return -1;
       } else if ( (rc=is_bool_opt(s, "tty", &b)) )
-      { if ( rc == TRUE )
-	{ if ( b )
-	    setPrologFlagMask(PLFLAG_TTY_CONTROL);
-	  else
-	    clearPrologFlagMask(PLFLAG_TTY_CONTROL);
-	} else
+      { if ( rc == true )
+	  PL_set_prolog_flag("tty_control", PL_BOOL, b);
+	else
 	  return -1;
       } else if ( (rc=is_bool_opt(s, "pce", &b)) )
-      { if ( rc == TRUE )
+      { if ( rc == true )
 	  GD->options.xpce = b;
 	else
 	  return -1;
       } else if ( (rc=is_bool_opt(s, "packs", &b)) )
-      { if ( rc == TRUE )
+      { if ( rc == true )
 	  GD->cmdline.packs = b;
 	else
 	  return -1;
@@ -839,7 +1037,7 @@ parseCommandLineOptions(int argc0, char **argv0, char **argvleft)
       { /* already handled */
 #ifdef __WINDOWS__
       } else if ( (optval=is_longopt(s, "win_app")) )
-      { GD->options.win_app = TRUE;
+      { GD->options.win_app = true;
 #endif
       } else if ( (optval=is_longopt(s, "traditional")) )
       { setTraditional();
@@ -897,7 +1095,7 @@ parseCommandLineOptions(int argc0, char **argv0, char **argvleft)
 
     if ( streq(s, "tty") )
     { Sdprintf("Warning: `-tty` is deprecated.  Please use `--no-tty`\n");
-      clearPrologFlagMask(PLFLAG_TTY_CONTROL);
+      PL_set_prolog_flag("tty_control", PL_BOOL, false);
       continue;
     }
 
@@ -915,14 +1113,14 @@ parseCommandLineOptions(int argc0, char **argv0, char **argvleft)
     while(*s)
     { switch(*s)
       { case 'd':	if ( argc > 1 )
-			{ prolog_debug_from_string(argv[1], TRUE);
+			{ prolog_debug_from_string(argv[1], true);
 			  argc--, argv++;
 			} else
 			  return -1;
 			break;
 	case 'p':	optionList(&GD->options.search_paths);
 			break;
-	case 'O':	GD->cmdline.optimise = TRUE; /* see initPrologFlags() */
+	case 'O':	GD->cmdline.optimise = true; /* see initPrologFlags() */
 			break;
 	case 'x':	optionString(GD->options.bootFrom);
 			break;
@@ -939,11 +1137,11 @@ parseCommandLineOptions(int argc0, char **argv0, char **argvleft)
 			break;
 	case 't':	optionString(GD->options.topLevel);
 			break;
-	case 'c':	GD->options.compile = TRUE;
+	case 'c':	GD->options.compile = true;
 			break;
-	case 'b':	GD->bootsession = TRUE;
+	case 'b':	GD->bootsession = true;
 			break;
-	case 'q':	GD->options.silent = TRUE;
+	case 'q':	GD->options.silent = true;
 			break;
 	default:
 	{ if ( s == &argv[0][1] )
@@ -1035,7 +1233,7 @@ openResourceDB(int is_hash_bang)
 }
 
 
-int
+bool
 PL_is_initialised(int *argc, char ***argv)
 { if ( GD->initialised )
   { if ( argc )
@@ -1043,14 +1241,14 @@ PL_is_initialised(int *argc, char ***argv)
     if ( argv )
       *argv = GD->cmdline.os_argv;
 
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
-int
+bool
 PL_winitialise(int argc, wchar_t **wargv)
 { char **argv;
   tmp_buffer b;
@@ -1059,7 +1257,7 @@ PL_winitialise(int argc, wchar_t **wargv)
   char *abuf, *op;
 
   if ( !(argv = malloc((argc+1)*sizeof(*argv))) )
-    return FALSE;
+    return false;
 
   initBuffer(&b);
   for(i=0; i<argc; i++)
@@ -1067,7 +1265,7 @@ PL_winitialise(int argc, wchar_t **wargv)
 
     for(w = wargv[i]; *w; w++)
     { if ( *w < 0x7f )
-      { char c = *w;
+      { char c = (char)*w;
 	addBuffer(&b, c, char);
       } else
       { char wb[6];
@@ -1082,7 +1280,7 @@ PL_winitialise(int argc, wchar_t **wargv)
 
   sz = entriesBuffer(&b, char);
   if ( !(abuf = malloc(sz)) )
-    return FALSE;
+    return false;
   memcpy(abuf, baseBuffer(&b, char), sz);
   discardBuffer(&b);
   op = abuf;
@@ -1124,9 +1322,9 @@ Steps:
           from options.txt.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+bool
 PL_initialise(int argc, char **argv)
-{ int is_hash_bang = FALSE;
+{ int is_hash_bang = false;
   const char *rcpath = "<none>";
 
   if ( GD->initialised )
@@ -1136,7 +1334,7 @@ PL_initialise(int argc, char **argv)
   /* Initialize debug flag early, if first argument */
   if (argc > 2 && strcmp(argv[1],"-d") == 0)
     /* One's complement tells p_d_f_s not to bail on error, just return */
-    prolog_debug_from_string(argv[2], ~TRUE);
+    prolog_debug_from_string(argv[2], ~true);
 #endif
 
   initAlloc();
@@ -1145,7 +1343,7 @@ PL_initialise(int argc, char **argv)
 
   GD->cmdline.os_argc = argc;
   GD->cmdline.os_argv = argv;
-  GD->cmdline.packs   = TRUE;
+  GD->cmdline.packs   = true;
 
   initOs();				/* Initialise OS bindings */
   initDefaults();			/* Initialise global defaults */
@@ -1157,11 +1355,11 @@ PL_initialise(int argc, char **argv)
 #endif
 
   if ( !GD->resources.DB )
-  { if ( (GD->resources.DB = zip_open_archive(GD->paths.executable, RC_RDONLY)) )
+  { if ( (GD->resources.DB=zip_open_archive(GD->paths.executable, RC_RDONLY)) )
       rcpath = GD->paths.executable;
 #ifdef __WINDOWS__
     else if ( !streq(GD->paths.module, GD->paths.executable) &&
-	      (GD->resources.DB = zip_open_archive(GD->paths.module, RC_RDONLY)) )
+	      (GD->resources.DB=zip_open_archive(GD->paths.module, RC_RDONLY)) )
       rcpath = GD->paths.module;
 #endif
   }
@@ -1185,7 +1383,7 @@ PL_initialise(int argc, char **argv)
       exit(0);
 
     if ( argc > 1 && argv[0][0] != '-' && is_hash_bang_file(argv[0]) )
-      is_hash_bang = TRUE;
+      is_hash_bang = true;
 
     argvleft = PL_malloc(argc*sizeof(*argvleft));
     if ( (done = parseCommandLineOptions(argc, argv, argvleft)) < 0 )
@@ -1194,7 +1392,7 @@ PL_initialise(int argc, char **argv)
     }
     argc = done;
     argv = argvleft;
-    GD->cmdline.appl_malloc = TRUE;
+    GD->cmdline.appl_malloc = true;
 
     if ( GD->bootsession )
     { DEBUG(MSG_INITIALISE, Sdprintf("Boot session\n"));
@@ -1208,7 +1406,7 @@ PL_initialise(int argc, char **argv)
     { IOSTREAM *opts = NULL;
 
       if ( !(GD->resources.DB = openResourceDB(is_hash_bang)) )
-	fatalError("Could not find system resources");
+	fatalNoResources();
       rcpath = zipper_file(GD->resources.DB);
 
       opts = SopenZIP(GD->resources.DB, "$prolog/options.txt", RC_RDONLY);
@@ -1235,12 +1433,21 @@ PL_initialise(int argc, char **argv)
   GD->cmdline.appl_argc = argc;
   GD->cmdline.appl_argv = argv;
 
+#ifdef __WINDOWS__
+  if ( truePrologFlag(PLFLAG_TTY_CONTROL) &&
+       !truePrologFlag(PLFLAG_EPILOG) )
+    PL_w32_wrap_ansi_console();	/* decode ANSI color sequences (ESC[...m) */
+  else
+    PL_set_prolog_flag("color_term", PL_BOOL, false);
+#endif
   setupGNUEmacsInferiorMode();		/* Detect running under EMACS */
 
   if ( !setupProlog() )
-    return FALSE;
-#ifdef O_PLMT
+    return false;
+#ifdef O_ENGINES
   aliasThread(PL_thread_self(), ATOM_thread, ATOM_main);
+#endif
+#ifdef O_PLMT
   enableThreads(!GD->options.nothreads);
 #endif
   PL_set_prolog_flag("resource_database", PL_ATOM|FF_READONLY, rcpath);
@@ -1283,10 +1490,10 @@ PL_initialise(int argc, char **argv)
   { IOSTREAM *statefd = SopenZIP(GD->resources.DB, "$prolog/state.qlf", RC_RDONLY);
 
     if ( statefd )
-    { GD->bootsession = TRUE;
+    { GD->bootsession = true;
       if ( !loadWicFromStream(rcpath, statefd) )
-	return FALSE;
-      GD->bootsession = FALSE;
+	return false;
+      GD->bootsession = false;
 
       Sclose(statefd);
     } else
@@ -1299,7 +1506,7 @@ PL_initialise(int argc, char **argv)
 			    DISCONTIGUOUS_STYLE|
 			    NOEFFECT_CHECK);
   setAccessLevel(ACCESS_LEVEL_USER);
-  GD->initialised = TRUE;
+  GD->initialised = true;
   registerForeignLicenses();
 
   DEBUG(MSG_INITIALISE, Sdprintf("Starting Prolog Part of initialisation\n"));
@@ -1320,18 +1527,18 @@ PL_initialise(int argc, char **argv)
 }
 
 
-int
+bool
 PL_set_resource_db_mem(const unsigned char *data, size_t size)
 { if ( (GD->resources.DB = zip_open_archive_mem(data, size, RC_RDONLY)) )
-    return TRUE;
+    return true;
 
-  return FALSE;
+  return false;
 }
 
 
 typedef const char *cline;
 
-static int
+static bool
 usage(void)
 { char tmp[PATH_MAX];
 
@@ -1399,7 +1606,7 @@ usage(void)
   for(lp = lines; *lp; lp++)
     Sfprintf(Serror, *lp, prog);
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1407,7 +1614,7 @@ static
 PRED_IMPL("$usage", 0, usage, 0)
 { usage();
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1427,7 +1634,7 @@ version(void)
 	  tag[0] ? "-" : "", tag,
 	  PLARCH);
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1435,18 +1642,27 @@ version(void)
 #define PLPKGNAME "swipl"
 #endif
 
-static int
+static const char *
 abi_version(void)
-{ initDefaultOptions();
-  setupProlog();
-  Sprintf(PLPKGNAME "-abi-%d-%d-%08x-%08x\n",
-	  PL_FLI_VERSION,
-	  PL_QLF_LOADVERSION,
-	  GD->foreign.signature,
-	  VM_SIGNATURE);
-  PL_cleanup(0);
+{ if ( !abi_version_buf[0] )
+  { initBuildIns(true);
+    snprintf(abi_version_buf, sizeof(abi_version_buf),
+	     PLPKGNAME "-abi-%d-%d-%08x-%08x",
+	     PL_FLI_VERSION,
+	     PL_QLF_LOADVERSION,
+	     GD->foreign.signature,
+	     VM_SIGNATURE);
+  }
 
-  return TRUE;
+  return abi_version_buf;
+}
+
+
+static bool
+print_abi_version(void)
+{ Sprintf("%s\n", abi_version());
+
+  return true;
 }
 
 
@@ -1454,16 +1670,16 @@ static int
 arch(void)
 { Sprintf("%s\n", PLARCH);
 
-  return TRUE;
+  return true;
 }
 
 
-static int
+static bool
 giveVersionInfo(const char *a)
 { const char *v;
 
   if ( *a++ != '-' || *a++ != '-' )
-    return FALSE;
+    return false;
 
   if ( (v=is_longopt(a, "help")) && !*v )
     return usage();
@@ -1472,9 +1688,9 @@ giveVersionInfo(const char *a)
   if ( (v=is_longopt(a, "version")) && !*v )
     return version();
   if ( (v=is_longopt(a, "abi_version")) && !*v )
-    return abi_version();
+    return print_abi_version();
 
-  return FALSE;
+  return false;
 }
 
 
@@ -1530,7 +1746,7 @@ run_on_halt(OnHalt *handlers, int rval)
     freeHeap(h, sizeof(*h));
   }
 
-  return TRUE;				/* not yet cancelling */
+  return true;				/* not yet cancelling */
 }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1549,7 +1765,7 @@ PL_cleanup(int status)
   int asked_reclaim_memory = (status&PL_CLEANUP_NO_RECLAIM_MEMORY) == 0;
   int reclaim_memory = asked_reclaim_memory;
 
-  if ( GD->cleaning != CLN_NORMAL )
+  if ( GD->halt.cleaning != CLN_NORMAL )
     return PL_CLEANUP_RECURSIVE;
 
   checkPrologFlagsAccess();
@@ -1560,7 +1776,7 @@ PL_cleanup(int status)
 #endif
 
   PL_LOCK(L_INIT);
-  if ( GD->cleaning != CLN_NORMAL )
+  if ( GD->halt.cleaning != CLN_NORMAL )
   { PL_UNLOCK(L_INIT);
     return PL_CLEANUP_RECURSIVE;
   }
@@ -1576,8 +1792,8 @@ PL_cleanup(int status)
   GET_LD
 #endif
 
-  GD->cleaning = CLN_PROLOG;
-  debugmode(FALSE, NULL);		/* avoid recursive tracing */
+  GD->halt.cleaning = CLN_PROLOG;
+  debugmode(false, NULL);		/* avoid recursive tracing */
 
   if ( GD->initialised )
   { DEBUG(MSG_CLEANUP, Sdprintf("Running at_halt hooks\n"));
@@ -1586,20 +1802,20 @@ PL_cleanup(int status)
       emptyStacks();
 
     PL_set_prolog_flag("exit_status", PL_INTEGER, (intptr_t)rval);
-    if ( query_loop(PL_new_atom("$run_at_halt"), FALSE) == FALSE &&
+    if ( query_loop(PL_new_atom("$run_at_halt"), false) == false &&
 	 !(status&PL_CLEANUP_NO_CANCEL) )
-    { if ( ++GD->halt_cancelled	< MAX_HALT_CANCELLED )
-      { GD->cleaning = CLN_NORMAL;
+    { if ( ++GD->halt.cancelled	< MAX_HALT_CANCELLED )
+      { GD->halt.cleaning = CLN_NORMAL;
 	PL_UNLOCK(L_INIT);
 	return PL_CLEANUP_CANCELED;
       }
     }
 
-    GD->cleaning = CLN_FOREIGN;
+    GD->halt.cleaning = CLN_FOREIGN;
     if ( !run_on_halt(&GD->os.on_halt_list, rval) &&
 	 !(status&PL_CLEANUP_NO_CANCEL) )
-    { if ( ++GD->halt_cancelled	< MAX_HALT_CANCELLED )
-      { GD->cleaning = CLN_NORMAL;
+    { if ( ++GD->halt.cancelled	< MAX_HALT_CANCELLED )
+      { GD->halt.cleaning = CLN_NORMAL;
 	PL_UNLOCK(L_INIT);
 	return PL_CLEANUP_CANCELED;
       }
@@ -1616,13 +1832,13 @@ PL_cleanup(int status)
   { if ( reclaim_memory )
     { Sdprintf("WARNING: Failed to stop Prolog threads. "
 	       "Not reclaming memory.\n");
-      reclaim_memory = FALSE;
+      reclaim_memory = false;
     }
   }
 
 emergency:
 #endif
-  GD->cleaning = CLN_IO;
+  GD->halt.cleaning = CLN_IO;
 
   Scurout = Soutput;			/* reset output stream to user */
 
@@ -1630,7 +1846,7 @@ emergency:
   dieIO();				/* streams may refer to foreign code */
 					/* Standard I/O is only flushed! */
 
-  GD->cleaning = CLN_SHARED;
+  GD->halt.cleaning = CLN_SHARED;
 
   if ( GD->initialised )
   { fid_t cid = PL_open_foreign_frame();
@@ -1641,7 +1857,7 @@ emergency:
     PL_discard_foreign_frame(cid);
   }
 
-  GD->cleaning = CLN_DATA;
+  GD->halt.cleaning = CLN_DATA;
 
   RemoveTemporaryFiles();
 
@@ -1750,9 +1966,9 @@ fatalError(const char *fm, ...)
 }
 
 
-int
+bool
 warning(const char *fm, ...)
-{ int rc;
+{ bool rc;
   va_list args;
 
   va_start(args, fm);
@@ -1767,68 +1983,129 @@ warning(const char *fm, ...)
 #define ctime_r(timep, buf) strcpy(buf, ctime(timep))
 #endif
 
-static bool
-vsysError(const char *errtype, const char *fm, va_list args)
+void
+printCrashContext(const char *btname)
 { GET_LD
-  static int active = 0;
   time_t now;
   char tbuf[48];
+  int btflags = 0;
+  static bool running = false;
 
-  if ( active++ )
-  { abort();
+  if ( running )
+  { Sdprintf("Recursive crash; omitting crash report\n");
+    return;
   }
+  running = true;
 
   now = time(NULL);
   ctime_r(&now, tbuf);
   tbuf[24] = '\0';
+  Sdprintf("Time: %s\n", tbuf);
 
 #ifdef O_PLMT
-{ int tid = PL_thread_self();
+  if ( LD )
+#endif
+  { Sdprintf("Inferences: %" PRIu64 "\n", LD->statistics.inferences);
+    if ( gc_status.active )
+    { Sdprintf("Running GC: %" PRIu64 "-th garbage collection]\n",
+	       LD->gc.stats.totals.collections);
+      unblockSignals(&LD->gc.saved_sigmask);
+      btflags |= PL_BT_SAFE;
+    }
+  }
+
+#ifdef O_PLMT
+  int tid = PL_thread_self();
   atom_t alias;
   const pl_wchar_t *name = L"";
 
   if ( PL_get_thread_alias(tid, &alias) )
     name = PL_atom_wchars(alias, NULL);
 
-  SfprintfX(Serror, "[PROLOG %s ERROR:  Thread %d (%Ws) at %s\n\t",
-	    errtype, tid, name, tbuf);
-}
-#else
-  Sfprintf(Serror, "[PROLOG %s ERROR: at %s\n\t", errtype, tbuf);
+  SdprintfX("Thread: %d (%Ws)\n", tid, name);
 #endif
-  Svfprintf(Serror, fm, args);
-  if ( gc_status.active )
-  { Sfprintf(Serror,
-	    "\n[While in %ld-th garbage collection]\n",
-	    LD->gc.stats.totals.collections);
-    unblockSignals(&LD->gc.saved_sigmask);
+
+  print_backtrace_named(btname);
+#ifdef O_PLMT
+  if ( LD )
+#endif
+  { if ( getenv("SWIPL_DEBUG_GC_STACK") )
+    { if ( LD->shift_status.inferences )
+      { Sdprintf("Last stack shift at %" PRIu64 " inferences\n",
+		 LD->shift_status.inferences);
+	print_backtrace_named("SHIFT");
+      }
+      if ( LD->gc.inferences )
+      { Sdprintf("Last garbage collect at %" PRIu64 " inferences\n",
+		 LD->gc.inferences);
+	print_backtrace_named("GC");
+      }
+    }
+    Sdprintf("\n\nPROLOG STACK (without arguments):\n");
+    PL_backtrace(10, PL_BT_SAFE);
+    if ( !(btflags&PL_BT_SAFE) )
+    { Sdprintf("\n\nPROLOG STACK (with arguments; may crash if data is corrupted):\n");
+      PL_backtrace(10, btflags);
+    }
   }
 
+  running = false;
+}
+
+#ifdef HAVE_SETITIMER
+static void
+abort_sig(int sig)
+{ (void)sig;
+  abort();
+}
+#endif
+
+static void
+set_cleanup_timeout(int sec)
+{
+#ifdef HAVE_SETITIMER
+  struct itimerval timeout = {0};
+  struct sigaction act = {0};
+
+  timeout.it_value.tv_sec = sec;
+  act.sa_handler = abort_sig;
+
+  sigaction(SIGALRM, &act, NULL);
+  setitimer(ITIMER_REAL, &timeout, NULL);
+#endif
+}
+
+static bool
+vsysError(const char *errtype, const char *fm, va_list args)
+{ static int active = 0;
+
+  if ( active++ )
+    abort();
+
+  set_cleanup_timeout(30);
+
+  Sfprintf(Serror, "\nERROR: %s error: ", errtype);
+  Svfprintf(Serror, fm, args);
   Sfprintf(Serror, "\n");
-  save_backtrace("SYSERROR");
-  print_backtrace_named("SYSERROR");
 
-#if defined(O_DEBUGGER)
-  Sfprintf(Serror, "\n\nPROLOG STACK:\n");
-  PL_backtrace(10, 0);
-  Sfprintf(Serror, "]\n");
-#endif /*O_DEBUGGER*/
+  save_backtrace(errtype);
+  printCrashContext(errtype);
 
-  if ( !(true(Sinput, SIO_ISATTY) &&
-	 true(Serror, SIO_ISATTY)) ||
+  if ( !(ison(Sinput, SIO_ISATTY) &&
+	 ison(Serror, SIO_ISATTY)) ||
        GD->bootsession )
     PL_abort_process();			/* non-interactive or booting */
 
 action:
+  Sflush(Soutput);
+  ResetTty();
 #ifdef HAVE_GETPID
   Sfprintf(Serror, "\n[pid=%d] Action? ", getpid());
 #else
   Sfprintf(Serror, "\nAction? ");
 #endif
-  Sflush(Soutput);
-  ResetTty();
 
-  switch(getSingleChar(Sinput, FALSE))
+  switch(getSingleChar(Sinput, false))
   { case EOF:
       Sfprintf(Serror, "EOF: exit (status 134)\n");
     case 'e':
@@ -1841,7 +2118,7 @@ action:
       goto action;
   }
 
-  return FALSE;					/* not reached */
+  return false;					/* not reached */
 }
 
 void
@@ -1905,7 +2182,7 @@ move the rest of the warnings gradually. For this reason we make a term
 Where ListOfLines is a list of string objects.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+bool
 vwarning(const char *fm, va_list args)
 { GET_LD
   toldString();				/* play safe */
@@ -1968,12 +2245,37 @@ vwarning(const char *fm, va_list args)
     }
   }
 
-  if ( !ReadingSource && truePrologFlag(PLFLAG_DEBUG_ON_ERROR) )
+  if ( !ReadingSource && truePrologFlag(PLFLAG_DEBUG_ON_ERROR) &&
+       validUserStreams() )
     pl_trace();
 
-  return FALSE;
+  return false;
 }
 
+static
+PRED_IMPL("$run_state", 1, run_state, 0)
+{ const char *rstate;
+
+  switch(GD->halt.cleaning)
+  { case CLN_NORMAL:
+      rstate = "normal";
+      break;
+    case CLN_PROLOG:
+      rstate = "cleanup_prolog";
+      break;
+    case CLN_FOREIGN:
+      rstate = "cleanup_foreign";
+      break;
+    case CLN_IO:
+    case CLN_SHARED:
+    case CLN_DATA:
+    default:
+      assert(0);
+      return false;
+  }
+
+  return PL_unify_atom_chars(A1, rstate);
+}
 
 
 
@@ -1982,5 +2284,6 @@ vwarning(const char *fm, va_list args)
 		 *******************************/
 
 BeginPredDefs(init)
-  PRED_DEF("$usage", 0, usage, 0)
+  PRED_DEF("$usage",     0, usage,     0)
+  PRED_DEF("$run_state", 1, run_state, 0)
 EndPredDefs

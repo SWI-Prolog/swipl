@@ -591,7 +591,7 @@ The suffix specifies the value as \textit{bytes}, \textit{Kbytes},
     \cmdlineoptionitem*{--table-space}{=size[bkmg]}
 Limit for the \arg{table space}. This is where tries holding
 memoized\footnote{The letter M is used because the T was already in
-use. It is a memnonic for \textbf{M}emoizing.} answers for
+use. It is a mnemonic for \textbf{M}emoizing.} answers for
 \jargon{tabling} are stored. The default is 1Gb on 64~bit machines and
 512Mb on 32~bit machines. See the Prolog flag
 \prologflag{table_space}.
@@ -698,10 +698,10 @@ is supported:
 If an xterm compatible terminal emulator is used to run Prolog you may
 wish to load either an explicit theme or \exam{library(theme/auto)}.
 
-    \item[Windows]
-The \program{swipl-win.exe} graphical application can be themed by
+    \item[Epilog Prolog consoles]
+The \program{swipl-win} graphical application can be themed by
 loading a theme file.  The theme file also sets the foreground and
-background colours for the console.
+background colours for the Epilog console.
 \end{description}
 
 
@@ -1439,6 +1439,12 @@ Current break-level. The initial top level (started with
 \cmdlineoption{-t}) has value 0. See break/0. This flag is absent from
 threads that are not running a top-level loop.
 
+    \prologflagitem{bundle}{bool}{r}
+True when SWI-Prolog is installed as a stand-alone bundle.  This is
+set for both the Windows and MacOS binary packages as distributed
+from the SWI-Prolog download page.  This is used to adjust the
+file search configuration.
+
     \prologflagitem{c_cc}{atom}{rw}
 Name of the C compiler used to compile SWI-Prolog.  Normally one of
 \const{gcc}, \const{clang} or \const{cc}.  See \secref{plld}.
@@ -1481,6 +1487,29 @@ module in which it is changed.  See \secref{charescapes}.
 If \const{true} (default), write/1 and friends write escaped characters
 using the \verb$\uXXXX$ or \verb$\UXXXXXXXX$ syntax rather than the
 ISO Prolog \verb$\x<hex>\$ syntax.  SWI-Prolog reads both.
+
+    \prologflagitem{ci_speedup}{float}{rw}
+Consider generating a hash for clause indexing if the hash has
+a speedup of at least this flag.  Default is 1.5.
+
+    \prologflagitem{ci_max_var_fraction}{float}{rw}
+Do not create a clause indexing hash table of the argument is
+unbound in the clause for more than this fraction of clauses.
+Default is 0.1.
+
+    \prologflagitem{ci_min_speedup_ratio}{float}{rw}
+Consider adding a multi-argument hash if it is at lease this
+values as efficient.  Default is 3.0.
+
+    \prologflagitem{ci_max_lookahead}{integer}{rw}
+If a clause is found, scan the clause list of a possible
+alternative match for at max this number of clauses.  Default
+is 100.
+
+    \prologflagitem{ci_min_clauses}{integer}{rw}
+If the primary index argument (first) is instantiated, still
+consider a hash of the predicate has more than this number of
+clauses.  Default is 10.
 
     \prologflagitem{cmake_build_type}{atom}{ro}
 Provides the \href{https://cmake.org/}{cmake} \jargon{build type} used
@@ -1540,8 +1569,9 @@ Set to \const{true} when built in a \href{https://docs.conda.io/}{Conda}
 environment.
 
     \prologflagitem{console_menu}{bool}{r}
-Set to \const{true} in \program{swipl-win.exe} to indicate that the console
-supports menus.  See also \secref{plwin}.
+Set to \const{true} when the I/O is bound to an Epilog
+(\program{swipl-win}) Prolog console to indicate that the console
+supports menus. See also \secref{epilog-api}.
 
     \prologflagitem{cpu_count}{integer}{rw}
 Number of physical CPUs or cores in the system. The flag is marked
@@ -1637,6 +1667,11 @@ default emulator.
    \prologflagitem{executable_format}{atom}{r}
 Format of the SWI-Prolog executable, e.g. \const{elf} for when
 \file{swipl} is an ELF binary file.
+
+    \prologflagitem{engines}{bool}{r}
+True if engines are supported.  This is always the case on the
+multi-threaded versions.   Engines may be enabled on single
+threaded versions of SWI-Prolog.
 
     \prologflagitem{exit_status}{integer}{r}
 Set by halt/1 to its argument, making the exit status available to
@@ -1753,6 +1788,10 @@ number support.
     \prologflagitem{gui}{bool}{r}
 Set to \const{true} if XPCE is around and can be used for graphics.
 
+    \prologflagitem{halt_grace_time}{float}{rw}
+Time halt/1 waits for other threads to die gracefully.  Default
+is 1 second.
+
     \prologflagitem{heartbeat}{integer}{rw}
 If not zero, call prolog:heartbeat/0 every $N$ inferences.  $N$ is
 rounded to a multiple of 16.
@@ -1771,10 +1810,6 @@ its library as \file{<home>/library}. Some installations may put
 architecture independent files in a \jargon{shared home} and also
 define \prologflag{shared_home}.  System files can be found using
 absolute_file_name/3 as \term{swi}{file}.  See file_search_path/2.
-
-    \prologflagitem{hwnd}{integer}{r}
-In \program{swipl-win.exe}, this refers to the MS-Windows window handle of
-the console window.
 
     \prologflagitem{integer_rounding_function}{down,toward_zero}{r}
 ISO Prolog flag describing rounding by \verb$//$ and \verb$rem$ arithmetic
@@ -1839,6 +1874,10 @@ Currently, this flag is reliable on Windows and POSIX systems
 providing the dladdr() function.  This function is provided on Linux
 and MacOS.
 
+    \prologflagitem{linux}{bool}{r}
+If present and \const{true}, the OS is some form of Linux. See
+also \prologflag{unix}.
+
     \prologflagitem{malloc}{atom}{r}
 Set after a successful identification of the used malloc()
 implementation.  Currently possibly values are \const{tcmalloc} and
@@ -1860,7 +1899,7 @@ ISO Prolog flag describing there is no maximum arity to compound terms.
 
     \prologflagitem{max_char_code}{integer}{r}
 Highest (Unicode) code point that is supported.  SWI-Prolog supports
-all Unicode code points from 0 (zero) upto and including the value of
+all Unicode code points from 0 (zero) up to and including the value of
 this flag. Currently \const{0xffff} on Windows (UCS-2) and
 \const{0x10ffff} on most other platforms.
 
@@ -2069,7 +2108,7 @@ prefer arithmetic to produce rational numbers over floats. This implies:
 	\item Division (\funcref{/}{2}) of two integers produces a
 	rational number.
 	\item Power (\funcref{^}{2}) of two integers produces a
-	rational number, \emph{also} if the second operant is a
+	rational number, \emph{also} if the second operand is a
 	negative number.  For example, \verb$2^(-2)$ evaluates to
 	\verb$1/4$.
     \end{itemize}
@@ -2133,28 +2172,16 @@ if the flag \prologflag{bounded} is \const{false}.
 
     \prologflagitem{readline}{atom}{rw}
 Specifies which form of command line editing is provided. Possible
-values are below. The flag may be set from the user's init file (see
-\secref{initgoal}) to one of \const{false}, \const{readline} or
-\const{editline}. This causes the toplevel not to load a command line
-editor (\const{false}) or load the specified one.  If loading fails
-the flag is set to \const{false}.
+values are below.
 
 \begin{description}
     \termitem{false}{}
 No command line editing is available.
 
-    \termitem{readline}{}
-The library \pllib{readline} is loaded, providing line editing based on
-the GNU readline library.
-
     \termitem{editline}{}
 The library \pllib{editline} is loaded, providing line editing based on
 the BSD libedit.  This is the default if \pllib{editline} is available
 and can be loaded.
-
-    \termitem{swipl_win}{}
-SWI-Prolog uses its own console (\program{swipl-win.exe} on Windows,
-the Qt based \program{swipl-win} on MacOS) which provides line editing.
 \end{description}
 
     \prologflagitem{report_error}{bool}{rw}
@@ -2210,6 +2237,31 @@ Determine whether Prolog is handling signals (software interrupts). This
 flag is \const{false} if the hosting OS does not support signal handling
 or the command line option \cmdlineoption{--no-signals} is active.  See
 \secref{sigembedded} for details.
+
+    \prologflagitem{source}{bool}{rw}
+If \const{true}, ignore \fileext{qlf} files if there is a
+corresponding \fileext{pl} file.  The provided \fileext{qlf} files in
+the library are compiled with optimization enabled (see
+\prologflag{optimise}), macro expansion enabled (see
+\pllib{apply_macros}) and debug/3 and assertion/1 statements removed.
+Using this flag loads the source, providing better support for
+debugging.  If a debugging session may benefit from better access to
+the debugging facilities of the libraries, either set this Prolog flag
+at the start of the load file for your program or start Prolog as
+
+\begin{code}
+swipl -Dsource [option ...] myfile.pl ...
+\end{code}
+
+    \prologflagitem{source_search_working_directory}{bool}{rw}
+If set to \const{true}, loading a relative file name from source code
+searches relative to the location of the source file as well as relative
+to the working directory. Searching relative to the working directory is
+deprecated and a warning is printed if the file is found this way.
+Future versions are likely to change the default to
+\const{false}.\footnote{Searching the working directory was supported up
+to version 9.3.8. Version 9.3.9 disabled this and version 9.3.10
+re-enables it with a warning.}
 
     \prologflagitem{stack_limit}{int}{rw}
 Limits the combined sizes of the Prolog stacks for the current thread.
@@ -2309,8 +2361,15 @@ are printed as \arg{_}.
 
     \prologflagitem{toplevel_print_anon}{bool}{rw}
 If \const{true}, top-level variables starting with an underscore
-(\chr{_}) are printed normally.  If \const{false} they are hidden.
-This may be used to hide bindings in complex queries from the top level.
+(\chr{_}) are printed normally.  If \const{false} (default) the
+binding of such variables are omitted from the answer.  This may be
+used to hide bindings in complex queries from the top level.  For example,
+the binding for \arg{_List} below is not printed.
+
+\begin{code}
+?- numlist(1,1 000 000,_List), sum_list(_List, Sum).
+Sum = 500000500000.
+\end{code}
 
     \prologflagitem{toplevel_print_factorized}{bool}{rw}
 If \const{true} (default \const{false}) show the internal sharing of
@@ -2361,6 +2420,10 @@ When \const{true} (default \const{false}), print residual variables as
 detected by call_residue_vars/2 that do not appear in the bindings
 returned by the goal.
 
+    \prologflagitem{toplevel_thread}{bool}{rw}
+When \const{true}, this thread is running a toplevel REPL loop.  See
+prolog/0.
+
     \prologflagitem{toplevel_var_size}{int}{rw}
 Maximum size counted in literals of a term returned as a binding for a
 variable in a top-level query that is saved for re-use using the
@@ -2398,8 +2461,8 @@ is disabled. See also the \cmdlineoption{--no-tty} command line option.
 If present and \const{true}, the operating system is some version of
 Unix. Defined if the C compiler used to compile this version of
 SWI-Prolog either defines \verb$__unix__$ or \const{unix}. On other
-systems this flag is not available.  See also \prologflag{apple}
-and \prologflag{windows}.
+systems this flag is not available.  See also \prologflag{linux},
+\prologflag{apple} and \prologflag{windows}.
 
     \prologflagitem{unknown}{fail,warning,error}{rw}
 Determines the behaviour if an undefined procedure is encountered. If
@@ -2414,6 +2477,19 @@ change the flag for module \const{user} to change the default for all
 application modules or for a specific module.  It is strongly advised
 to keep the \const{error} default and use dynamic/1 and/or multifile/1
 to specify possible non-existence of a predicate.
+
+    \prologflagitem{unknown_option}{ignore,warning,error}{rw}
+Determines the behaviour if a predicate that processes an option list
+is passed an option that is not understood by the predicate.  The ISO
+standard dictates raising a \const{domain_error} exception.  This is
+considered impractical as it makes it hard to write portable code if
+different Prolog systems support different options and it makes it
+hard to write predicates that process options and pass some of the
+options to one predicate and others to some other predicate.  For
+example, a predicate reading a file to a list of terms must distribute
+options to open/4 and read_term/3.  SWI-Prolog has always ignored
+unknown options unless in ISO mode (see the \prologflag{iso} flag).
+This flag provides full control over how options are processed.
 
     \prologflagitem{unload_foreign_libraries}{bool}{rw}
 If \const{true} (default \const{false}), unload all loaded foreign
@@ -2435,6 +2511,29 @@ of create_prolog_flag/3 to create flags for their library.
 If \const{true} (default \const{false}), variables must start with an
 underscore (\chr{_}).  May be changed. This flag is local to the
 module in which it is changed.  See \secref{varprefix}.
+
+    \prologflagitem{var_tag}{Atom}{rw}
+This flag controls the interpretation of \arg{Tag}\{\ldots\} if
+\arg{Tag} is unbound.  Possible values are:
+
+    \begin{description}
+    \termitem{dict}{}
+Read as a dict (see \secref{bidicts}) with unbound tag.  This is the
+current default. The use of unbound tags is deprecated.  In due time
+the default will be changed, ultimately to \const{attvar}.  See
+\secref{ext-dict-compat}.
+    \termitem{attvar}
+Read \verb$Var{...}$ as an attributed variable.  This is likely to
+become the future default.
+    \termitem{#}{}
+Read \verb$Var{...}$ as \verb$#{...}$.  This flag allows to quickly
+assess the impact on your code of using \verb$#{...}$ rather than
+dicts with unbound tags.
+    \termitem{warning}{}
+As \chr{#}, but prints a warning.
+    \termitem{error}{}
+Considers \verb$Var{...}$ a syntax error.
+    \end{description}
 
     \prologflagitem{verbose}{atom}{rw}
 This flag is used by print_message/2.  If its value is \const{silent},
@@ -2617,6 +2716,11 @@ is a list of the options below.  See also \prologflag{user_flags}.
         If the flag has a value, but this value is incompatible with the
         specified type, a warning is printed and the flag gets the
         value and type specified by this call to create_prolog_flag/3.
+
+        \termitem{warn_not_accessed}{+Boolean}
+        If \const{true} and the flag is never read using
+        current_prolog_flag/2, print a warning.  This option is used
+        for options set using the commandline option \verb$-D<flag>[=<value>]$.
     \end{description}
 \end{description}
 
@@ -3153,7 +3257,7 @@ of the Unicode block in which they appear. Currently this is supported
 for integers, rational numbers (see \secref{syntax-rational-numbers})
 and floating point numbers. In any number, \emph{all} digits must come
 from the same block, i.e., if the nominator of a rational is uses
-Indian script, so must the demoninator.  All special characters such
+Indian script, so must the denominator.  All special characters such
 as the sign, rational separator, floating point \chr{.}, and floating
 point exponent must use their usual ASCII character.
 
@@ -3196,7 +3300,7 @@ equivalent to \verb$t(X, X)$, which is \emph{different} from
 \verb$t(_, _)$.
 
 As Unicode requires variables to start with an underscore in many
-languages, this schema needs to be extended.%
+languages, this schema has been extended.%
 	\footnote{After a proposal by Richard O'Keefe.}
 First we define the two classes of named variables.
 
@@ -3217,13 +3321,27 @@ any named singleton variables appearing more than once are reported.
 Below are some examples with warnings in the right column.  Singleton
 messages can be suppressed using the style_check/1 directive.
 
+Finally, variables named \verb$_<digit>$ are never subject to style
+checking.  These variable names are emitted by write/1 and friends.
+This exception can also be used to pass singletons to debug/3.
+Passing singletons to debug/3 is otherwise problematic as using a
+normal variable results in a singleton warning when optimization
+removes the debug/3 statement while using a named anonymous variable
+results in a \jargon{multiton} warning.  For example:
+
+\begin{code}
+p(X) :-
+    q(X,_0Y),
+    debug(demo, 'q/2 says ~p', [_0Y]).
+\end{code}
+
 \begin{center}
 \begin{tabular}{|l|l|}
 \hline
 test(_).	& \\
 test(_a).	& Singleton variables: [_a] \\
-test(_12).	& Singleton variables: [_12] \\
 test(A).	& Singleton variables: [A] \\
+test(_12).	& \\
 test(_A).	& \\
 test(__a).	& \\
 test(_, _).	& \\
@@ -3322,13 +3440,12 @@ ERROR: is/2: Type error: `expression' expected, found
 
 \index{jitindex}\index{indexing,jiti}%
 SWI-Prolog provides `just-in-time' indexing over multiple
-arguments.\footnote{JIT indexing was added in version 5.11.29 (Oct.
-2011).} `Just-in-time' means that clause indexes are not built by the
-compiler (or asserta/1 for dynamic predicates), but on the first call
-to such a predicate where an index might help (i.e., a call where at
-least one argument is instantiated).  This section describes the rules
-used by the indexing logic.  Note that this logic is not `set in stone'.
-The indexing capabilities of the system will change. Although this
+arguments. `Just-in-time' means that clause indexes are not built by the
+compiler (or asserta/1 for dynamic predicates), but on the first call to
+such a predicate where an index might help (i.e., a call where at least
+one argument is instantiated). This section describes the rules used by
+the indexing logic. Note that this logic is not `set in stone'. The
+indexing capabilities of the system will change. Although this
 inevitably leads to some regressing on some particular use cases, we
 strive to avoid significant slowdowns.
 
@@ -3339,18 +3456,25 @@ they are presented.
 \begin{itemlist}
     \item [Special purpose code]
 Currently two special cases are recognised by the compiler: static code
-with exactly one clause and static code with two clauses, one where the
-first argument is the empty list (\verb$[]$) and one where the first
-argument is a non-empty list (\verb$[_|_]$).
+with exactly one clause and static code with two clauses, one where some
+argument is the empty list (\verb$[]$) and one where the same argument
+is a non-empty list (\verb$[_|_]$). Note that if this argument is an
+\jargon{output argument}, semantics are preserved, but efficiency
+suffers slightly. This slow-down can be avoided using mode/1 to declare
+the argument as \chr{-}.\footnote{Up to version 9.3.18, only the first
+argument was considered.}
 
-    \item [Linear scan on first argument]
-The principal clause list maintains a \jargon{key} for the first
-argument. An indexing key is either a constant or a functor (name/arity
-reference). Calls with an instantiated first argument and less than
-10 clauses perform a linear scan for a possible matching clause using
-this index key.  If the result is deterministic it is used.  Otherwise
-the system looks for better indexes.\footnote{Up to 7.7.2 this result
-was used also when non-deterministic.}.
+    \item [Linear scan on primary index argument]
+The principal clause list maintains a \jargon{key}, normally for the
+first argument. An indexing key is either a constant or a functor
+(name/arity reference). Calls with an instantiated primary index
+argument and less than 10 clauses perform a linear scan for a possible
+matching clause using this index key. If the result is deterministic it
+is used. Otherwise the system looks for better indexes.\footnote{Up to
+7.7.2 this result was used also when non-deterministic.}.  The primary
+index argument is the first argument for which at least one of the
+clauses has an indexable (nonvar) value for that argument.\footnote{Up
+to version 9.3.18, the primary index was fixed to the first argument.}
 
     \item [Hash lookup]
 If none of the above applies, the system considers the available hash
@@ -3403,6 +3527,9 @@ clauses has doubled since the predicate was last assessed or shrinks
 below one fourth. A subsequent call reassesses the statistics of the
 dynamic predicate and, when applicable, creates a new index.
 
+Jit indexing is controlled by a set of Prolog flags whose names starts
+with \const{ci_}, e.g., \prologflag{ci_min_speedup}. See
+current_prolog_flag/2.
 
 \subsection{Deep indexing}
 \label{sec:deep-indexing}
@@ -3496,7 +3623,7 @@ term unified too is moved into the head (providing indexing) and places
 where this term is used simply use the corresponding argument. The
 explicit unification is removed. Decompilation (clause/2) reverses this
 process, but may not produce exactly the same term.  The re-inserted
-unfications are ordered according to the argument position and the
+unifications are ordered according to the argument position and the
 variable is always on the left hand of the \predref{=}{2}.  Thus,
 
 \begin{code}
@@ -3522,7 +3649,7 @@ Additional notes:
     still moved into the head.  The decompiler does not inverse the
     process in that case.  Thus, \exam{p(X) :- X = a.} is fully
     equivalent to \exam{p(a).}
-    \item Currently this optimziation is enabled regardless of the
+    \item Currently this optimisation is enabled regardless of the
     Prolog flag \prologflag{optimise}.  As this optimization harms
     source-level debugging, this may not be desirable.  On the other
     hand we do not want determinism to depend on optimization while

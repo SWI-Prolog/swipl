@@ -3,8 +3,9 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2019-2020, VU University Amsterdam
+    Copyright (c)  2019-2025, VU University Amsterdam
                               CWI, Amsterdam
+                              SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -40,6 +41,14 @@
             abolish_table_info/0,
             close_open_tables/1,          % ?
 
+            get_attr/3,
+            put_attr/3,
+            del_attr/2,
+            attv_unify/2,                       % AttVar, Value
+            install_verify_attribute_handler/4, % +Mod, -AttrValue,
+                                                % -Target, :Handler)
+            install_attribute_portray_hook/3,   % +Mod, -AttrValue, :Handler
+
             str_cat/3,
 
             parsort/4,                    % +List, +Spec, +Dupl, -Sorted
@@ -57,10 +66,15 @@
 
             xsb_backtrace/1,              % -Backtrace
             xwam_state/2                  % +Id, -Value
-          ]).
+            ]).
 :- use_module(library(debug)).
 :- use_module(library(error)).
 :- use_module(library(prolog_stack)).
+
+:- meta_predicate
+    install_verify_attribute_handler(+, -, -, 0).
+:- multifile
+    system:term_expansion/2.
 
 %!  gc_heap
 %
@@ -88,6 +102,40 @@ abolish_table_info.
 %   exceptions, so it is unclear what this should do?
 
 close_open_tables(_).
+
+                /*******************************
+                *     ATTRIBUTED VARIABLES     *
+                *******************************/
+
+%!  attv_unify(?AttVar, ?Value) is semidet.
+%
+%   Unify AttVar with Value without causing a   wakeup. If AttVar is not
+%   an attributed variable, this is a normal unification.
+
+attv_unify(AttVar, Value) :-
+    '$attv_unify'(AttVar, Value).
+
+%!  install_verify_attribute_handler(+Mod, -AttrValue, -Target,
+%!                                   :Handler) is det.
+%!  install_attribute_portray_hook(+Mod, -AttrValue, :Handler) is det.
+%
+%   Install attributed variable hooks for Mod.
+
+install_verify_attribute_handler(Mod, AttrValue, Target, Handler) :-
+    retractall(Mod:attr_unify_hook(_,_)),
+    asserta(Mod:(attr_unify_hook(AttrValue, Target) :- Handler)).
+install_attribute_portray_hook(Mod, AttrValue, Handler) :-
+    retractall(Mod:attr_portray_hook(_,_)),
+    asserta(Mod:(attr_portray_hook(AttrValue, _Var) :- Handler)).
+
+system:term_expansion((:-install_verify_attribute_handler(Mod, AttrValue, Target, Handler)),
+                      (Mod:attr_unify_hook(AttrValue, Target) :- Handler)).
+system:term_expansion((:-install_attribute_portray_hook(Mod, AttrValue, Handler)),
+                      (Mod:attr_portray_hook(AttrValue, _Var) :- Handler)).
+
+                /*******************************
+                *             MISC             *
+                *******************************/
 
 %!  str_cat(+Atom1, +Atom2, -Atom3)
 

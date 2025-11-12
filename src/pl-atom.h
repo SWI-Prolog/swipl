@@ -3,8 +3,9 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2019, University of Amsterdam
+    Copyright (c)  1985-2024, University of Amsterdam
                               VU University Amsterdam
+                              SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -50,10 +51,10 @@
 
 #define LDFUNC_DECLARATIONS
 #define checkAtoms()	checkAtoms_src(__FILE__, __LINE__)
-word		lookupAtom(const char *s, size_t len);
-word		lookupBlob(const char *s, size_t len,
+atom_t		lookupAtom(const char *s, size_t len);
+atom_t		lookupBlob(const char *s, size_t len,
 			   PL_blob_t *type, int *new);
-word		pl_atom_hashstat(term_t i, term_t n);
+foreign_t	pl_atom_hashstat(term_t i, term_t n);
 void		do_init_atoms(void);
 int		resetListAtoms(void);
 void		cleanupAtoms(void);
@@ -63,9 +64,12 @@ void		resetAtoms(void);
 int		checkAtoms_src(const char *file, int line);
 int		is_volatile_atom(atom_t a);
 size_t		atom_space(void);
-#ifdef O_DEBUG_ATOMGC
-word		pl_track_atom(term_t which, term_t stream);
-#endif
 #undef LDFUNC_DECLARATIONS
+
+static inline int
+isBuiltInAtom(atom_t a)
+{ size_t index = indexAtom(a);
+  return index < GD->atoms.builtin;
+}
 
 #endif /*_PL_ATOM_H*/

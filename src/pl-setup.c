@@ -95,7 +95,7 @@ static void initSignals(void);
 static void gcPolicy(Stack s, int policy);
 #undef LDFUNC_DECLARATIONS
 
-int
+bool
 setupProlog(void)
 { GET_LD
   DEBUG(1, Sdprintf("Starting Heap Initialisation\n"));
@@ -123,7 +123,7 @@ setupProlog(void)
   if ( !initPrologStacks(GD->options.stackLimit) )
     outOfCore();
   GD->combined_stack.name	 = "stack";
-  GD->combined_stack.gc		 = TRUE;
+  GD->combined_stack.gc		 = true;
   GD->combined_stack.overflow_id = STACK_OVERFLOW;
 
   initPrologLocalData();
@@ -150,7 +150,9 @@ setupProlog(void)
   DEBUG(1, Sdprintf("Flags ...\n"));
   initFlags();
   DEBUG(1, Sdprintf("Foreign Predicates ...\n"));
-  initBuildIns();
+  initBuildIns(false);
+  DEBUG(1, Sdprintf("VM ...\n"));
+  initVM();
   DEBUG(1, Sdprintf("Malloc binding ...\n"));
   initMalloc();
   DEBUG(1, Sdprintf("Operators ...\n"));
@@ -169,13 +171,13 @@ setupProlog(void)
   initLocale();
 #endif
   setABIVersionPrologFlag();
-  GD->io_initialised = TRUE;
+  GD->io_initialised = true;
   GD->clauses.cgc_space_factor  = 8;
   GD->clauses.cgc_stack_factor  = 0.03;
   GD->clauses.cgc_clause_factor = 1.0;
 
   DEBUG(1, Sdprintf("Heap Initialised\n"));
-  return TRUE;
+  return true;
 }
 
 
@@ -357,6 +359,7 @@ static struct signame
 #endif
   { SIG_CLAUSE_GC,     "prolog:clause_gc",     0 },
   { SIG_PLABORT,       "prolog:abort",         0 },
+  { SIG_PLHALT,        "prolog:halt",          0 },
 
   { -1,		NULL,     0}
 };
@@ -410,7 +413,7 @@ PL_get_signum_ex(term_t sig, int *n)
 
   if ( i > 0 && i < 32 )		/* where to get these? */
   { *n = i;
-    return TRUE;
+    return true;
   }
 
   return PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_signal, sig);
@@ -436,8 +439,8 @@ There are a few possible problems:
 	* The system is in a `critical section'.  These are insufficiently
 	flagged at the moment.
 
-The sync-argument is TRUE  when   called  from  PL_handle_signals(), and
-FALSE otherwise.  It is used to delay signals marked with PLSIG_SYNC.
+The sync-argument is true  when   called  from  PL_handle_signals(), and
+false otherwise.  It is used to delay signals marked with PLSIG_SYNC.
 
 If we are running in the MT environment, we may get signals from threads
 not having a Prolog engine. If there is a registered handler we call it.
@@ -468,10 +471,10 @@ is_fatal_signal(int sig)
 #ifdef SIGSYS
     case SIGSYS:
 #endif
-      return TRUE;
+      return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -509,7 +512,7 @@ dispatch_signal(int sig, int sync)
 		 sig, sync ? " (sync)" : " (async)"));
 #endif
 
-  if ( true(sh, PLSIG_NOFRAME) && sh->handler )
+  if ( ison(sh, PLSIG_NOFRAME) && sh->handler )
   { (*sh->handler)(sig);
     return;
   }
@@ -526,7 +529,7 @@ dispatch_signal(int sig, int sync)
 	       sig, signal_name(sig), LD->gc.stats.totals.collections);
   }
 
-  if ( (LD->critical || (true(sh, PLSIG_SYNC) && !sync))
+  if ( (LD->critical || (ison(sh, PLSIG_SYNC) && !sync))
        && sh->handler != PL_interrupt
        && !is_fatal_signal(sig)	)
   { PL_raise(sig);			/* wait for better times! */
@@ -567,7 +570,7 @@ dispatch_signal(int sig, int sync)
 #ifdef O_LIMIT_DEPTH
     LD->depth_info.limit = olimit;
 #endif
-  } else if ( true(sh, PLSIG_THROW) )
+  } else if ( ison(sh, PLSIG_THROW) )
   { char *predname;
     int  arity;
 
@@ -615,7 +618,10 @@ dispatch_signal(int sig, int sync)
 					/* longjmp.  If that fails, crash */
   if ( is_fatal_signal(sig) )
   { if ( exception_term )
-    { PL_rethrow();
+    {
+#if O_THROW
+      PL_rethrow();
+#endif
       sigCrashHandler(sig);
     }
     exit(4);
@@ -625,7 +631,7 @@ dispatch_signal(int sig, int sync)
 
 static void
 pl_signal_handler(int sig)
-{ dispatch_signal(sig, FALSE);
+{ dispatch_signal(sig, false);
 }
 
 #ifndef SA_RESTART
@@ -695,7 +701,7 @@ static void
 unprepareSignal(int sig)
 { SigHandler sh = &GD->signals.handlers[SIGNAL_INDEX(sig)];
 
-  if ( true(sh, PLSIG_STATEFLAGS) )
+  if ( ison(sh, PLSIG_STATEFLAGS) )
   { if ( !IS_VSIG(sig) )
       set_sighandler(sig, sh->saved_handler);
     sh->flags         = 0;
@@ -783,7 +789,7 @@ alt_segv_handler(int sig)
 		 LD->signal.sig_critical));
 
   if ( LD->signal.sig_critical )
-  { longjmp(LD->signal.context, TRUE);
+  { longjmp(LD->signal.context, true);
     /*NORETURN*/
   }
 
@@ -791,7 +797,7 @@ alt_segv_handler(int sig)
 }
 #endif
 
-int
+bool
 initGuardCStack(void)
 {
 #ifdef O_C_STACK_GUARDED
@@ -815,14 +821,14 @@ initGuardCStack(void)
 
 	if ( sigaction(SIGSEGV, &sa, NULL) == 0 )
 	{ DEBUG(MSG_SIGNAL, Sdprintf("Setup SEGV on altstack\n"));
-	  return TRUE;
+	  return true;
 	}
       }
     }
   }
 #endif
 
-  return FALSE;
+  return false;
 }
 
 static void
@@ -863,6 +869,18 @@ abort_handler(int sig)
 { (void)sig;
 
   abortProlog();
+}
+
+static void
+halt_handler(int sig)
+{ GET_LD
+  (void)sig;
+
+  if ( !raise_halt_exception(GD->halt.status, true) )
+  { Sdprintf("Failed to raise unwind(halt(%d))\n",
+	     GD->halt.status&PL_CLEANUP_STATUS_MASK);
+    abortProlog();
+  }
 }
 
 
@@ -930,6 +948,7 @@ initSignals(DECL_LD)
   PL_signal(SIG_TUNE_GC|PL_SIGSYNC,	  gc_tune_handler);
   PL_signal(SIG_CLAUSE_GC|PL_SIGSYNC,     cgc_handler);
   PL_signal(SIG_PLABORT|PL_SIGSYNC,       abort_handler);
+  PL_signal(SIG_PLHALT|PL_SIGSYNC,        halt_handler);
 #ifdef SIG_THREAD_SIGNAL
   PL_signal(SIG_THREAD_SIGNAL|PL_SIGSYNC, executeThreadSignals);
 #endif
@@ -970,7 +989,7 @@ resetSignals(void)
 void
 allSignalMask(sigset_t *set)
 { static sigset_t allmask;
-  static int done = FALSE;
+  static int done = false;
 
   if ( !done )
   { sigset_t tmp;
@@ -985,7 +1004,7 @@ allSignalMask(sigset_t *set)
     sigdelset(&tmp, SIGPROF);
 #endif
     allmask = tmp;
-    done = TRUE;
+    done = true;
   }
 
   *set = allmask;
@@ -1111,7 +1130,7 @@ PL_sigaction(int sig, pl_sigaction_t *act, pl_sigaction_t *old)
   }
 
   if ( act && act != old )
-  { int active = FALSE;
+  { int active = false;
 
     if ( (act->sa_flags&PLSIG_THROW) || act->sa_predicate )
     { if ( ((act->sa_flags&PLSIG_THROW) && act->sa_predicate) ||
@@ -1119,10 +1138,10 @@ PL_sigaction(int sig, pl_sigaction_t *act, pl_sigaction_t *old)
       { errno = EINVAL;
 	return -1;
       }
-      active = TRUE;
+      active = true;
     } else if ( act->sa_cfunction &&
-		(false(sh, PLSIG_PREPARED)||act->sa_cfunction!=sh->saved_handler) )
-    { active = TRUE;
+		(isoff(sh, PLSIG_PREPARED)||act->sa_cfunction!=sh->saved_handler) )
+    { active = true;
     }
 
     if ( active )
@@ -1188,7 +1207,7 @@ handleSigInt(DECL_LD)
   { WSIGMASK_CLEAR(LD->signal.pending, SIGINT);
 
     LD->signal.forced = 0;
-    dispatch_signal(SIGINT, TRUE);
+    dispatch_signal(SIGINT, true);
 
     if ( exception_term )
       return -1;
@@ -1233,7 +1252,7 @@ handleSignals(DECL_LD)
 	{ ATOMIC_AND(&LD->signal.pending[i], ~mask);
 
 	  done++;
-	  dispatch_signal(sig, TRUE);
+	  dispatch_signal(sig, true);
 
 	  if ( exception_term )
 	    return -1;
@@ -1263,7 +1282,7 @@ PRED_IMPL("prolog_alert_signal", 2, prolog_alert_signal, 0)
 
   if ( rc )
   { if ( PL_compare(A1,A2) == CMP_EQUAL )
-    { return TRUE;
+    { return true;
     } else
     { int new;
 
@@ -1278,12 +1297,12 @@ PRED_IMPL("prolog_alert_signal", 2, prolog_alert_signal, 0)
 	  PL_signal(GD->signals.sig_alert|PL_SIGNOFRAME, alert_handler);
 	}
 
-	return TRUE;
+	return true;
       }
     }
   }
 
-  return FALSE;
+  return false;
 }
 #endif
 
@@ -1294,12 +1313,12 @@ startCritical(DECL_LD)
 }
 
 
-int
+bool
 endCritical(DECL_LD)
 { if ( --LD->critical == 0 && LD->alerted && exception_term )
-    return FALSE;
+    return false;
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1319,7 +1338,7 @@ get_meta_arg(term_t arg, term_t m, term_t t)
   if ( PL_is_functor(arg, FUNCTOR_colon2) )
   { _PL_get_arg(1, arg, m);
     _PL_get_arg(2, arg, t);
-    return TRUE;
+    return true;
   }
 
   return PL_error(NULL, 0, NULL, ERR_TYPE,
@@ -1333,10 +1352,10 @@ get_module(term_t t, Module *m)
   atom_t a;
 
   if ( !PL_get_atom_ex(t, &a) )
-    return FALSE;
+    return false;
   *m = PL_new_module(a);
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1357,7 +1376,7 @@ PRED_IMPL("$on_signal", 4, on_signal, 0)
 
   if ( !get_meta_arg(old, mold, old) ||
        !get_meta_arg(new, mnew, new) )
-    return FALSE;
+    return false;
 
   if ( PL_get_integer(sig, &sign) && IS_VALID_SIGNAL(sign) )
   { TRY(PL_unify_atom_chars(name, signal_name(sign)));
@@ -1371,23 +1390,23 @@ PRED_IMPL("$on_signal", 4, on_signal, 0)
 
   sh = &GD->signals.handlers[SIGNAL_INDEX(sign)];
 
-  if ( false(sh, PLSIG_STATEFLAGS) )		/* not handled */
+  if ( isoff(sh, PLSIG_STATEFLAGS) )		/* not handled */
   { TRY(PL_unify_atom(old, ATOM_default));
-  } else if ( true(sh, PLSIG_IGNORED) )		/* signal ignored */
+  } else if ( ison(sh, PLSIG_IGNORED) )		/* signal ignored */
   { TRY(PL_unify_atom(old, ATOM_ignore));
-  } else if ( true(sh, PLSIG_THROW) )		/* throw exception */
+  } else if ( ison(sh, PLSIG_THROW) )		/* throw exception */
   { TRY(PL_unify_atom(old, ATOM_throw));
   } else if ( sh->predicate )			/* call predicate */
   { Definition def = sh->predicate->definition;
 
     if ( PL_unify_atom(mold, def->module->name) )
     { if ( !PL_unify_atom(old, def->functor->name) )
-	return FALSE;
+	return false;
     } else
     { if ( !PL_unify_term(old, PL_FUNCTOR, FUNCTOR_colon2,
 				 PL_ATOM, def->module->name,
 				 PL_ATOM, def->functor->name) )
-	return FALSE;
+	return false;
     }
   } else if ( sh->handler )
   { if ( sh->handler == PL_interrupt )
@@ -1423,7 +1442,7 @@ PRED_IMPL("$on_signal", 4, on_signal, 0)
       predicate_t pred;
 
       if ( !get_module(mnew, &m) )
-	return FALSE;
+	return false;
       pred = lookupProcedure(PL_new_functor(a, 1), m);
 
       sh = prepareSignal(sign, PLSIG_SYNC);
@@ -1462,35 +1481,25 @@ both at system startup to create the stack   for the main thread as from
 pl-thread.c to create stacks for Prolog threads.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+bool
 initPrologStacks(size_t limit)
 { GET_LD
 
   LD->stacks.limit = limit;
   if ( !allocStacks() )
-    return FALSE;
+    return false;
 
   LD->stacks.local.overflow_id    = LOCAL_OVERFLOW;
   LD->stacks.global.overflow_id   = GLOBAL_OVERFLOW;
   LD->stacks.trail.overflow_id    = TRAIL_OVERFLOW;
   LD->stacks.argument.overflow_id = ARGUMENT_OVERFLOW;
 
-  base_addresses[STG_LOCAL]  = (uintptr_t)lBase;
-  base_addresses[STG_GLOBAL] = (uintptr_t)gBase;
-  base_addresses[STG_TRAIL]  = (uintptr_t)tBase;
   *gBase++ = MARK_MASK;			/* see sweep_global_mark() */
   gMax--;				/*  */
   tMax--;
   emptyStacks();
 
-  DEBUG(1, Sdprintf("base_addresses[STG_LOCAL] = %p\n",
-		    base_addresses[STG_LOCAL]));
-  DEBUG(1, Sdprintf("base_addresses[STG_GLOBAL] = %p\n",
-		    base_addresses[STG_GLOBAL]));
-  DEBUG(1, Sdprintf("base_addresses[STG_TRAIL] = %p\n",
-		    base_addresses[STG_TRAIL]));
-
-  return TRUE;
+  return true;
 }
 
 
@@ -1502,7 +1511,8 @@ valid while the stack is unrolled after an exception.
 
 static void
 emptyStack(Stack s)
-{ s->top       = s->base;
+{ IS_WORD_ALIGNED(s->base);
+  s->top       = s->base;
   s->gced_size = 0L;
 }
 
@@ -1579,10 +1589,10 @@ init_stack(Stack s, char *name, size_t size, size_t spare, int gc)
 
 static int
 allocStacks(DECL_LD)
-{ size_t minglobal = 8*SIZEOF_VOIDP K;
-  size_t minlocal  = 4*SIZEOF_VOIDP K;
-  size_t mintrail  = 4*SIZEOF_VOIDP K;
-  size_t minarg    = 1*SIZEOF_VOIDP K;
+{ size_t minglobal = 8*SIZEOF_WORD K;
+  size_t minlocal  = 4*SIZEOF_WORD K;
+  size_t mintrail  = 4*SIZEOF_WORD K;
+  size_t minarg    = 1*SIZEOF_WORD K;
 
   size_t itrail  = nextStackSizeAbove(mintrail-1);
   size_t iglobal = nextStackSizeAbove(minglobal-1);
@@ -1604,23 +1614,23 @@ allocStacks(DECL_LD)
   { if ( gBase )
       *gBase++ = MARK_MASK;		/* compensate for freeStacks */
     freeStacks();
-    return FALSE;
+    return false;
   }
 
   lBase   = (LocalFrame) addPointer(gBase, iglobal);
 
   init_stack((Stack)&LD->stacks.global,
-	     "global",   iglobal, 512*SIZEOF_VOIDP, TRUE);
+	     "global",   iglobal, 512*SIZEOF_WORD, true);
   init_stack((Stack)&LD->stacks.local,
-	     "local",    ilocal,  512*SIZEOF_VOIDP + LOCAL_MARGIN, FALSE);
+	     "local",    ilocal,  512*SIZEOF_WORD + LOCAL_MARGIN, false);
   init_stack((Stack)&LD->stacks.trail,
-	     "trail",    itrail,  256*SIZEOF_VOIDP, TRUE);
+	     "trail",    itrail,  256*SIZEOF_WORD, true);
   init_stack((Stack)&LD->stacks.argument,
-	     "argument", minarg,  0,                FALSE);
+	     "argument", minarg,  0,                false);
 
   LD->stacks.local.min_free = LOCAL_MARGIN;
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1645,7 +1655,7 @@ freeStacks(DECL_LD)
 }
 
 
-int
+void
 trim_stack(Stack s)
 { if ( s->spare < s->def_spare )
   { ssize_t reduce = s->def_spare - s->spare;
@@ -1662,8 +1672,6 @@ trim_stack(Stack s)
     s->max = addPointer(s->max, -reduce);
     s->spare += reduce;
   }
-
-  return FALSE;
 }
 
 
@@ -1676,7 +1684,7 @@ gcPolicy(Stack s, int policy)
 { GET_LD
 
   s->gc = ((s == (Stack) &LD->stacks.global ||
-	    s == (Stack) &LD->stacks.trail) ? TRUE : FALSE);
+	    s == (Stack) &LD->stacks.trail) ? true : false);
   if ( s->gc )
   { s->small  = SMALLSTACK;
     s->factor = 3;
@@ -1697,7 +1705,7 @@ must extend lTop to ARGP.
 
 void
 trimStacks(DECL_LD int resize)
-{ LD->trim_stack_requested = FALSE;
+{ LD->trim_stack_requested = false;
 
   if ( resize )
     growStacks(GROW_TRIM, GROW_TRIM, GROW_TRIM);
@@ -1724,7 +1732,7 @@ trimStacks(DECL_LD int resize)
 #endif
 
   DEBUG(CHK_SECURE,
-	{ scan_global(FALSE);
+	{ scan_global(false);
 	  checkStacks(NULL);
 	});
 
@@ -1736,7 +1744,7 @@ static
 PRED_IMPL("trim_stacks", 0, trim_stacks, 0)
 { PRED_LD
 
-  trimStacks(TRUE);
+  trimStacks(true);
 
   succeed;
 }
@@ -1774,7 +1782,7 @@ freePrologLocalData(PL_local_data_t *ld)
 #ifdef O_PLMT
   if ( ld->prolog_flag.table )
   { PL_LOCK(L_PLFLAG);
-    destroyHTable(ld->prolog_flag.table);
+    destroyHTableWP(ld->prolog_flag.table);
     PL_UNLOCK(L_PLFLAG);
   }
   free_predicate_references(ld);
@@ -1842,7 +1850,7 @@ no_local_ld(void)
 		 *	     PREDICATES		*
 		 *******************************/
 
-int
+bool
 set_stack_limit(size_t limit)
 { GET_LD
 
@@ -1851,7 +1859,7 @@ set_stack_limit(size_t limit)
 	       sizeStack(global) +
 	       sizeStack(trail) )
   { garbageCollect(GC_USER);
-    trimStacks(TRUE);
+    trimStacks(true);
 
     if ( limit < sizeStack(local) +
 		 sizeStack(global) +
@@ -1869,7 +1877,7 @@ set_stack_limit(size_t limit)
 
   LD->stacks.limit = limit;
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1912,7 +1920,7 @@ PRED_IMPL("$set_prolog_stack", 4, set_prolog_stack, 0)
 			   PL_FUNCTOR_CHARS, "set_prolog_stack", 2,
 			     PL_TERM, A1,
 			     PL_ATOM, ATOM_limit) )
-	return FALSE;
+	return false;
 
       return ( PL_unify_int64(old, LD->stacks.limit) &&
 	       PL_get_size_ex(value, &newlimit) &&
@@ -1926,9 +1934,9 @@ PRED_IMPL("$set_prolog_stack", 4, set_prolog_stack, 0)
 	   PL_get_size_ex(value, &spare) )
       { stack->def_spare = spare*sizeof(word);
 	trim_stack(stack);
-	return TRUE;
+	return true;
       }
-      return FALSE;
+      return false;
     }
     if ( k == ATOM_min_free )
     { size_t minfree = stack->min_free/sizeof(word);
@@ -1937,9 +1945,9 @@ PRED_IMPL("$set_prolog_stack", 4, set_prolog_stack, 0)
 	   PL_get_size_ex(value, &minfree) )
       { stack->min_free = minfree*sizeof(word);
 	trim_stack(stack);
-	return TRUE;
+	return true;
       }
-      return FALSE;
+      return false;
     }
 
     return PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_stack_parameter, prop);

@@ -81,7 +81,7 @@ EXTEND_SEQ_CHARS(DECL_LD Word p, int c)
 
 
 #define CLOSE_SEQ_STRING(p, p0, tail, term, l) LDFUNC(CLOSE_SEQ_STRING, p, p0, tail, term, l)
-static inline int
+static inline bool
 CLOSE_SEQ_STRING(DECL_LD Word p, Word p0, term_t tail, term_t term, term_t l)
 { setHandle(l, consPtr(p0, TAG_COMPOUND|STG_GLOBAL));
   p--;
@@ -89,10 +89,10 @@ CLOSE_SEQ_STRING(DECL_LD Word p, Word p0, term_t tail, term_t term, term_t l)
   { setVar(*p);
     if ( PL_unify(l, term) )
     { setHandle(tail, makeRefG(p));
-      return TRUE;
+      return true;
     }
 
-    return FALSE;
+    return false;
   } else
   { *p = ATOM_nil;
     return PL_unify(l, term);

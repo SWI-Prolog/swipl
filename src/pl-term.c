@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2023, University of Amsterdam
+    Copyright (c)  1985-2024, University of Amsterdam
                               VU University Amsterdam
 			      SWI-Prolog Solutions b.v.
     All rights reserved.
@@ -39,11 +39,9 @@
 #include <windows.h>
 #endif
 
-#define bool pl_bool			/* avoid conflict with curses */
 #include "pl-term.h"
 #include "pl-fli.h"
 #include "pl-util.h"
-#undef bool
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 This module defines some hacks to get to the unix  termcap  library.   I
@@ -92,7 +90,7 @@ windowing!
 #endif
 
 #define MAX_TERMBUF	1024		/* Conforming manual */
-#define STAT_START	0		/* must be FALSE */
+#define STAT_START	0		/* must be false */
 #define STAT_OK		1
 #define STAT_ERROR	2
 
@@ -118,14 +116,15 @@ typedef struct
 
 void
 cleanupTerm(void)
-{ Table t;
+{ TableWP t;
   char *s;
 
   if ( (t=capabilities) )
   { capabilities = NULL;
-    for_table(t, name, value,
-	      freeHeap(value, sizeof(entry)));
-    destroyHTable(t);
+    FOR_TABLE(t, name, value)
+    { freeHeap(val2ptr(value), sizeof(entry));
+    }
+    destroyHTableWP(t);
   }
   if ( (s=buf_area) )    { buf_area = NULL; free(s); }
   if ( (s=string_area) ) { string_area = NULL; free(s); }
@@ -145,7 +144,7 @@ initTerm(void)
   { char term[100];
 
     if ( !capabilities )
-      capabilities = newHTable(16);
+      capabilities = newHTableWP(16);
 
     term_initialised = STAT_ERROR;
     if ( !Getenv("TERM", term, sizeof(term)) )
@@ -205,7 +204,7 @@ lookupEntry(atom_t name, atom_t type)
 
   PL_LOCK(L_TERM);
   if ( !capabilities ||
-       !(e = lookupHTable(capabilities, (void*)name)) )
+       !(e = lookupHTableWP(capabilities, name)) )
   { if ( !initTerm() )
     { e = NULL;
       goto out;
@@ -240,7 +239,7 @@ lookupEntry(atom_t name, atom_t type)
       goto out;
     }
 
-    addNewHTable(capabilities, (void *)name, e);
+    addNewHTableWP(capabilities, name, e);
   }
 
 out:
@@ -265,7 +264,7 @@ PRED_IMPL("tty_get_capability", 3, tty_get_capability, 0)
     fail;
 
   if ( e->value != 0L )
-    return _PL_unify_atomic(value, e->value);
+    return PL_unify_atomic(value, e->value);
 
   fail;
 }
@@ -327,6 +326,7 @@ PRED_IMPL("tty_put", 2, pl_tty_put, 0)
 #else /* ~TGETENT */
 
 #ifdef __WINDOWS__
+#include "pl-ntconsole.h"
 
 static void *
 getModuleFunction(const char *module, const char *name)
@@ -344,26 +344,35 @@ getModuleFunction(const char *module, const char *name)
 static
 PRED_IMPL("tty_size", 2, tty_size, 0)
 { PRED_LD
-  int (*ScreenCols)(void *h) = getModuleFunction("plterm", "ScreenCols");
-  int (*ScreenRows)(void *h) = getModuleFunction("plterm", "ScreenRows");
+  int rows, cols;
+  short srows=0, scols=0;
 
   term_t r = A1;
   term_t c = A2;
 
-  if ( ScreenCols && ScreenRows )
-  { void *(*get_console)(void) = getModuleFunction(NULL, "PL_current_console");
-    void *con = (get_console ? (*get_console)() : NULL);
-    int rows = (*ScreenRows)(con);
-    int cols = (*ScreenCols)(con);
+  /* First, try console app */
+  if ( !win32_console_size(Suser_output, &cols, &rows) )
+  { /* Native Windows swipl-win.exe */
+    int (*ScreenCols)(void *h) = getModuleFunction("plterm", "ScreenCols");
+    int (*ScreenRows)(void *h) = getModuleFunction("plterm", "ScreenRows");
 
-    if ( PL_unify_integer(r, rows) &&
-	 PL_unify_integer(c, cols) )
-      succeed;
+    if ( ScreenCols && ScreenRows )
+    { void *(*get_console)(void);
 
-    fail;
+      get_console = getModuleFunction(NULL, "PL_current_console");
+      void *con = (get_console ? (*get_console)() : NULL);
+      rows = (*ScreenRows)(con);
+      cols = (*ScreenCols)(con);
+    } else if ( Sgetttysize(Suser_output, &scols, &srows) == 0 &&
+		srows > 0 && scols > 0 )
+    { rows = srows;
+      cols = scols;
+    } else
+      return  notImplemented("tty_size", 2);
   }
 
-  return notImplemented("tty_size", 2);
+  return ( PL_unify_integer(r, rows) &&
+	   PL_unify_integer(c, cols) );
 }
 
 #define HAVE_PL_TTY_SIZE 1

@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1997-2024, University of Amsterdam
+    Copyright (c)  1997-2025, University of Amsterdam
                               VU University Amsterdam
                               CWI, Amsterdam
                               SWI-Prolog Solutions b.v.
@@ -47,7 +47,8 @@
     prolog:message_context//1,      % Context of error messages
     prolog:deprecated//1,	    % Deprecated features
     prolog:message_location//1,     % (File) location of error messages
-    prolog:message_line_element/2.  % Extend printing
+    prolog:message_line_element/2,  % Extend printing
+    prolog:message_action/2.        % Side effects (broadcast)
 :- '$hide'((
     prolog:message//1,
     prolog:error_message//1,
@@ -142,8 +143,8 @@ translate_message2(error(ISO, SWI)) -->
     swi_location(SWI),
     term_message(ISO),
     swi_extra(SWI).
-translate_message2('$aborted') -->
-    [ 'Execution Aborted' ].
+translate_message2(unwind(Term)) -->
+    unwind_message(Term).
 translate_message2(message_lines(Lines), L, T) :- % deal with old C-warning()
     make_message_lines(Lines, L, T).
 translate_message2(format(Fmt, Args)) -->
@@ -222,7 +223,11 @@ iso_message(existence_error(Type, Object, In)) --> % not ISO
 iso_message(busy(Type, Object)) -->
     [ '~w `~p'' is busy'-[Type, Object] ].
 iso_message(syntax_error(swi_backslash_newline)) -->
-    [ 'Deprecated ... \\<newline><white>*.  Use \\c' ].
+    [ 'Deprecated: ... \\<newline><white>*.  Use \\c' ].
+iso_message(syntax_error(warning_var_tag)) -->
+    [ 'Deprecated: dict with unbound tag (_{...}).  Mapped to #{...}.' ].
+iso_message(syntax_error(var_tag)) -->
+    [ 'Syntax error: dict syntax with unbound tag (_{...}).' ].
 iso_message(syntax_error(Id)) -->
     [ 'Syntax error: ' ],
     syntax_error(Id).
@@ -384,6 +389,11 @@ syntax_error(undefined_char_escape(C)) -->
     [ 'Unknown character escape in quoted atom or string: `\\~w\''-[C] ].
 syntax_error(void_not_allowed) -->
     [ 'Empty argument list "()"' ].
+syntax_error(Term) -->
+    { compound(Term),
+      compound_name_arguments(Term, Syntax, [Text])
+    }, !,
+    [ '~w expected, found '-[Syntax], ansi(code, '"~w"', [Text]) ].
 syntax_error(Message) -->
     [ '~w'-[Message] ].
 
@@ -631,15 +641,37 @@ swi_comment(Msg) -->
 
 
 thread_context -->
-    { thread_self(Me), Me \== main, thread_property(Me, id(Id)) },
+    { \+ current_prolog_flag(toplevel_thread, true),
+      thread_self(Id)
+    },
     !,
     ['[Thread ~w] '-[Id]].
 thread_context -->
     [].
 
+		 /*******************************
+		 *        UNWIND MESSAGES	*
+		 *******************************/
+
+unwind_message(Var) -->
+    { var(Var) }, !,
+    [ 'Unknown unwind message: ~p'-[Var] ].
+unwind_message(abort) -->
+    [ 'Execution Aborted' ].
+unwind_message(halt(_)) -->
+    [].
+unwind_message(thread_exit(Term)) -->
+    [ 'Invalid thread_exit/1.  Payload: ~p'-[Term] ].
+unwind_message(Term) -->
+    [ 'Unknown "unwind" exception: ~p'-[Term] ].
+
+
                  /*******************************
                  *        NORMAL MESSAGES       *
                  *******************************/
+
+:- dynamic prolog:version_msg/1.
+:- multifile prolog:version_msg/1.
 
 prolog_message(welcome) -->
     [ 'Welcome to SWI-Prolog (' ],
@@ -764,6 +796,8 @@ prolog_message(unknown_in_module_user) -->
     ].
 prolog_message(untable(PI)) -->
     [ 'Reconsult: removed tabling for ~p'-[PI] ].
+prolog_message(unknown_option(Set, Opt)) -->
+    [ 'Unknown ~w option: ~p'-[Set, Opt] ].
 
 
                  /*******************************
@@ -1259,12 +1293,17 @@ prolog_message(threads) -->
     [].
 prolog_message(copyright) -->
     [ 'SWI-Prolog comes with ABSOLUTELY NO WARRANTY. This is free software.', nl,
-      'Please run ?- license. for legal details.'
+      'Please run ', ansi(code, '?- license.', []), ' for legal details.'
     ].
 prolog_message(documentaton) -->
-    [ 'For online help and background, visit https://www.swi-prolog.org', nl,
-      'For built-in help, use ?- help(Topic). or ?- apropos(Word).'
-    ].
+    [ 'For online help and background, visit ', url('https://www.swi-prolog.org') ],
+    (   { exists_source(library(help)) }
+    ->  [ nl,
+          'For built-in help, use ', ansi(code, '?- help(Topic).', []),
+          ' or ', ansi(code, '?- apropos(Word).', [])
+        ]
+    ;   []
+    ).
 prolog_message(about) -->
     [ 'SWI-Prolog version (' ],
     prolog_message(threads),
@@ -1315,14 +1354,27 @@ query_result(yes(Bindings, Delays, Residuals)) -->
 query_result(more(Bindings, Delays, Residuals)) -->
     result(Bindings, Delays, Residuals),
     prompt(more, Bindings, Delays, Residuals).
+:- if(current_prolog_flag(emscripten, true)).
 query_result(help) -->
     [ ansi(bold, '  Possible actions:', []), nl,
-      '  ; (n,r,space,TAB): redo              | t:         trace&redo'-[], nl,
-      '  *:                 show choicepoint  | c (a,RET): stop'-[], nl,
-      '  w:                 write             | p:         print'-[], nl,
-      '  b:                 break             | h (?):     help'-[],
+      '  ; (n,r,space): redo              | t:       trace&redo'-[], nl,
+      '  *:             show choicepoint  | . (c,a): stop'-[], nl,
+      '  w:             write             | p:       print'-[], nl,
+      '  +:             max_depth*5       | -:       max_depth//5'-[], nl,
+      '  h (?):         help'-[],
       nl, nl
     ].
+:- else.
+query_result(help) -->
+    [ ansi(bold, '  Possible actions:', []), nl,
+      '  ; (n,r,space,TAB): redo              | t:           trace&redo'-[], nl,
+      '  *:                 show choicepoint  | . (c,a,RET): stop'-[], nl,
+      '  w:                 write             | p:           print'-[], nl,
+      '  +:                 max_depth*5       | -:           max_depth//5'-[], nl,
+      '  b:                 break             | h (?):       help'-[],
+      nl, nl
+    ].
+:- endif.
 query_result(action) -->
     [ 'Action? '-[], flush ].
 query_result(confirm) -->
@@ -1490,7 +1542,7 @@ extra_line -->
 
 prolog_message(if_tty(Message)) -->
     (   {current_prolog_flag(tty_control, true)}
-    ->  [ at_same_line | Message ]
+    ->  [ at_same_line ], list(Message)
     ;   []
     ).
 prolog_message(halt(Reason)) -->
@@ -1519,14 +1571,15 @@ prolog_message(history(expanded(Event))) -->
     [ '~w.'-[Event] ].
 prolog_message(history(history(Events))) -->
     history_events(Events).
+prolog_message(history(no_history)) -->
+    [ '! event history not supported in this version' ].
 
 history_events([]) -->
     [].
-history_events([Nr/Event|T]) -->
-    [ '~t~w   ~8|~W~W'-[ Nr,
-                         Event, [partial(true)],
-                         '.', [partial(true)]
-                       ],
+history_events([Nr-Event|T]) -->
+    [ ansi(comment, '%', []),
+      ansi(bold, '~t~w ~6|', [Nr]),
+      ansi(code, '~s', [Event]),
       nl
     ],
     history_events(T).
@@ -1555,13 +1608,14 @@ user_version_message(Atom) -->
                  *******************************/
 
 prolog_message(spy(Head)) -->
-    { goal_to_predicate_indicator(Head, Pred)
-    },
-    [ 'Spy point on ~p'-[Pred] ].
+    [ 'New spy point on ' ],
+    goal_predicate(Head).
+prolog_message(already_spying(Head)) -->
+    [ 'Already spying ' ],
+    goal_predicate(Head).
 prolog_message(nospy(Head)) -->
-    { goal_to_predicate_indicator(Head, Pred)
-    },
-    [ 'Spy point removed from ~p'-[Pred] ].
+    [ 'Removed spy point from ' ],
+    goal_predicate(Head).
 prolog_message(trace_mode(OnOff)) -->
     [ 'Trace mode switched to ~w'-[OnOff] ].
 prolog_message(debug_mode(OnOff)) -->
@@ -1617,17 +1671,28 @@ tracing_list([trace(Head, Ports)|T]) -->
     translate_message(trace(Head, Ports)),
     tracing_list(T).
 
-prolog_message(frame(Frame, backtrace, _PC)) -->
+% frame(+Frame, +Choice, +Port, +PC) - Print for the debugger.
+prolog_message(frame(Frame, _Choice, backtrace, _PC)) -->
     !,
     { prolog_frame_attribute(Frame, level, Level)
     },
     [ ansi(frame(level), '~t[~D] ~10|', [Level]) ],
     frame_context(Frame),
     frame_goal(Frame).
-prolog_message(frame(Frame, choice, PC)) -->
+prolog_message(frame(Frame, _Choice, choice, PC)) -->
     !,
     prolog_message(frame(Frame, backtrace, PC)).
-prolog_message(frame(_, cut_call, _)) --> !, [].
+prolog_message(frame(_, _Choice, cut_call(_PC), _)) --> !.
+prolog_message(frame(Frame, _Choice, Port, _PC)) -->
+    frame_flags(Frame),
+    port(Port),
+    frame_level(Frame),
+    frame_context(Frame),
+    frame_depth_limit(Port, Frame),
+    frame_goal(Frame),
+    [ flush ].
+
+% frame(:Goal, +Trace)		- Print for trace/2
 prolog_message(frame(Goal, trace(Port))) -->
     !,
     thread_context,
@@ -1640,14 +1705,6 @@ prolog_message(frame(Goal, trace(Port, Id))) -->
     [ ' T ' ],
     port(Port, Id),
     goal(Goal).
-prolog_message(frame(Frame, Port, _PC)) -->
-    frame_flags(Frame),
-    port(Port),
-    frame_level(Frame),
-    frame_context(Frame),
-    frame_depth_limit(Port, Frame),
-    frame_goal(Frame),
-    [ flush ].
 
 frame_goal(Frame) -->
     { prolog_frame_attribute(Frame, goal, Goal)
@@ -1710,8 +1767,9 @@ port(Port, _Id-Level) -->
     [ '[~d] '-[Level] ],
     port(Port).
 
-port(Port) -->
-    { port_name(Port, Name)
+port(PortTerm) -->
+    { functor(PortTerm, Port, _),
+      port_name(Port, Name)
     },
     !,
     [ ansi(port(Port), '~w: ', [Name]) ].
@@ -1823,6 +1881,15 @@ deprecated(autoload(TargetModule, File, _M:PI, expansion)) -->
     load_file(File), [ ' into ' ],
     target_module(TargetModule),
     [ ' is deprecated due to term- or goal-expansion' ].
+deprecated(source_search_working_directory(File, _FullFile)) -->
+    [ 'Found file ', ansi(code, '~w', [File]),
+      ' relative to the current working directory.', nl,
+      'This behaviour is deprecated but still supported by', nl,
+      'the Prolog flag ',
+      ansi(code, source_search_working_directory, []), '.', nl
+    ].
+deprecated(moved_library(Old, New)) -->
+    [ 'Library was moved: ~q --> ~q'-[Old, New] ].
 
 load_file(File) -->
     { file_base_name(File, Base),
@@ -1938,6 +2005,9 @@ code(Term) -->
 code(Format, Term) -->
     [ ansi(code, Format, [Term]) ].
 
+list([]) --> [].
+list([H|T]) --> [H], list(T).
+
 
 		 /*******************************
 		 *        DEFAULT THEME		*
@@ -1981,7 +2051,6 @@ default_theme(message(Level),         Attrs) :-
     prolog:message_prefix_hook/2.
 :- thread_local
     user:thread_message_hook/3.
-:- '$hide'((push_msg/1,pop_msg/0)).
 :- '$notransact'((user:message_hook/3,
                   prolog:message_prefix_hook/2,
                   user:thread_message_hook/3)).
@@ -1997,14 +2066,14 @@ print_message(Level, _Term) :-
     !.
 print_message(Level, Term) :-
     setup_call_cleanup(
-        push_msg(Term, Stack),
+        notrace(push_msg(Term, Stack)),
         ignore(print_message_guarded(Level, Term)),
-        pop_msg(Stack)),
+        notrace(pop_msg(Stack))),
     !.
 print_message(Level, Term) :-
     (   Level \== silent
     ->  format(user_error, 'Recursive ~w message: ~q~n', [Level, Term]),
-        backtrace(20)
+        autoload_call(backtrace(20))
     ;   true
     ).
 
@@ -2025,7 +2094,11 @@ pop_msg(Stack) :-
 
 print_message_guarded(Level, Term) :-
     (   must_print(Level, Term)
-    ->  (   translate_message(Term, Lines, [])
+    ->  (   prolog:message_action(Term, Level),
+            fail                                % forall/2 is cleaner, but not yet
+        ;   true                                % defined
+        ),
+        (   translate_message(Term, Lines, [])
         ->  (   nonvar(Term),
                 (   notrace(user:thread_message_hook(Term, Level, Lines))
                 ->  true
@@ -2173,8 +2246,8 @@ add_message_context1(time(Format), Prefix0, Prefix) :-
     format_time(string(S), Format, Now),
     atomics_to_string([Prefix0, S, ' '], Prefix).
 add_message_context1(thread, Prefix0, Prefix) :-
+    \+ current_prolog_flag(toplevel_thread, true),
     thread_self(Id0),
-    Id0 \== main,
     !,
     (   atom(Id0)
     ->  Id = Id0

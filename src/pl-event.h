@@ -88,6 +88,7 @@ typedef struct event_type
 #define	predicate_update_event(def, action, cl, flags)	LDFUNC(predicate_update_event, def, action, cl, flags)
 #define	table_answer_event(def, action, answer)		LDFUNC(table_answer_event, def, action, answer)
 #define	retractall_event(def, head, start)		LDFUNC(retractall_event, def, head, start)
+#define PL_call_event_hook_va(ev, args) LDFUNC(PL_call_event_hook_va, ev, args)
 #endif /*USE_LD_MACROS*/
 
 #define LDFUNC_DECLARATIONS
@@ -96,10 +97,10 @@ void	cleanupEvents(void);
 int	delayEvents(void);
 int	sendDelayedEvents(int noerror);
 int	PL_call_event_hook(pl_event_type ev, ...);
-int	PL_call_event_hook_va(pl_event_type ev, va_list args);
-int	register_event_hook(event_list **list, atom_t name, int last,
+bool	PL_call_event_hook_va(pl_event_type ev, va_list args);
+bool	register_event_hook(event_list **list, atom_t name, bool last,
 			    term_t closure, int argc);
-int	register_event_function(event_list **list, atom_t name, int last,
+bool	register_event_function(event_list **list, atom_t name, bool last,
 				int (*func)(), void *closure, int argc);
 void	destroy_event_list(event_list **listp);
 int	predicate_update_event(Definition def, atom_t action, Clause cl,
@@ -123,13 +124,13 @@ event_list_location(pl_event_type ev)
 }
 
 
-static inline int WUNUSED
+static inline bool WUNUSED
 callEventHook(pl_event_type ev, ...)
 { event_list **listp = event_list_location(ev);
 
   if ( *listp )
   { va_list args;
-    int rc;
+    bool rc;
 
     va_start(args, ev);
     rc = PL_call_event_hook_va(ev, args);
@@ -138,7 +139,7 @@ callEventHook(pl_event_type ev, ...)
     return rc;
   }
 
-  return TRUE;
+  return true;
 }
 
 #endif /*_PL_EVENT_H*/

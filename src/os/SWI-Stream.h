@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2011-2023, University of Amsterdam
+    Copyright (c)  2011-2025, University of Amsterdam
 			      VU University Amsterdam
 			      SWI-Prolog Solutions b.v.
     All rights reserved.
@@ -50,12 +50,18 @@
 #endif
 #endif
 
+/* define SWIPL_WINDOWS_NATIVE_ACCESS to 1 if you want the native
+ * Windows types for Swinhandle() and Swinsock()
+ */
+
 #ifdef __WINDOWS__
+#if SWIPL_WINDOWS_NATIVE_ACCESS
 #include <winsock2.h>
 #include <windows.h>
-#else
-#include <unistd.h>
 #endif
+#else  /*__WINDOWS__*/
+#include <unistd.h>
+#endif	/*__WINDOWS__*/
 
 #include <stdarg.h>
 #include <wchar.h>
@@ -244,7 +250,8 @@ typedef struct io_stream
   void *		context;	/* getStreamContext() */
   struct PL_locale *	locale;		/* Locale associated to stream */
   intptr_t		fileno;		/* File number if this is associated to a file */
-  intptr_t		reserved[3];	/* reserved for extension */
+  uintptr_t		tty_size;	/* Size of terminal (2 shorts) */
+  intptr_t		reserved[2];	/* reserved for extension */
 } IOSTREAM;
 
 
@@ -282,6 +289,8 @@ typedef struct io_stream
 #define SIO_REPPL	SmakeFlag(30)	/* Bad char --> Prolog \hex\ */
 #define SIO_BOM		SmakeFlag(31)	/* BOM was detected/written */
 #define SIO_REPPLU	SmakeFlag(32)	/* Bad char --> Prolog \uXXXX */
+
+#define SIO_TRYLOCK	SIO_CLOSING     /* Used by PL_get_stream() */
 
 #define	SIO_SEEK_SET	0	/* From beginning of file.  */
 #define	SIO_SEEK_CUR	1	/* From current position.  */
@@ -328,6 +337,9 @@ PL_EXPORT_DATA(IOSTREAM)	S__iob[3];		/* Libs standard streams */
 #endif
 #define SIO_GETPENDING    (7)		/* get #pending bytes */
 #define SIO_GETREPOSITION (8)		/* Test if stream is repositionable */
+#ifdef __WINDOWS__
+#define SIO_GETWINHANDLE  (9)		/* Get underlying handle */
+#endif
 
 /* Sread_pending() */
 #define SIO_RP_BLOCK 0x1		/* wait for new input */
@@ -444,8 +456,10 @@ PL_EXPORT(int)		Ssetlocale(IOSTREAM *s,
 				   struct PL_locale **old_loc);
 PL_EXPORT(int)		Sflush(IOSTREAM *s);
 PL_EXPORT(int64_t)	Ssize(IOSTREAM *s);
-PL_EXPORT(int)		Sseek(IOSTREAM *s, long pos, int whence);
-PL_EXPORT(long)		Stell(IOSTREAM *s);
+PL_EXPORT(int)		Sseek(IOSTREAM *s, long pos, int whence); /* WDEPRECATED */ /* use Sseek64() */
+PL_EXPORT(long)		Stell(IOSTREAM *s); /* WDEPRECATED */ /* use Stell64() */
+PL_EXPORT(int)		Ssetttysize(IOSTREAM *s, short cols, short rows);
+PL_EXPORT(int)		Sgetttysize(IOSTREAM *s, short *cols, short *rows);
 PL_EXPORT(int)		Sclose(IOSTREAM *s);
 PL_EXPORT(int)		Sgcclose(IOSTREAM *s, int flags);
 PL_EXPORT(char *)	Sfgets(char *buf, int n, IOSTREAM *s);
@@ -476,7 +490,7 @@ PL_EXPORT(IOSTREAM *)	Sopen_file(const char *path, const char *how);
 PL_EXPORT(IOSTREAM *)	Sopen_iri_or_file(const char *path, const char *how);
 PL_EXPORT(IOSTREAM *)	Sfdopen(int fd, const char *type);
 PL_EXPORT(int)		Sfileno(IOSTREAM *s);
-#ifdef __WINDOWS__
+#if defined(__WINDOWS__) && SWIPL_WINDOWS_NATIVE_ACCESS
 PL_EXPORT(int)		Swin_open_osfhandle(HANDLE h, int flags);
 PL_EXPORT(IOSTREAM *)	Swin_open_handle(HANDLE h, const char *mode);
 PL_EXPORT(HANDLE)	Swinhandle(IOSTREAM *s);

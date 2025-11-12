@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2023, University of Amsterdam,
+    Copyright (c)  1985-2025, University of Amsterdam,
 			      VU University Amsterdam
 			      CWI, Amsterdam
 			      SWI-Prolog Solutions b.v.
@@ -206,6 +206,13 @@ handy for it someone wants to add a data type to the system.
       functions.
   O_COVERAGE
       Include low-level coverage analysis code.
+  O_VALIDATE_API
+      Include validity checks for the API functions
+  O_TRIE_ATTVAR
+      Support attributed variables in tries and tabling.
+  O_THROW
+      Use setjmp() in PL_next_solution(), allowing for PL_throw().  This
+      has a 12% performance impact (gcc 15, Fedora 42 on ADM3950X).
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 #define O_COMPILE_OR		1
@@ -232,15 +239,17 @@ handy for it someone wants to add a data type to the system.
 #define O_CALL_RESIDUE		1
 #define O_GVAR			1
 #define O_CYCLIC		1
+#define O_TRIE_ATTVAR		1
 #define O_MITIGATE_SPECTRE	1
 #define O_ROUND_UP_DOWN		1
 #define O_COVERAGE		1
 #ifndef O_PREFER_RATIONALS
-#define O_PREFER_RATIONALS	FALSE
+#define O_PREFER_RATIONALS	false
 #endif
 #ifndef O_RATIONAL_SYNTAX
 #define O_RATIONAL_SYNTAX	RAT_COMPAT
 #endif
+#define O_THROW			1
 
 /* Define either or none of O_DYNAMIC_EXTENSIONS and O_STATIC_EXTENSIONS */
 #if (defined(HAVE_DLOPEN) || defined(HAVE_SHL_LOAD) || defined(EMULATE_DLOPEN)) \
@@ -249,7 +258,6 @@ handy for it someone wants to add a data type to the system.
 #endif
 
 #ifdef __WINDOWS__
-#define NOTTYCONTROL           TRUE
 #define O_DDE 1
 #define O_DLL 1
 #define O_HASDRIVES 1
@@ -259,7 +267,7 @@ handy for it someone wants to add a data type to the system.
 #endif
 
 #ifdef __EMSCRIPTEN__
-#define NOTTYCONTROL           TRUE
+#define NOTTYCONTROL           true
 #define O_TIGHT_CSTACK 1
 #endif
 
@@ -420,8 +428,6 @@ typedef _sigset_t sigset_t;
 
 /* prepare including BeOS types */
 #ifdef __BEOS__
-#define bool BOOL
-
 #include <BeBuild.h>
 #if (B_BEOS_VERSION <= B_BEOS_VERSION_5)
 # include <socket.h>      /* include socket.h to get the fd_set structure */
@@ -429,10 +435,6 @@ typedef _sigset_t sigset_t;
 # include <SupportDefs.h> /* not needed for a BONE-based networking stack */
 #endif
 #include <OS.h>
-
-#undef true
-#undef false
-#undef bool
 #define EMULATE_DLOPEN 1		/* Emulated dlopen() in pl-beos.c */
 #endif
 
@@ -497,6 +499,15 @@ A common basis for C keywords.
 #define MAYBE_UNUSED
 #endif
 
+#if (defined(__GNUC__) && __GNUC__ >= 13) || \
+    (defined(__clang__) && __clang_major__ >= 17)
+#define ASSUME(expr) __attribute__((assume(expr)))
+#elif defined(_MSC_VER)
+#define ASSUME(expr) __assume(expr)
+#else
+#define ASSUME(expr) assert(expr)
+#endif
+
 #ifdef HAVE___BUILTIN_EXPECT
 #define likely(x)       __builtin_expect((x), 1)
 #define unlikely(x)     __builtin_expect((x), 0)
@@ -521,8 +532,6 @@ A common basis for C keywords.
 Booleans,  addresses,  strings  and other   goodies.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-typedef int			bool;
-
 #if __GNUC__ && !__STRICT_ANSI__
 #define LocalArray(t, n, s)	t n[s]
 #else
@@ -531,13 +540,13 @@ typedef int			bool;
 
 #define TermVector(name, s)	LocalArray(Word, name, s)
 
-#ifndef TRUE
-#define TRUE			1
-#define FALSE			0
+#ifndef true
+#define true			1
+#define false			0
 #endif
-#define succeed			return TRUE
-#define fail			return FALSE
-#define TRY(goal)		do { if (!(goal)) return FALSE; } while(0)
+#define succeed			return true
+#define fail			return false
+#define TRY(goal)		do { if (!(goal)) return false; } while(0)
 
 #define CL_START		((ClauseRef)1)	/* asserta */
 #define CL_END			((ClauseRef)2)	/* assertz */
@@ -589,21 +598,18 @@ them.  Descriptions:
 #define INT64BITSIZE		(8 * sizeof(int64_t))
 #define WORDS_PER_DOUBLE        ((sizeof(double)+sizeof(word)-1)/sizeof(word))
 #define WORDS_PER_INT64		(sizeof(int64_t)/sizeof(word))
+#define CODES_PER_DOUBLE        ((sizeof(double)+sizeof(code)-1)/sizeof(code))
+#define CODES_PER_WORD		(SIZEOF_WORD/SIZEOF_CODE)
+#define WORDS_PER_BIGNUM64	(5)
 
 				/* Prolog's integer range */
-#define PLMINTAGGEDINT		(-(intptr_t)((word)1<<(WORDBITSIZE-LMASK_BITS-1)))
+#define PLMINTAGGEDINT		(-(sword)((word)1<<(WORDBITSIZE-LMASK_BITS-1)))
 #define PLMAXTAGGEDINT		(-PLMINTAGGEDINT - 1)
-#define PLMINTAGGEDINT32	(-(intptr_t)((word)1<<(32-LMASK_BITS-1)))
+#define PLMINTAGGEDINT32	(-(sword)((word)1<<(32-LMASK_BITS-1)))
 #define PLMAXTAGGEDINT32	(-PLMINTAGGEDINT32 - 1)
 #define inTaggedNumRange(n)	(valInt(consInt(n)) == (n))
 #define PLMININT		(-PLMAXINT - 1)
 #define PLMAXINT		((int64_t)(((uint64_t)1<<(INT64BITSIZE-1)) - 1))
-
-#if vax
-#define MAXREAL			(1.701411834604692293e+38)
-#else					/* IEEE double */
-#define MAXREAL			(1.79769313486231470e+308)
-#endif
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Macros to handle hash tables.  See pl-table.c for  details.   First  the
@@ -619,7 +625,6 @@ sizes  of  the  hash  tables are defined.  Note that these should all be
 #define PUBLICHASHSIZE		8	/* Module export table */
 #define FLAGHASHSIZE		16	/* global flag/3 table */
 
-#include "os/pl-table.h"
 #include "pl-vmi.h"
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -751,14 +756,23 @@ REFERENCES
 Common Prolog objects typedefs. Note that   code is word-aligned for two
 reasons. First of all, we want to get   the maximum speed and second, we
 must ensure that sizeof(struct clause) is  a multiple of sizeof(word) to
-place them on the stack (see I_USERCALL).
+place them on the stack (see I_CALL1).
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-#ifdef __GNUC__
-#define WORD_ALIGNED __attribute__ ((aligned (sizeof(word))))
+#define SIZEOF_WORD  8
+#define ALIGNOF_WORD 8
+
+#if SIZEOF_VOIDP == SIZEOF_WORD
+#define ALIGN(n)
+#define IS_WORD_ALIGNED(ptr)
+#elif defined(__GNUC__) || defined(__clang__)
+#define ALIGN(n) __attribute__ ((aligned (n)))
+#define IS_WORD_ALIGNED(ptr) DEBUG(0, assert(((uintptr_t)(ptr)&(sizeof(word)-1)) == 0))
 #else
-#define WORD_ALIGNED
+#error "Do not know how to specify alignment"
 #endif
+
+#define WORD_ALIGNED ALIGN(sizeof(word))
 
 #if 0
 /* The following have all been defined in SWI-Prolog.h, included above,
@@ -771,7 +785,7 @@ typedef word			functor_t;	/* encoded functor */
 typedef struct module *		module_t;	/* a module */
 typedef struct procedure *	predicate_t;	/* a predicate handle */
 typedef struct record *		record_t;	/* handle to a recorded term */
-typedef uintptr_t		term_t;		/* external term-reference */
+typedef word			term_t;		/* external term-reference */
 typedef uintptr_t		qid_t;		/* external query-id */
 typedef uintptr_t		PL_fid_t;	/* external foreign context-id */
 typedef struct foreign_context *control_t;	/* non-deterministic control arg */
@@ -782,19 +796,22 @@ typedef wchar_t			pl_wchar_t;	/* Prolog wide character */
 typedef foreign_t		(*pl_function_t)(); /* foreign language functions */
 typedef uintptr_t		buf_mark_t;	/* buffer mark handle */
 
-#define				fid_t \
-	PL_fid_t				/* avoid AIX name-clash */
-#endif
+#define fid_t			PL_fid_t        /* avoid AIX name-clash */
+#endif /*0*/
 
-typedef uintptr_t		word;		/* Anonymous ptr-sized object*/
+typedef uint64_t		word WORD_ALIGNED; /* Prolog data cell */
+typedef int64_t			sword WORD_ALIGNED; /* Signed version */
+#define SIZEOF_ATOM SIZEOF_VOIDP
+#define SIZEOF_CODE SIZEOF_VOIDP
 typedef word *			Word;		/* a pointer to anything */
-typedef word			atom_t;		/* encoded atom */
-typedef word			functor_t;	/* encoded functor */
-typedef uintptr_t		code WORD_ALIGNED; /* bytes codes */
+typedef uintptr_t		atom_t;		/* encoded atom */
+typedef uintptr_t		functor_t;	/* encoded functor */
+typedef uintptr_t		code;		/* VM instructions */
+typedef intptr_t		scode;		/* signed VM instruction argument */
 typedef code *			Code;		/* pointer to byte codes */
 typedef int			Char;		/* char that can pass EOF */
-typedef foreign_t		(*Func)();	/* foreign functions */
-typedef int			(*ArithF)();	/* arithmetic function */
+typedef void *			Func;		/* foreign functions */
+typedef bool			(*ArithF)();	/* arithmetic function */
 
 typedef struct atom *		Atom;		/* atom */
 typedef struct functor *	Functor;	/* complex term */
@@ -819,8 +836,6 @@ typedef struct choice *		Choice;		/* Choice-point */
 typedef struct clause_choice *  ClauseChoice;   /* firstClause()/nextClause() */
 typedef struct queryFrame *	QueryFrame;     /* toplevel query frame */
 typedef struct fliFrame *	FliFrame;	/* FLI interface frame */
-typedef struct trail_entry *	TrailEntry;	/* Entry of trail stack */
-typedef struct gc_trail_entry *	GCTrailEntry;	/* Entry of trail stack (GC) */
 typedef struct mark		mark;		/* backtrack mark */
 typedef struct stack *		Stack;		/* machine stack */
 typedef struct _varDef *	VarDef;		/* pl-comp.c */
@@ -834,6 +849,29 @@ typedef struct feature *	Feature;	/* pl-prims.c */
 typedef struct dirty_def_info * DirtyDefInfo;
 typedef struct counting_mutex	counting_mutex;
 typedef struct pl_mutex		pl_mutex;
+
+static inline code
+ptr2code(void *ptr)
+{ return (code)(uintptr_t)ptr;
+}
+
+static inline code
+ptr2word(void *ptr)
+{ return (word)(uintptr_t)ptr;
+}
+
+#define word2ptr(type, w) ((type)(uintptr_t)(w))
+#define code2ptr(type, c) ((type)(uintptr_t)(c))
+#define word2atom(w)	  ((atom_t)(w))
+#define word2functor(w)	  ((functor_t)(w))
+#define atom2word(a)	  ((word)(a))
+#define code2atom(c)	  ((atom_t)(c))
+#define atom2code(w)	  ((code)(w))
+#define code2functor(c)	  ((functor_t)(c))
+#define functor2code(f)	  ((code)(f))
+#define word2code(w)	  ((code)(w))
+#define code2word(c)	  ((word)(sword)(scode)(c))
+
 
 		 /*******************************
 		 *	    ARITHMETIC		*
@@ -876,8 +914,8 @@ typedef struct
 #define floatNumber(n)	((n)->type >= V_FLOAT)
 
 typedef enum
-{ NUM_ERROR = FALSE,			/* Syntax error */
-  NUM_OK    = TRUE,			/* Ok */
+{ NUM_ERROR = false,			/* Syntax error */
+  NUM_OK    = true,			/* Ok */
   NUM_FUNDERFLOW = -1,			/* Float underflow */
   NUM_FOVERFLOW = -2,			/* Float overflow */
   NUM_IOVERFLOW = -3,			/* Integer overflow */
@@ -958,56 +996,59 @@ short.  As this allows us to set, clear and test combinations  of  flags
 with one operation, it turns out to be faster as well.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-#define true(s, a)		((s)->flags & (a))
+#define ison(s, a)		((s)->flags & (a))
 #define alltrue(s, a)		(((s)->flags & (a)) == (a))
-#define false(s, a)		(!true((s), (a)))
+#define isoff(s, a)		(!ison((s), (a)))
 #define set(s, a)		ATOMIC_OR(&(s)->flags, (a))
 #define clear(s, a)		ATOMIC_AND(&(s)->flags, ~(a))
 #define clearFlags(s)		((s)->flags = 0)
 
 /* Flags on predicates (packed in uint64_t) */
 
-#define P_SSU_DET		(0x00000001LL) /* Single Sided Unification: det */
-#define P_CLAUSABLE		(0x00000002LL) /* Clause/2 always works */
-#define P_QUASI_QUOTATION_SYNTAX (0x00000004LL) /* {|Type||Quasi Quote|} */
-#define P_NON_TERMINAL		(0x00000008LL) /* Grammar rule (Name//ArityLL) */
-#define P_SHRUNKPOW2		(0x00000010LL) /* See reconsider_index(LL) */
-#define P_FOREIGN		(0x00000020LL) /* Implemented in C */
-#define P_NONDET		(0x00000040LL) /* Foreign: nondet */
-#define P_VARARG		(0x00000080LL) /* Foreign: use alt calling API */
-#define P_FOREIGN_CREF		(0x00000100LL) /* Foreign: ndet ctx is clause */
-#define P_DYNAMIC		(0x00000200LL) /* Dynamic predicate */
-#define P_THREAD_LOCAL		(0x00000400LL) /* Thread local predicate */
-#define P_VOLATILE		(0x00000800LL) /* Clauses are not saved */
-#define P_DISCONTIGUOUS		(0x00001000LL) /* Clauses are not together */
-#define P_MULTIFILE		(0x00002000LL) /* Clauses are in multiple files */
-#define P_PUBLIC		(0x00004000LL) /* Called from somewhere */
-#define P_ISO			(0x00008000LL) /* Part of the ISO standard */
-#define P_LOCKED		(0x00010000LL) /* Locked as system predicate */
-#define P_NOPROFILE		(0x00020000LL) /* Profile children, not me */
-#define P_TRANSPARENT		(0x00040000LL) /* Inherit calling module */
-#define P_META			(0x00080000LL) /* Has meta_predicate decl */
-#define P_MFCONTEXT		(0x00100000LL) /* Used for Goal@Module */
-#define P_DIRTYREG		(0x00200000LL) /* Part of GD->procedures.dirty */
-#define P_ERASED		(0x00400000LL) /* Predicate has been destroyed */
-#define HIDE_CHILDS		(0x00800000LL) /* Hide children from tracer */
-#define SPY_ME			(0x01000000LL) /* Spy point placed */
-#define TRACE_ME		(0x02000000LL) /* Can be debugged */
-#define P_DET			(0x04000000LL) /* Predicate is deterministic */
-#define P_AUTOLOAD		(0x08000000LL) /* autoload/2 explicit import */
-#define P_WAITED_FOR		(0x10000000LL) /* Someone is waiting for me */
-#define	P_LOCKED_SUPERVISOR	(0x20000000LL) /* Fixed supervisor */
-#define FILE_ASSIGNED		(0x40000000LL) /* Is assigned to a file */
-#define P_REDEFINED		(0x80000000LL) /* Overrules a definition */
-#define P_SIG_ATOMIC	      (0x0100000000LL) /* Do not call handleSignals */
-#define P_TRANSACT	      (0x0200000000LL) /* Subject to transactions */
+#define FLAG64(i) (1LL<<((i)-1))
+#define P_SSU_DET		FLAG64(1)  /* Single Sided Unification: det */
+#define P_CLAUSABLE		FLAG64(2)  /* Clause/2 always works */
+#define P_QUASI_QUOTATION_SYNTAX FLAG64(3) /* {|Type||Quasi Quote|} */
+#define P_NON_TERMINAL		FLAG64(4)  /* Grammar rule (Name//Arity) */
+#define P_SHRUNKPOW2		FLAG64(5)  /* See reconsider_index() */
+#define P_FOREIGN		FLAG64(6)  /* Implemented in C */
+#define P_NONDET		FLAG64(7)  /* Foreign: nondet */
+#define P_VARARG		FLAG64(8)  /* Foreign: use alt calling API */
+#define P_FOREIGN_CREF		FLAG64(9)  /* Foreign: ndet ctx is clause */
+#define P_DYNAMIC		FLAG64(10) /* Dynamic predicate */
+#define P_THREAD_LOCAL		FLAG64(11) /* Thread local predicate */
+#define P_LOCALISED		FLAG64(12) /* Thread local instance */
+#define P_VOLATILE		FLAG64(13) /* Clauses are not saved */
+#define P_DISCONTIGUOUS		FLAG64(14) /* Clauses are not together */
+#define P_MULTIFILE		FLAG64(15) /* Clauses are in multiple files */
+#define P_PUBLIC		FLAG64(16) /* Called from somewhere */
+#define P_ISO			FLAG64(17) /* Part of the ISO standard */
+#define P_LOCKED		FLAG64(18) /* Locked as system predicate */
+#define P_NOPROFILE		FLAG64(19) /* Profile children, not me */
+#define P_TRANSPARENT		FLAG64(20) /* Inherit calling module */
+#define P_META			FLAG64(21) /* Has meta_predicate decl */
+#define P_MFCONTEXT		FLAG64(22) /* Used for Goal@Module */
+#define P_DIRTYREG		FLAG64(23) /* Part of GD->procedures.dirty */
+#define P_ERASED		FLAG64(24) /* Predicate has been destroyed */
+#define HIDE_CHILDS		FLAG64(25) /* Hide children from tracer */
+#define SPY_ME			FLAG64(26) /* Spy point placed */
+#define TRACE_ME		FLAG64(27) /* Can be debugged */
+#define P_DET			FLAG64(28) /* Predicate is deterministic */
+#define P_AUTOLOAD		FLAG64(29) /* autoload/2 explicit import */
+#define P_WAITED_FOR		FLAG64(30) /* Someone is waiting for me */
+#define	P_LOCKED_SUPERVISOR	FLAG64(31) /* Fixed supervisor */
+#define FILE_ASSIGNED		FLAG64(32) /* Is assigned to a file */
+#define P_REDEFINED		FLAG64(33) /* Overrules a definition */
+#define P_SIG_ATOMIC		FLAG64(34) /* Do not call handleSignals */
+#define P_TRANSACT		FLAG64(35) /* Subject to transactions */
 #define PROC_DEFINED		(P_DYNAMIC|P_FOREIGN|P_MULTIFILE|\
 				 P_DISCONTIGUOUS|P_LOCKED_SUPERVISOR)
+#define P_RELOADING		P_MODIFIED /* We are reloading */
 /* flags for p_reload data (reconsult) */
-#define P_MODIFIED	      (0x1000000000LL) /* Clause list as modified */
-#define P_NEW		      (0x2000000000LL) /* New predicate */
-#define P_NO_CLAUSES	      (0x4000000000LL) /* Foreign or thread local */
-#define P_CHECK_SSU	      (0x8000000000LL) /* Check mixed => and :- */
+#define P_MODIFIED		FLAG64(36) /* Clause list is modified */
+#define P_NEW			FLAG64(37) /* New predicate */
+#define P_NO_CLAUSES		FLAG64(38) /* Foreign or thread local */
+#define P_CHECK_SSU		FLAG64(39) /* Check mixed => and :- */
 
 /* Flags on clauses (unsigned int) */
 
@@ -1049,6 +1090,12 @@ with one operation, it turns out to be faster as well.
 #define RAT_COMPAT		(0)
 #define RAT_NATURAL		(0x00000100) /* 1/3 */
 #define RAT_MASK		(RAT_NATURAL)
+#define VARTAG_DICT		(0x00000000) /* _{...} --> old dict */
+#define VARTAG_DYNDICT		(0x00000200) /* _{...} --> #{...} */
+#define VARTAG_ATTVAR		(0x00000400) /* _{...} --> attvar */
+#define VARTAG_ERROR		(0x00000600) /* _{...} --> error */
+#define VARTAG_WARNING		(0x00000800) /* _{...} --> warning + dict */
+#define VARTAG_MASK		(0x00000e00)
 #define UNKNOWN_FAIL		(0x00001000) /* module */
 #define UNKNOWN_WARNING		(0x00002000) /* module */
 #define UNKNOWN_ERROR		(0x00004000) /* module */
@@ -1056,6 +1103,7 @@ with one operation, it turns out to be faster as well.
 #define M_VARPREFIX		(0x00008000) /* _var, Atom */
 #define M_DESTROYED		(0x00010000)
 #define M_WAITED_FOR		(0x00020000) /* thread_wait/2 on this module */
+#define M_RDSTRING_TERM		(0x00040000) /* read/1 and friends: demand a term */
 
 /* Flags on functors */
 
@@ -1083,8 +1131,8 @@ Macros for environment frames (local stack frames)
 #define FR_SKIPPED		(0x0002) /* We have skipped on this frame */
 #define FR_MARKED		(0x0004) /* GC */
 #define FR_MARKED_PRED		(0x0008) /* GC predicates/clauses */
-#define FR_DEBUG		(0x0010) /* GUI debugger */
-#define FR_CATCHED		(0x0020) /* Frame caught an exception */
+#define FR_NOTIFY		(0x0010) /* Notify destruction (GUI debugger)*/
+#define FR_CAUGHT		(0x0020) /* Frame caught an exception */
 #define FR_INBOX		(0x0040) /* Inside box (for REDO in built-in) */
 #define FR_CONTEXT		(0x0080) /* fr->context is set */
 #define FR_CLEANUP		(0x0100) /* setup_call_cleanup/4 */
@@ -1093,7 +1141,7 @@ Macros for environment frames (local stack frames)
 #define FR_DET			(0x0800) /* Declared det */
 #define FR_DETGUARD		(0x1000) /* Frame is guarded for determinism */
 #define FR_DETGUARD_SET		(0x2000) /* Flag was set on this frame */
-#define FR_WATCHED (FR_CLEANUP|FR_DEBUG)
+#define FR_WATCHED (FR_CLEANUP|FR_NOTIFY)
 
 #define FR_MAGIC_MASK		(0xffff0000)
 #define FR_MAGIC_MASK2		(0xfff00000)
@@ -1117,9 +1165,9 @@ Macros for environment frames (local stack frames)
 #define refFliP(f, n)		((Word)((f)+1) + (n))
 #define parentFrame(f)		((f)->parent \
 				  ? (f)->parent \
-				  : (LocalFrame)varFrame( \
-				    (f), -QF_PARENT_ENV_OFFSET))
-#define slotsFrame(f)		(true((f)->predicate, P_FOREIGN) ? \
+				 : word2ptr(LocalFrame, varFrame( \
+				    (f), -QF_PARENT_ENV_OFFSET)))
+#define slotsFrame(f)		(ison((f)->predicate, P_FOREIGN) ? \
 				      (f)->predicate->functor->arity : \
 				      (f)->clause->clause->prolog_vars)
 
@@ -1172,7 +1220,7 @@ typedef uint64_t lgen_t;
 	do { (f)->generation = (gen); } while(0)
 #endif
 
-#define FR_LCO_CLEAR	(FR_SKIPPED|FR_WATCHED|FR_CATCHED|\
+#define FR_LCO_CLEAR	(FR_SKIPPED|FR_WATCHED|FR_CAUGHT|\
 			 FR_HIDE_CHILDS|FR_CLEANUP|FR_SSU_DET)
 #define FR_CLEAR_NEXT	(FR_LCO_CLEAR|FR_DET|FR_DETGUARD)
 #define FR_CLEAR_ALWAYS (FR_CONTEXT|FR_DETGUARD_SET)
@@ -1262,19 +1310,7 @@ We assume the compiler will optimise this properly.
 	  } \
 	}
 
-#define cpInt64Data(to, from) \
-	{ Word _f = (Word)(from); \
-	  switch(WORDS_PER_INT64) \
-	  { case 2: \
-	      *(to)++ = *_f++; \
-	    case 1: \
-	      *(to)++ = *_f++; \
-	      from = (void *)_f; \
-	      break; \
-	    default: \
-	      assert(0); \
-	  } \
-	}
+typedef unsigned char iarg_t;	/* index argument */
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Structure declarations that must be shared across multiple files.
@@ -1282,7 +1318,7 @@ Structure declarations that must be shared across multiple files.
 
 struct atom
 { Atom		next;		/* next in chain */
-  word		atom;		/* as appearing on the global stack */
+  atom_t	atom;		/* as appearing on the global stack */
 #ifdef O_TERMHASH
   unsigned int  hash_value;	/* hash-key value */
 #endif
@@ -1318,6 +1354,8 @@ typedef struct atom_table
 #define ATOM_VALID_REFERENCE	((unsigned int)0x1 << (INTBITSIZE-2))
 #define ATOM_MARKED_REFERENCE	((unsigned int)0x1 << (INTBITSIZE-3))
 #define ATOM_DESTROY_REFERENCE	((unsigned int)0x1 << (INTBITSIZE-4))
+#define ATOM_PRE_DESTROY_REFERENCE \
+	(ATOM_DESTROY_REFERENCE|ATOM_RESERVED_REFERENCE)
 
 #define ATOM_IS_FREE(ref)	(((ref) & ATOM_STATE_MASK) == 0)
 #define ATOM_IS_RESERVED(ref)	((ref) & ATOM_RESERVED_REFERENCE)
@@ -1344,8 +1382,8 @@ extern IOSTREAM *atomLogFd;
 
 struct functorDef
 { FunctorDef	next;		/* next in chain */
-  word		functor;	/* as appearing on the global stack */
-  word		name;		/* Name of functor */
+  functor_t	functor;	/* as appearing on the global stack */
+  atom_t	name;		/* Name of functor */
   size_t	arity;		/* arity of functor */
   unsigned      flags;		/* Flag field holding: */
 		  /* CONTROL_F	   Compiled control-structure */
@@ -1376,8 +1414,7 @@ typedef struct functor_table
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Struct clause must be a  multiple   of  sizeof(word)  for compilation on
-behalf  of  I_USERCALL.  This   is   verified    in   an   assertion  in
-checkCodeTable().
+behalf of I_CALL1. This is verified in an assertion in checkCodeTable().
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 #define sizeofClause(n) (offsetof(struct clause, codes[n]))
@@ -1399,15 +1436,15 @@ struct clause
   unsigned int		references;	/* # ClauseRef pointing at me */
   unsigned int		tr_erased_no;	/* # transactions that erased me */
   code			code_size;	/* size of ->codes */
-  code			codes[1];	/* VM codes of clause */
+  code			codes[];	/* VM codes of clause */
 };
 
 typedef struct arg_info
 { float		speedup;		/* Computed speedup */
   unsigned	list	   : 1;		/* Index using lists */
-  unsigned	ln_buckets : 5;		/* lg2(bucket count) */
+  unsigned	ln_buckets : 5;		/* lg2(bucket count) (max 4G buckets) */
   unsigned	assessed   : 1;		/* Value was assessed */
-  unsigned	meta	   : 4;		/* Meta-argument info */
+  unsigned int	meta	   : 4;		/* Meta-argument info */
 } arg_info;
 
 typedef struct impl_any
@@ -1431,7 +1468,6 @@ typedef struct impl_local
   LocalDefinitions local;		/* P_THREAD_LOCAL predicates */
 } impl_local, *ImplLocal;
 
-
 typedef struct clause_list
 { arg_info     *args;			/* Meta and indexing info */
   ClauseRef	first_clause;		/* clause list of procedure */
@@ -1440,7 +1476,11 @@ typedef struct clause_list
   unsigned int	number_of_clauses;	/* number of associated clauses */
   unsigned int	erased_clauses;		/* number of erased clauses in set */
   unsigned int	number_of_rules;	/* number of real rules */
-  unsigned int	jiti_tried;		/* number of times we tried to find */
+  unsigned	unindexed : 1;		/* no index possible */
+  unsigned	fixed_indexes : 1;	/* Do not search for alternatives */
+  unsigned	pindex_verified : 1;	/* Primary index is verified */
+  iarg_t	jiti_tried;		/* number of times we tried to find */
+  iarg_t	primary_index;		/* Index used to link clauses */
 } clause_list, *ClauseList;
 
 typedef struct clause_ref
@@ -1505,25 +1545,29 @@ typedef struct gc_stats
 
 #define VM_DYNARGC    255	/* compute argcount dynamically */
 
-#define CA1_PROC	1	/* code arg 1 is procedure */
-#define CA1_FUNC	2	/* code arg 1 is functor */
-#define CA1_DATA	3	/* code arg 2 is prolog data (H_ATOM, H_SMALLINT) */
-#define CA1_INTEGER	4	/* intptr_t value */
-#define CA1_INT64	5	/* int64 value */
-#define CA1_FLOAT	6	/* next WORDS_PER_DOUBLE are double */
-#define CA1_STRING	7	/* inlined string */
-#define CA1_MPZ		8	/* GNU mpz number */
-#define CA1_MPQ		9	/* GNU mpq number */
-#define CA1_MODULE     10	/* a module */
-#define CA1_VAR	       11	/* a variable(-offset) */
-#define CA1_FVAR       12	/* a variable(-offset), used as `firstvar' */
-#define CA1_CHP	       13	/* ChoicePoint (also variable(-offset)) */
-#define CA1_FOREIGN    14	/* Foreign function pointer */
-#define CA1_CLAUSEREF  15	/* Clause reference */
-#define CA1_JUMP       16	/* Instructions to skip */
-#define CA1_AFUNC      17	/* Number of arithmetic function */
-#define CA1_TRIE_NODE  18	/* Tabling: answer trie node with delays */
-#define CA1_END	       19	/* Highest+1 */
+/* keep ca1_name[] in pl-comp.c in sync with this */
+typedef enum vm_arg_type
+{ CA1_PROC = 1,         /* Procedure */
+  CA1_LPROC,		/* Procedure, stored in qlf as functor */
+  CA1_FUNC,		/* functor_t */
+  CA1_DATA,		/* word: atom or small int */
+  CA1_INTEGER,		/* integer (casted to/from `code`) */
+  CA1_WORD,		/* word value as integer (CODES_PER_WORD) */
+  CA1_FLOAT,		/* next CODES_PER_DOUBLE are double */
+  CA1_STRING,		/* inlined string */
+  CA1_MPZ,		/* GNU mpz number */
+  CA1_MPQ,		/* GNU mpq number */
+  CA1_MODULE,		/* a module */
+  CA1_VAR,		/* a variable(-offset) */
+  CA1_FVAR,		/* a variable(-offset), used as `firstvar' */
+  CA1_CHP,		/* ChoicePoint (also variable(-offset)) */
+  CA1_FOREIGN,		/* Foreign function pointer */
+  CA1_CLAUSEREF,	/* Clause reference */
+  CA1_JUMP,		/* Instructions to skip */
+  CA1_AFUNC,		/* Number of arithmetic function */
+  CA1_TRIE_NODE,	/* Tabling: answer trie node with delays */
+  CA1_END		/* Highest+1 */
+} vm_arg_type;
 
 #define VIF_BREAK      0x01	/* Can be a breakpoint */
 #define VIF_LCO        0x02	/* We have LCO support for this */
@@ -1559,29 +1603,54 @@ typedef struct
   char	       _argtype[VM_ARGC]; /* Argument type(s) code takes */
 } code_info;
 
+typedef union trail_entry
+{ Word		address;	/* address of the variable */
+  word		as_word;	/* Tagged during GC */
+} *TrailEntry;
+
+typedef union gc_wordptr
+{ Word		as_ptr;		/* address of the variable */
+  word		as_word;	/* Tagged during GC */
+} gc_wordptr;
+
+typedef union gc_trailptr
+{ TrailEntry	as_ptr;		/* address of the variable */
+  word		as_word;	/* Tagged during GC */
+} gc_trailptr;
+
 struct mark
-{ TrailEntry	trailtop;	/* top of the trail stack */
-  Word		globaltop;	/* top of the global stack */
-  Word		saved_bar;	/* saved LD->mark_bar */
+{ gc_trailptr	trailtop;	/* top of the trail stack */
+  gc_wordptr	globaltop;	/* top of the global stack */
+  gc_wordptr	saved_bar;	/* saved LD->mark_bar */
 };
 
 struct functor
 { word		definition;	/* Tagged definition pointer */
-  word		arguments[1];	/* arguments vector */
+  word		arguments[];	/* arguments vector */
 };
 
 struct clause_bucket
-{ ClauseRef	head;
-  ClauseRef	tail;
-  unsigned int	dirty;			/* # of garbage clauses */
+{ ClauseRef	head;		/* Head of clause list */
+  ClauseRef	tail;		/* Tail of clause list */
+  word		key;		/* Unrestricted key if no collisions */
+  unsigned int	dirty;		/* # of garbage clauses */
 };
 
 #define MAX_MULTI_INDEX  4
-#define MAXINDEXARG    254
+#define MAXINDEXARG    254		/* must fit iarg_t  */
 #define MAXINDEXDEPTH    7
 #define END_INDEX_POS  255
 
-typedef unsigned char iarg_t;		/* index argument */
+#define WAKEUP_STATE_WAKEUP          0x1 /* State contains a wakeup */
+#define WAKEUP_STATE_EXCEPTION	     0x2 /* State contains an exception */
+#define WAKEUP_STATE_SKIP_EXCEPTION  0x4 /* Do not restore exception from state */
+#define WAKEUP_KEEP_URGENT_EXCEPTION 0x8 /* Keep the most urgent exception */
+
+typedef struct wakeup_state
+{ fid_t		fid;			/* foreign frame reference */
+  Stack		outofstack;		/* Stack we are out of */
+  unsigned int	flags;			/* WAKEUP_STATE_* */
+} wakeup_state;
 
 struct clause_index
 { unsigned int	 buckets;		/* # entries */
@@ -1592,6 +1661,7 @@ struct clause_index
   unsigned	 is_list : 1;		/* Index with lists */
   unsigned	 incomplete : 1;	/* Index is incomplete */
   unsigned	 invalid : 1;		/* Index is invalid */
+  unsigned	 good : 1;		/* Index is (near) perfect */
   iarg_t	 args[MAX_MULTI_INDEX];	/* Indexed arguments */
   iarg_t	 position[MAXINDEXDEPTH+1]; /* Deep index position */
   float		 speedup;		/* Estimated speedup */
@@ -1607,7 +1677,6 @@ typedef struct local_definitions
 
 struct definition
 { FunctorDef	functor;		/* Name/Arity of procedure */
-  Module	module;			/* module of the predicate */
   Code		codes;			/* Executable code */
   union
   { impl_any	any;			/* has some value */
@@ -1618,16 +1687,13 @@ struct definition
   } impl;
   uint64_t	flags;			/* booleans (P_*) */
   unsigned int  shared;			/* #procedures sharing this def */
+  Module	module;			/* module of the predicate */
   struct linger_list  *lingering;	/* Assocated lingering objects */
   gen_t		last_modified;		/* Generation I was last modified */
   struct event_list  *events;		/* Forward update events */
   struct table_props *tabling;		/* Extended properties for tabling */
 #if defined(__SANITIZE_ADDRESS__)
   char	       *name;			/* Name for debugging */
-#endif
-#ifdef O_PROF_PENTIUM
-  int		prof_index;		/* index in profiling */
-  char	       *prof_name;		/* name in profiling */
 #endif
 };
 
@@ -1672,15 +1738,15 @@ struct localFrame
   ClauseRef	clause;			/* Current clause of frame */
   Definition	predicate;		/* Predicate we are running */
   Module	context;		/* context module of frame */
-#ifdef O_PROFILE
-  struct call_node *prof_node;		/* Profiling node */
-#endif
 #ifdef O_LOGICAL_UPDATE
   lgen_t	generation;		/* generation of the database */
 #endif
   unsigned int	level;			/* recursion level */
   unsigned int	flags;			/* packed long holding: */
-};
+#ifdef O_PROFILE
+  struct call_node *prof_node;		/* Profiling node */
+#endif
+} WORD_ALIGNED;
 
 
 typedef enum
@@ -1743,7 +1809,7 @@ struct choice
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 EXCEPTION_GUARDED(code, cleanup) must be used  in environments that need
-cleanup  should  a  PL_throw()  happen.  The   most  commpn  reason  for
+cleanup  should  a  PL_throw()  happen.  The   most  common  reason  for
 PL_throw() instead of the nicely   synchronous PL_raise_exception() is a
 stack overflow.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
@@ -1776,6 +1842,7 @@ typedef struct exception_frame		/* PL_throw exception environments */
 typedef struct queryRef
 { PL_engine_t	engine;			/* Engine for the query */
   uintptr_t	offset;			/* queryFrane offset in local stack */
+  void*		data[PL_MAX_QUERY_DATA];/* User data */
 } *QueryRef;
 
 #define QF_NODEBUG		0x0001	/* debug-able query */
@@ -1798,24 +1865,25 @@ struct queryFrame
   term_t	exception;		/* Exception term */
 #endif
   struct
-  { term_t	term;			/* Handle to exchange data */
+  { term_t	  term;			/* Handle to exchange data */
+    wakeup_state  wstate;		/* state saved using saveWakeup() */
   } yield;
   fid_t		foreign_frame;		/* Frame after PL_next_solution() */
   unsigned int	flags;
   debug_type	debugSave;		/* saved debugstatus.debugging */
   unsigned int	flags_saved;		/* Saved boolean Prolog flags */
-  int		solutions;		/* # of solutions produced */
+  int64_t	solutions;		/* # of solutions produced */
   Word	       *aSave;			/* saved argument-stack */
   Choice	saved_bfr;		/* Saved choice-point */
   LocalFrame	saved_ltop;		/* Saved lTop */
   QueryFrame	parent;			/* Parent queryFrame */
   QueryRef	qid;			/* Opaque query id */
-  struct choice	choice;			/* First (dummy) choice-point */
+  struct choice	choice WORD_ALIGNED;	/* First (dummy) choice-point */
   LocalFrame	saved_environment;	/* Parent local-frame */
 					/* Do not put anything between */
 					/* or check parentFrame() */
-  struct localFrame top_frame;		/* The (dummy) top local frame */
-  struct localFrame frame;		/* The initial frame */
+  struct localFrame top_frame WORD_ALIGNED; /* The (dummy) top local frame */
+  struct localFrame frame WORD_ALIGNED;	/* The initial frame */
 };
 
 #define QF_PARENT_ENV_OFFSET \
@@ -1843,6 +1911,7 @@ struct fliFrame
   int		magic;			/* Magic code */
 #endif
   size_t	size;			/* # slots on it */
+  size_t	no_free_before;		/* No free before this */
   FliFrame	parent;			/* parent FLI frame */
   mark		mark;			/* data-stack mark */
 };
@@ -1889,19 +1958,35 @@ struct recordRef
 		 *	EXCEPTION CLASSES	*
 		 *******************************/
 
+/* Exception classification is used to define exception priorities:
+   If an exception causes an exception with a higher rank (lower in
+   the list below), use the highest ranked exception
+*/
+
 typedef enum except_class
 { EXCEPT_NONE = 0,			/* no exception */
   EXCEPT_OTHER,				/* any other exception */
   EXCEPT_ERROR,				/* ISO error(Formal,Context) */
   EXCEPT_RESOURCE,			/* ISO error(resource_error(_), _) */
   EXCEPT_TIMEOUT,			/* time_limit_exceeded */
-  EXCEPT_ABORT				/* '$aborted' */
+  EXCEPT_UNWIND,			/* unwind(Term) */
+  EXCEPT_ABORT,				/* unwind(abort) */
+  EXCEPT_THREAD_EXIT,			/* unwind(thread_exit(Term)) */
+  EXCEPT_HALT				/* unwind(halt(Code) */
 } except_class;
 
 
 		 /*******************************
 		 *	SOURCE FILE ADMIN	*
 		 *******************************/
+
+// Duplicates from pl-table.h.  Mutual type dependencies!
+typedef struct table		*Table;		/* word -> word  */
+typedef struct table_pp		*TablePP;       /* Pointer -> Pointer  */
+typedef struct table_wp		*TableWP;       /* word -> Pointer  */
+typedef struct table_pw		*TablePW;       /* word -> Pointer  */
+typedef struct kvs		*KVS;		/* map of key-values */
+typedef struct table_enum	*TableEnum;	/* Enumerate table entries */
 
 #define SF_MAGIC 0x14a3c90f
 #define SF_MAGIC_DESTROYING 0x14a3c910
@@ -1917,14 +2002,14 @@ typedef struct p_reload
 
 typedef struct m_reload
 { Module	module;
-  Table		public;			/* new export list */
+  TableWP	public;			/* new export list (functor_t -> Procedure */
 } m_reload;
 
 typedef struct sf_reload
-{ Table		procedures;		/* Procedures being reloaded */
+{ TablePP	procedures;		/* Procedure -> p_reload* */
   gen_t		reload_gen;		/* Magic gen for reloading */
   size_t	pred_access_count;	/* Top of predicate access stack */
-  Table		modules;		/* Modules seen during reload */
+  TablePP	modules;		/* Module -> m_reload* */
   unsigned	number_of_clauses;	/* reload clause count */
 } sf_reload;
 
@@ -1944,6 +2029,7 @@ struct sourceFile
   unsigned int	number_of_clauses;	/* number of clauses */
   unsigned int	index;			/* index number (1,2,...) */
   unsigned int	references;		/* Reference count */
+  unsigned	isfile     : 1;		/* Is a real file */
   unsigned	system     : 1;		/* system sourcefile: do not reload */
   unsigned	from_state : 1;		/* Loaded from resource DB state */
   unsigned	resource   : 1;		/* Loaded from resource DB file */
@@ -1967,9 +2053,9 @@ struct module
 { atom_t	name;		/* name of module */
   atom_t	class;		/* class of the module */
   SourceFile	file;		/* file from which module is loaded */
-  Table		procedures;	/* predicates associated with module */
-  Table		public;		/* public predicates associated */
-  Table		operators;	/* local operator declarations */
+  TableWP	procedures;	/* predicates associated with module */
+  TableWP	public;		/* public predicates associated */
+  TableWP	operators;	/* local operator declarations */
   ListCell	supers;		/* Import predicates from here */
   ListCell	lingering;	/* Lingering definitions */
   size_t	code_size;	/* #Bytes used for its procedures */
@@ -1996,18 +2082,6 @@ typedef struct module_enum
   int		flags;
 } module_enum, *ModuleEnum;
 
-
-		 /*******************************
-		 *	      TRAIL		*
-		 *******************************/
-
-struct trail_entry
-{ Word		address;	/* address of the variable */
-};
-
-struct gc_trail_entry
-{ word		address;	/* address of the variable */
-};
 
 		 /*******************************
 		 *	   META PREDICATE	*
@@ -2050,27 +2124,27 @@ struct gc_trail_entry
 
 #define NO_MARK_BAR	(Word)(~(uintptr_t)0)
 
-#define Mark(b)		do { (b).trailtop  = tTop; \
-			     (b).saved_bar = LD->mark_bar; \
+#define Mark(b)		do { (b).trailtop.as_ptr  = tTop; \
+			     (b).saved_bar.as_ptr = LD->mark_bar; \
 			     DEBUG(CHK_SECURE, \
-				   assert((b).saved_bar == NO_MARK_BAR || \
-					  ((b).saved_bar >= gBase && \
-					   (b).saved_bar <= gTop))); \
-			     (b).globaltop = gTop; \
+				   assert((b).saved_bar.as_ptr == NO_MARK_BAR || \
+					  ((b).saved_bar.as_ptr >= gBase && \
+					   (b).saved_bar.as_ptr <= gTop))); \
+			     (b).globaltop.as_ptr = gTop; \
 			     if ( LD->mark_bar != NO_MARK_BAR ) \
-			       LD->mark_bar = (b).globaltop; \
+			       LD->mark_bar = (b).globaltop.as_ptr; \
 			   } while(0)
-#define DiscardMark(b)	do { LD->mark_bar = (LD->frozen_bar > (b).saved_bar ? \
-					     LD->frozen_bar : (b).saved_bar); \
+#define DiscardMark(b)	do { LD->mark_bar = (LD->frozen_bar > (b).saved_bar.as_ptr ? \
+					     LD->frozen_bar : (b).saved_bar.as_ptr); \
 			     DEBUG(CHK_SECURE, \
 				   assert(LD->mark_bar == NO_MARK_BAR || \
 					  (LD->mark_bar >= gBase && \
 					   LD->mark_bar <= gTop))); \
 			   } while(0)
-#define NOT_A_MARK	(TrailEntry)(~(word)0)
-#define NoMark(b)	do { (b).trailtop = NOT_A_MARK; \
+#define NOT_A_MARK	(~(word)0)
+#define NoMark(b)	do { (b).trailtop.as_word = NOT_A_MARK; \
 			   } while(0)
-#define isRealMark(b)	((b).trailtop != NOT_A_MARK)
+#define isRealMark(b)	((b).trailtop.as_word != NOT_A_MARK)
 
 
 		 /*******************************
@@ -2117,7 +2191,7 @@ Temporary store/restore pointers to make them safe over GC/shift
 			     *valTermRef(LD->tmp.h[i]) = makeRefLG(p); \
 			   } while(0)
 #define PopPtr(p)	do { int i = --LD->tmp.top; \
-			     p = unRefLG(*valTermRef(LD->tmp.h[i])); \
+			     p = unRef(*valTermRef(LD->tmp.h[i])); \
 			     setVar(*valTermRef(LD->tmp.h[i])); \
 			   } while(0)
 #define PushVal(w)	do { int i = LD->tmp.top++; \
@@ -2183,11 +2257,12 @@ typedef enum virtual_signum
   VSIG_THREAD_SIGNAL,
   VSIG_CLAUSE_GC,
   VSIG_PLABORT,
+  VSIG_PLHALT,
   VSIG_TUNE_GC,
   VSIG_MAX
 } virtual_signum;
 
-#define NUM_VSIGS 6 /* Preprocessor can see this constant */
+#define NUM_VSIGS 7 /* Preprocessor can see this constant */
 static_assertion(NUM_VSIGS == VSIG_MAX); /* Make sure it matches the enum */
 static_assertion(NUM_SIGNALS >= VSIG_MAX && NUM_SIGNALS < 128); /* Sanity check, 128 is arbitrary */
 static_assertion(SIG_PROLOG_OFFSET >= MINSIGNAL && SIG_PROLOG_OFFSET + NUM_VSIGS <= MAXSIGNAL);
@@ -2202,31 +2277,31 @@ static_assertion(SIG_PROLOG_OFFSET >= MINSIGNAL && SIG_PROLOG_OFFSET + NUM_VSIGS
 #endif
 #define SIG_CLAUSE_GC	  (SIG_PROLOG_OFFSET+VSIG_CLAUSE_GC)
 #define SIG_PLABORT	  (SIG_PROLOG_OFFSET+VSIG_PLABORT)
+#define SIG_PLHALT	  (SIG_PROLOG_OFFSET+VSIG_PLHALT)
 #define SIG_TUNE_GC	  (SIG_PROLOG_OFFSET+VSIG_TUNE_GC)
 
 /* The "search for a free signal" functionality of PL_sigaction starts after
  * the predefined VSIG numbers */
 #define SIG_USER_OFFSET	  (SIG_PROLOG_OFFSET+VSIG_MAX)
 
-/* Get a zero-based array index for this signal */
-#define SIGNAL_INDEX(sig)	((sig) - MINSIGNAL)
 /* Return the signal given an array index */
 #define SIGNAL_FROM_INDEX(idx)	((idx) + MINSIGNAL)
 /* Is this a valid signal number? */
 #define IS_VALID_SIGNAL(sig)	((sig) >= MINSIGNAL && (sig) <= MAXSIGNAL)
 /* Is this a virtual signal? */
 #define IS_VSIG(sig)		((sig) >= SIG_PROLOG_OFFSET)
-
-#if O_DEBUG
-#undef SIGNAL_INDEX
+/* Get a zero-based array index for this signal */
 static inline int
 SIGNAL_INDEX(int sig)
-{ assert(IS_VALID_SIGNAL(sig));
+{
+#if O_DEBUG
+  assert(IS_VALID_SIGNAL(sig));
+#endif
   return sig - MINSIGNAL;
 }
-#endif
 
-/* We want fast types for signal bitmasks; on a 64-bit arch this is probably the same as uint64_t */
+/* We want fast types for signal bit masks; on a 64-bit arch
+ * this is probably the same as uint64_t */
 typedef uint_fast32_t		sigmask_t;
 
 /* How many bits can fit in a single sigmask_t? */
@@ -2268,7 +2343,7 @@ stack guarding when compiling with the address sanitizer.
 #define O_C_STACK_GUARDED 1
 #define C_STACK_OVERFLOW_GUARDED(rc, code, cleanup) \
 	do						\
-	{ LD->signal.sig_critical = TRUE;		\
+	{ LD->signal.sig_critical = true;		\
 	  if ( setjmp(LD->signal.context) )		\
 	  { cleanup;					\
 	    unblockSignal(SIGSEGV);			\
@@ -2276,7 +2351,7 @@ stack guarding when compiling with the address sanitizer.
 	  } else					\
 	  { rc = code;					\
 	  }						\
-	  LD->signal.sig_critical = FALSE;		\
+	  LD->signal.sig_critical = false;		\
 	} while(0)
 #else
 #define C_STACK_OVERFLOW_GUARDED(rc, code, cleanup) \
@@ -2393,9 +2468,7 @@ typedef struct
 #define spaceStack(name) spaceStackP(&LD->stacks.name)
 #define narrowStack(name) narrowStackP(&LD->stacks.name)
 
-#define globalStackLimit() (LD->stacks.limit > (MAXTAGGEDPTR+1) ? \
-					       (MAXTAGGEDPTR+1) : \
-					       LD->stacks.limit)
+#define globalStackLimit() (LD->stacks.limit)
 
 #define GROW_TRIM  ((size_t)-1)
 #define GROW_TIGHT ((size_t)1)
@@ -2407,6 +2480,7 @@ typedef struct
 #define STACK_OVERFLOW    (-5)		/* total stack limit overflow */
 #define	MEMORY_OVERFLOW   (-6)		/* out of malloc()-heap */
 #define CHECK_INTERRUPT   (-7)		/* Procedure was signalled */
+#define DO_COMPOUND	  (-8)		/* Need more general algorithm */
 
 #define ALLOW_NOTHING	0x0
 #define ALLOW_GC	0x1		/* allow GC on stack overflow */
@@ -2427,26 +2501,42 @@ typedef enum
 	   } while(0)
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-hasGlobalSpace(n) is true if we have enough space to create an object of
-size N on the global stack AND  can   use  bindConst()  to bind it to an
+hasGlobalSpace(n) is true if we have  enough space to create an object
+of size N on the global stack AND can use bindConst() to bind it to an
 (attributed) variable.
+
+Note that on 32-bit systems the  pointer can easily overflow, so we do
+the arithmetic after dividing by the unit size.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+#define hasSpace(base, top, size) f_hasSpace(base, top, size, sizeof(*(base)))
+
+static inline bool
+f_hasSpace(void *here, void *top, size_t nelem, size_t esize)
+{
+#if O_DEBUG
+  assert(top>=here);
+#endif
+  return ((char*)top-(char*)here)/esize >= nelem;
+}
 
 #define BIND_GLOBAL_SPACE (7)
 #define BIND_TRAIL_SPACE (6)
 #define hasGlobalSpace(n) \
 	hasStackSpace(n,0)
 #define hasStackSpace(g, t) \
-	(likely(gTop+(g)+BIND_GLOBAL_SPACE <= gMax) && \
-	 likely(tTop+(t)+BIND_TRAIL_SPACE <= tMax))
+	(hasGlobalSpace_((g)+BIND_GLOBAL_SPACE) && \
+	 hasTrailSpace(t+BIND_TRAIL_SPACE))
+#define hasGlobalSpace_(n) \
+	likely(hasSpace(gTop, gMax, (n)))
 #define hasTrailSpace(t) \
-	likely(tTop+(t) <= tMax)
-#define hasLocalSpace(bytes) \
-	likely((char*)lTop + bytes <= (char*)lMax)
+	likely(hasSpace(tTop, tMax, (t)))
 #define overflowCode(n) \
-	( (gTop+(n)+BIND_GLOBAL_SPACE > gMax) ? GLOBAL_OVERFLOW \
-					      : TRAIL_OVERFLOW )
+	( !hasGlobalSpace_((n)+BIND_GLOBAL_SPACE) ? GLOBAL_OVERFLOW \
+						  : TRAIL_OVERFLOW )
 #define GLOBAL_TRAIL_RATIO (6)
+#define hasLocalSpace(bytes) \
+	hasSpace((char*)lTop, (char*)lMax, bytes)
 
 
 		 /*******************************
@@ -2459,7 +2549,7 @@ typedef enum
   AV_ERROR
 } av_action;
 
-#define NV_ERROR (PLMINTAGGEDINT-1)
+#define NV_ERROR (-1)
 
 typedef struct
 { functor_t functor;			/* Functor to use ($VAR/1) */
@@ -2483,24 +2573,6 @@ typedef struct
 	    LD->var_names.numbervars_frame = _savedf; \
 	  } \
 	}
-
-
-		 /*******************************
-		 *	      WAKEUP		*
-		 *******************************/
-
-#define WAKEUP_STATE_WAKEUP          0x1 /* State contains a wakeup */
-#define WAKEUP_STATE_EXCEPTION	     0x2 /* State contains an exception */
-#define WAKEUP_STATE_SKIP_EXCEPTION  0x4 /* Do not restore exception from state */
-#define WAKEUP_KEEP_URGENT_EXCEPTION 0x8 /* Keep the most urgent exception */
-
-typedef struct wakeup_state
-{ fid_t		fid;			/* foreign frame reference */
-  Stack		outofstack;		/* Stack we are out of */
-  unsigned int	flags;			/* WAKEUP_STATE_* */
-} wakeup_state;
-
-
 
 
 		 /*******************************
@@ -2556,8 +2628,9 @@ typedef struct
 
 
 typedef struct
-{ int		blocked;		/* No shifts allowed */
-  double	time;			/* time spent in stack shifts */
+{ double	time;			/* time spent in stack shifts */
+  uint64_t	inferences;		/* Inference count at start */
+  int		blocked;		/* No shifts allowed */
   int		local_shifts;		/* Shifts of the local stack */
   int		global_shifts;		/* Shifts of the global stack */
   int		trail_shifts;		/* Shifts of the trail stack */
@@ -2617,17 +2690,17 @@ typedef struct
 		*            DEBUGGER           *
 		*********************************/
 
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-Tracer communication declarations.
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+#define PL_TRACE_ACTION_NONE	 0
+#define PL_TRACE_ACTION_CONTINUE 1
+#define PL_TRACE_ACTION_RETRY	 2
+#define PL_TRACE_ACTION_FAIL	 3
+#define PL_TRACE_ACTION_IGNORE	 4
+#define PL_TRACE_ACTION_AGAIN	 5
+#define PL_TRACE_ACTION_ABORT	 6 /* only for Prolog interception */
+#define PL_TRACE_ACTION_HALT	 7
+#define PL_TRACE_ACTION_YIELD	 8
 
-#define ACTION_CONTINUE	0
-#define ACTION_RETRY	1
-#define ACTION_FAIL	2
-#define ACTION_IGNORE	3
-#define ACTION_AGAIN	4
-#define ACTION_ABORT	5		/* only for Prolog interception */
-
+#define NO_PORT		0x000
 #define CALL_PORT	0x001		/* port masks */
 #define EXIT_PORT	0x002
 #define FAIL_PORT	0x004
@@ -2722,7 +2795,8 @@ typedef enum plflag
   PLFLAG_DEBUG_ON_INTERRUPT,		/* Debug on Control-C */
   PLFLAG_OPTIMISE_UNIFY,		/* Move unifications in clauses */
   PLFLAG_SHIFT_CHECK,			/* Check suspicious shifts */
-  PLFLAG_AGC_CLOSE_STREAMS		/* AGC may close open streams */
+  PLFLAG_AGC_CLOSE_STREAMS,		/* AGC may close open streams */
+  PLFLAG_EPILOG				/* swipl-win */
 } plflag;
 
 typedef struct
@@ -2896,6 +2970,10 @@ static inline int __ptr_to_bool(const intptr_t ptr) { return ptr != 0; }
 #define WEAK_TRY_CALL_VOID(Name, ...) \
 	(WEAK_FUNC(Name) != NULL ? WEAK_FUNC(Name)(__VA_ARGS__) : (void)0)
 
+#if defined(O_ENGINES) && !defined(O_PLMT)
+extern struct PL_local_data *PL_current_engine_ptr;
+#endif
+
 #include "pl-util.h"			/* (Debug) utilities */
 #include "pl-alloc.h"			/* Allocation primitives */
 #include "pl-init.h"			/* Declarations needed by pl-init.c */
@@ -2908,6 +2986,7 @@ static inline int __ptr_to_bool(const intptr_t ptr) { return ptr != 0; }
 #include "os/pl-file.h"			/* Stream management */
 #include "pl-global.h"			/* global data */
 #include "pl-hash.h"			/* Murmurhash function */
+#include "os/pl-table.h"		/* Hash tables */
 #include "pl-inline.h"			/* Inline facilities */
 #include "pl-privitf.h"			/* private foreign interface */
 #include "os/pl-text.h"			/* text manipulation */

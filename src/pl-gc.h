@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2021, University of Amsterdam
+    Copyright (c)  1985-2024, University of Amsterdam
                               VU University Amsterdam
 			      CWI, Amsterdam
 			      SWI-Prolog Solutions b.v.
@@ -57,14 +57,14 @@
 int		considerGarbageCollect(Stack s);
 void		call_tune_gc_hook(void);
 int		garbageCollect(gc_reason_t reason);
-word		pl_garbage_collect(term_t d);
+foreign_t	pl_garbage_collect(term_t d);
 gc_stat *	last_gc_stats(gc_stats *stats);
 Word		findGRef(int n);
 size_t		nextStackSizeAbove(size_t n);
 int		shiftTightStacks(void);
 int		growStacks(size_t l, size_t g, size_t t);
 size_t		nextStackSize(Stack s, size_t minfree);
-int		makeMoreStackSpace(int overflow, int flags);
+bool		makeMoreStackSpace(int overflow, int flags);
 int		f_ensureStackSpace(size_t gcells, size_t tcells,
 				   int flags);
 int		growLocalSpace(size_t bytes, int flags);
@@ -84,7 +84,10 @@ void		unblockGC(int flags);	/* re-allow garbage collect */
 
 #undef LDFUNC_DECLARATIONS
 
-/* Convenience macros */
+/* Convenience macros
+   These macros return a bool.  On failure they have raised the
+   appropriate exception.
+ */
 
 #define ensureLocalSpace(n)	likely(ensureLocalSpace_ex(n))
 #define ensureGlobalSpace(n,f)  likely(ensureStackSpace_ex(n,0,f))
@@ -96,29 +99,35 @@ void		unblockGC(int flags);	/* re-allow garbage collect */
 		 *******************************/
 
 #define ensureLocalSpace_ex(bytes) LDFUNC(ensureLocalSpace_ex, bytes)
-static inline int
+static inline bool
 ensureLocalSpace_ex(DECL_LD size_t bytes)
 { int rc;
 
-  if ( likely(addPointer(lTop, bytes) <= (void*)lMax) )
-    return TRUE;
+  if ( likely(hasLocalSpace(bytes)) )
+    return true;
 
-  if ( (rc=growLocalSpace(bytes, ALLOW_SHIFT)) == TRUE )
-    return TRUE;
+  if ( (rc=growLocalSpace(bytes, ALLOW_SHIFT)) == true )
+    return true;
 
   return raiseStackOverflow(rc);
 }
 
-#define ensureStackSpace_ex(gcells, tcells, flags) LDFUNC(ensureStackSpace_ex, gcells, tcells, flags)
-static inline int
+#define ensureStackSpace_ex(gcells, tcells, flags) \
+	LDFUNC(ensureStackSpace_ex, gcells, tcells, flags)
+
+static inline bool
 ensureStackSpace_ex(DECL_LD size_t gcells, size_t tcells, int flags)
-{ gcells += BIND_GLOBAL_SPACE;
-  tcells += BIND_TRAIL_SPACE;
+{ int rc;
 
-  if ( likely(gTop+gcells <= gMax) && likely(tTop+tcells <= tMax) )
-    return TRUE;
+  if ( hasStackSpace(gcells, tcells) )
+    return true;
 
-  return f_ensureStackSpace(gcells, tcells, flags);
+  if ( (rc=f_ensureStackSpace(gcells+BIND_GLOBAL_SPACE,
+			      tcells+BIND_TRAIL_SPACE,
+			      flags)) == true )
+    return true;
+
+  return raiseStackOverflow(rc);
 }
 
 #endif /*_PL_GC_H*/

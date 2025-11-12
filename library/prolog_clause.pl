@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2005-2023, University of Amsterdam
+    Copyright (c)  2005-2024, University of Amsterdam
                               VU University Amsterdam
                               CWI, Amsterdam
                               SWI-Prolog Solutions b.v.
@@ -264,7 +264,8 @@ try_open_source(File, In) :-
 make_varnames(ReadClause, DecompiledClause, Offsets, Names, Term) :-
     make_varnames_hook(ReadClause, DecompiledClause, Offsets, Names, Term),
     !.
-make_varnames((Head --> _Body), _, Offsets, Names, Bindings) :-
+make_varnames(ReadClause, _, Offsets, Names, Bindings) :-
+    dcg_head(ReadClause, Head),
     !,
     functor(Head, _, Arity),
     In is Arity,
@@ -278,6 +279,11 @@ make_varnames(_, _, Offsets, Names, Bindings) :-
     length(Offsets, L),
     functor(Bindings, varnames, L),
     do_make_varnames(Offsets, Names, Bindings).
+
+dcg_head((Head,_ --> _Body), Head).
+dcg_head((Head   --> _Body), Head).
+dcg_head((Head,_ ==> _Body), Head).
+dcg_head((Head   ==> _Body), Head).
 
 do_make_varnames([], _, _).
 do_make_varnames([N=Var|TO], Names, Bindings) :-
@@ -363,20 +369,28 @@ unify_clause((Head :- Read),
                              ]).
                                         % DCG rules
 unify_clause(Read, Compiled1, Module, TermPos0, TermPos) :-
-    Read = (_ --> Terminal, _),
-    is_list(Terminal),
+    Read = (_ --> Terminal0, _),
+    (   is_list(Terminal0)
+    ->  Terminal = Terminal0
+    ;   string(Terminal0)
+    ->  string_codes(Terminal0, Terminal)
+    ),
     ci_expand(Read, Compiled2, Module, TermPos0, TermPos1),
-    Compiled2 = (DH :- _),
-    functor(DH, _, Arity),
-    DArg is Arity - 1,
-    append(Terminal, _Tail, List),
-    arg(DArg, DH, List),
+    (   dcg_unify_in_head(Compiled2, Compiled3)
+    ->  true
+    ;   Compiled2 = (DH :- _CBody),
+        functor(DH, _, Arity),
+        DArg is Arity - 1,
+        append(Terminal, _Tail, List),
+        arg(DArg, DH, List),
+        Compiled3 = Compiled2
+    ),
     TermPos1 = term_position(F,T,FF,FT,[ HP,
                                          term_position(_,_,_,_,[_,BP])
                                        ]),
     !,
     TermPos2 = term_position(F,T,FF,FT,[ HP, BP ]),
-    match_module(Compiled2, Compiled1, Module, TermPos2, TermPos).
+    match_module(Compiled3, Compiled1, Module, TermPos2, TermPos).
                                                % SSU rules
 unify_clause((Head,RCond => Body), (CHead :- CCondAndBody), Module,
              term_position(F,T,FF,FT,
@@ -401,8 +415,21 @@ unify_clause((Head,RCond => Body), (CHead :- CCondAndBody), Module,
 unify_clause((Head => Body), Compiled1, Module, TermPos0, TermPos) :-
     !,
     unify_clause2((Head :- Body), Compiled1, Module, TermPos0, TermPos).
+unify_clause(Read, Compiled1, Module, TermPos0, TermPos) :-
+    Read = (_ ==> _),
+    ci_expand(Read, Compiled2, Module, TermPos0, TermPos1),
+    Compiled2 \= (_ ==> _),
+    !,
+    unify_clause(Compiled2, Compiled1, Module, TermPos1, TermPos).
 unify_clause(Read, Decompiled, Module, TermPos0, TermPos) :-
     unify_clause2(Read, Decompiled, Module, TermPos0, TermPos).
+
+dcg_unify_in_head((Head :- L1=L2, Body), (Head :- Body)) :-
+    functor(Head, _, Arity),
+    DArg is Arity - 1,
+    arg(DArg, Head, L0),
+    L0 == L1,
+    L1 = L2.
 
 % mkconj, but also unify position info
 mkconj_pos((A,B), term_position(F,T,FF,FT,[PA,PB]), Ex, ExPos, Code, Pos) =>
@@ -430,9 +457,9 @@ unify_clause2(Read, Decompiled, _, TermPos, TermPos) :-
     Read = Decompiled.
 unify_clause2(Read, Compiled1, Module, TermPos0, TermPos) :-
     ci_expand(Read, Compiled2, Module, TermPos0, TermPos1),
-    match_module(Compiled2, Compiled1, Module, TermPos1, TermPos).
-                                        % I don't know ...
-unify_clause2(_, _, _, _, _) :-
+    match_module(Compiled2, Compiled1, Module, TermPos1, TermPos),
+    !.
+unify_clause2(_, _, _, _, _) :-       % I don't know ...
     debug(clause_info, 'Could not unify clause', []),
     fail.
 

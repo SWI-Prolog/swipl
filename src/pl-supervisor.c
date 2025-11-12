@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2008-2022, University of Amsterdam
+    Copyright (c)  2008-2025, University of Amsterdam
                               VU University Amsterdam
 			      SWI-Prolog Solutions b.v.
     All rights reserved.
@@ -41,6 +41,8 @@
 #include "pl-wrap.h"
 #include "pl-tabling.h"
 #include "pl-util.h"
+#include "pl-index.h"
+#include "pl-proc.h"
 
 #define MAX_FLI_ARGS 10			/* extend switches on change */
 
@@ -56,12 +58,13 @@ allocCodes(size_t n)
 
 static void
 freeCodes(Code codes)
-{ size_t size = (size_t)codes[-1];
+{ unregisterWrappedSupervisor(codes); /* holds atom_t references */
 
-  unregisterWrappedSupervisor(codes); /* holds atom_t references */
+  codes--;
+  size_t size = (size_t)codes[0];
 
   if ( size > 0 )		/* 0: built-in, see initSupervisors() */
-    freeHeap(&codes[-1], (size+1)*sizeof(code));
+    freeHeap(codes, (size+1)*sizeof(code));
 }
 
 
@@ -70,8 +73,8 @@ freeCodesDefinition() destroys the supervisor of  a predicate, replacing
 it  by  the  statically  allocated  S_VIRGIN  supervisor.  Note  that  a
 predicate *always* has non-NULL def->codes.
 
-If linger == FALSE, we  are  absolutely   sure  that  it  is harmless to
-deallocate the old supervisor. If TRUE,   there may be references. I.e.,
+If linger == false, we  are  absolutely   sure  that  it  is harmless to
+deallocate the old supervisor. If true,   there may be references. I.e.,
 other threads may have started executing this predicate.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
@@ -82,7 +85,7 @@ free_codes_ptr(void *ptr)
 
 
 void
-freeSupervisor(Definition def, Code codes, int do_linger)
+freeSupervisor(Definition def, Code codes, bool do_linger)
 { size_t size = (size_t)codes[-1];
 
   if ( size > 0 )		/* 0: built-in, see initSupervisors() */
@@ -95,7 +98,7 @@ freeSupervisor(Definition def, Code codes, int do_linger)
 
 
 void
-freeCodesDefinition(Definition def, int do_linger)
+freeCodesDefinition(Definition def, bool do_linger)
 { Code codes;
 
   if ( (codes=def->codes) != SUPERVISOR(virgin) )
@@ -125,32 +128,27 @@ DET code:  I_FOPEN,     I_FCALLDETVA|I_FCALLDET<N>,   I_FEXITDET
 NDET code: I_FOPENNDET, I_FCALLNDETVA|I_FCALLNDET<N>, I_FEXITNDET, I_FREDO
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-#ifdef O_PROF_PENTIUM
-#include "pentium.h"
-static int prof_foreign_index = (I_HIGHEST+20);
-#endif
-
-int
+bool
 createForeignSupervisor(Definition def, Func f)
-{ assert(true(def, P_FOREIGN));
+{ assert(ison(def, P_FOREIGN));
 
-  if ( false(def, P_VARARG) )
+  if ( isoff(def, P_VARARG) )
   { if ( def->functor->arity > MAX_FLI_ARGS )
       sysError("Too many arguments to foreign function %s (>%d)", \
 	       predicateName(def), MAX_FLI_ARGS); \
   }
 
-  if ( false(def, P_NONDET) )
+  if ( isoff(def, P_NONDET) )
   { Code codes;
 
-    if ( true(def, P_VARARG) )
+    if ( ison(def, P_VARARG) )
     { codes = allocCodes(2);
       codes[0] = encode(I_FCALLDETVA);
-      codes[1] = (code)f;
+      codes[1] = ptr2code(f);
     } else
     { codes = allocCodes(3);
       codes[0] = encode(I_FCALLDET0+def->functor->arity);
-      codes[1] = (code)f;
+      codes[1] = ptr2code(f);
       codes[2] = encode(I_FEXITDET);
     }
     def->codes = codes;
@@ -158,24 +156,18 @@ createForeignSupervisor(Definition def, Func f)
   { Code codes = allocCodes(5);
 
     codes[0] = encode(I_FOPENNDET);
-    if ( true(def, P_VARARG) )
+    if ( ison(def, P_VARARG) )
       codes[1] = encode(I_FCALLNDETVA);
     else
       codes[1] = encode(I_FCALLNDET0+def->functor->arity);
-    codes[2] = (code)f;
+    codes[2] = ptr2code(f);
     codes[3] = encode(I_FEXITNDET);
     codes[4] = encode(I_FREDO);
 
     def->codes = codes;
   }
 
-#ifdef O_PROF_PENTIUM
-  assert(prof_foreign_index < MAXPROF);
-  def->prof_index = prof_foreign_index++;
-  def->prof_name  = strdup(predicateName(def));
-#endif
-
-  succeed;
+  return true;
 }
 
 
@@ -187,12 +179,12 @@ equalSupervisors(const Code s1, const Code s2)
 
     if ( sz1 && sz1 == sz2 &&
 	 memcmp(s1, s2, sz1*sizeof(*s1)) == 0 )
-      return TRUE;
+      return true;
 
-    return FALSE;
+    return false;
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -230,7 +222,7 @@ getClauses(Definition def, ClauseRef *refp, int max)
 
 static Code
 undefSupervisor(Definition def)
-{ if ( def->impl.clauses.number_of_clauses == 0 && false(def, PROC_DEFINED) )
+{ if ( def->impl.clauses.number_of_clauses == 0 && isoff(def, PROC_DEFINED) )
     return SUPERVISOR(undef);
 
   return NULL;
@@ -247,19 +239,18 @@ static Code
 singleClauseSupervisor(Definition def)
 { if ( def->impl.clauses.number_of_clauses == 1 )
   { ClauseRef cref;
-    Code codes = allocCodes(2);
     int found = getClauses(def, &cref, 1);
 
     if ( found == 1 )
     { DEBUG(1, Sdprintf("Single clause supervisor for %s\n",
 			predicateName(def)));
 
+      Code codes = allocCodes(2);
       codes[0] = encode(S_TRUSTME);
-      codes[1] = (code)cref;
+      codes[1] = ptr2code(cref);
 
       return codes;
     }
-    freeCodes(codes);
   }
 
   return NULL;
@@ -280,30 +271,45 @@ The code is
 
 static Code
 listSupervisor(Definition def)
-{ if ( def->impl.clauses.number_of_clauses == 2 )
+{ size_t arity = def->functor->arity;
+
+  if ( def->impl.clauses.number_of_clauses == 2 && arity > 0 )
   { ClauseRef cref[2];
     word c[2];
     int found = getClauses(def, cref, 2);
 
-    if ( found == 2 &&
-	 arg1Key(cref[0]->value.clause->codes, &c[0]) &&
-	 arg1Key(cref[1]->value.clause->codes, &c[1]) &&
-	 ( (c[0] == ATOM_nil && c[1] == FUNCTOR_dot2) ||
-	   (c[1] == ATOM_nil && c[0] == FUNCTOR_dot2) ) )
-    { Code codes = allocCodes(3);
+    if ( found == 2 )
+    { Code pc1 = cref[0]->value.clause->codes;
+      Code pc2 = cref[1]->value.clause->codes;
+      int h_void1 = 0;
+      int h_void2 = 0;
 
-      DEBUG(1, Sdprintf("List supervisor for %s\n", predicateName(def)));
+      for(size_t arg=0; arg<arity; arg++)
+      { if ( !mode_arg_is_unbound(def, arg) )
+	{ if ( arg1Key(pc1, &c[0]) &&
+	       arg1Key(pc2, &c[1]) &&
+	       ( (c[0] == ATOM_nil && c[1] == FUNCTOR_dot2) ||
+		 (c[1] == ATOM_nil && c[0] == FUNCTOR_dot2) ) )
+	  { Code codes = allocCodes(4);
 
-      codes[0] = encode(S_LIST);
-      if ( c[0] == ATOM_nil )
-      { codes[1] = (code)cref[0];
-	codes[2] = (code)cref[1];
-      } else
-      { codes[1] = (code)cref[1];
-	codes[2] = (code)cref[0];
+	    DEBUG(1, Sdprintf("List supervisor for %s\n", predicateName(def)));
+
+	    codes[0] = encode(S_LIST);
+	    codes[1] = (code)arg;
+	    if ( c[0] == ATOM_nil )
+	    { codes[2] = ptr2code(cref[0]);
+	      codes[3] = ptr2code(cref[1]);
+	    } else
+	    { codes[2] = ptr2code(cref[1]);
+	      codes[3] = ptr2code(cref[0]);
+	    }
+
+	    return codes;
+	  }
+	}
+	pc1 = skipArgs(pc1, 1, &h_void1);
+	pc2 = skipArgs(pc2, 1, &h_void2);
       }
-
-      return codes;
     }
   }
 
@@ -313,8 +319,8 @@ listSupervisor(Definition def)
 
 static Code
 dynamicSupervisor(Definition def)
-{ if ( true(def, P_DYNAMIC) )
-  { if ( def->tabling && true(def->tabling, TP_INCREMENTAL) )
+{ if ( ison(def, P_DYNAMIC) )
+  { if ( def->tabling && ison(def->tabling, TP_INCREMENTAL) )
       return SUPERVISOR(incr_dynamic);
     else
       return SUPERVISOR(dynamic);
@@ -326,7 +332,7 @@ dynamicSupervisor(Definition def)
 
 static Code
 multifileSupervisor(Definition def)
-{ if ( true(def, P_MULTIFILE) )
+{ if ( ison(def, P_MULTIFILE) )
     return SUPERVISOR(multifile);
 
   return NULL;
@@ -362,19 +368,19 @@ copyCodes(Code dest, Code src, size_t count)
 
 static Code
 chainPredicateSupervisor(Definition def, Code post)
-{ if ( (true(def, P_META) && true(def, P_TRANSPARENT)) ||
-       true(def, P_SSU_DET|P_DET) )
+{ if ( (ison(def, P_META) && ison(def, P_TRANSPARENT)) ||
+       ison(def, P_SSU_DET|P_DET) )
   { tmp_buffer buf;
     Code codes;
 
     initBuffer(&buf);
 
-    if ( true(def, P_SSU_DET) )
+    if ( ison(def, P_SSU_DET) )
       addBuffer(&buf, encode(S_SSU_DET), code);
-    if ( true(def, P_DET) )
+    if ( ison(def, P_DET) )
       addBuffer(&buf, encode(S_DET), code);
 
-    if ( true(def, P_META) && true(def, P_TRANSPARENT) )
+    if ( ison(def, P_META) && ison(def, P_TRANSPARENT) )
     { unsigned int i;
       int loffset = -1;
 
@@ -412,17 +418,17 @@ chainPredicateSupervisor(Definition def, Code post)
 		 *	      ENTRIES		*
 		 *******************************/
 
-int
+bool
 createUndefSupervisor(Definition def)
 { Code codes;
 
   if ( (codes = undefSupervisor(def)) )
   { def->codes = codes;
 
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -451,11 +457,11 @@ setSupervisor(Definition def, Code codes)
   Code old = def->codes;
 
   if ( equalSupervisors(old, codes) )
-  { freeSupervisor(def, codes, FALSE);
+  { freeSupervisor(def, codes, false);
   } else
   { MEMORY_BARRIER();
     def->codes = codes;
-    freeSupervisor(def, old, TRUE);
+    freeSupervisor(def, old, true);
   }
   PL_UNLOCK(L_PREDICATE);
 }
@@ -464,29 +470,30 @@ setSupervisor(Definition def, Code codes)
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 setDefaultSupervisor() is synchronised with  unloadFile() (reconsult/1).
-Seems this is not yet enough to   stop all racer conditions between this
+Seems this is not yet enough to   stop all race  conditions between this
 code.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+bool
 setDefaultSupervisor(Definition def)
-{ if ( false(def, P_LOCKED_SUPERVISOR) )
+{ if ( isoff(def, P_LOCKED_SUPERVISOR) )
   { Code codes, old;
 
     PL_LOCK(L_PREDICATE);
+    update_primary_index(def);
     old = def->codes;
     codes = createSupervisor(def);
     if ( equalSupervisors(old, codes) )
-    { freeSupervisor(def, codes, FALSE);
+    { freeSupervisor(def, codes, false);
     } else
     { MEMORY_BARRIER();
       def->codes = codes;
-      freeSupervisor(def, old, TRUE);
+      freeSupervisor(def, old, true);
     }
     PL_UNLOCK(L_PREDICATE);
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -535,15 +542,15 @@ ends in I_EXIT, such that generic code  walkers will always find the end
 of the sequence.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-#define MAKE_SV1(name, i) { PL_code_data.supervisors.name[0] = (code)0; \
-			    PL_code_data.supervisors.name[1] = encode(i); \
-			    PL_code_data.supervisors.name[2] = encode(I_EXIT); \
-			  }
+#define MAKE_SV1(name, i) \
+  { PL_code_data.supervisors.name[0] = (code)0;				\
+    PL_code_data.supervisors.name[1] = encode(i);			\
+    PL_code_data.supervisors.name[2] = encode(I_EXIT);			\
+  }
 
 void
 initSupervisors(void)
 { MAKE_SV1(exit,	 I_EXIT);
-  MAKE_SV1(next_clause,	 S_NEXTCLAUSE);
   MAKE_SV1(virgin,	 S_VIRGIN);
   MAKE_SV1(undef,	 S_UNDEF);
   MAKE_SV1(dynamic,      S_DYNAMIC);

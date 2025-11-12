@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2002-2023, University of Amsterdam
+    Copyright (c)  2002-2025, University of Amsterdam
                               VU University Amsterdam
                               CWI, Amsterdam
                               SWI-Prolog Solutions b.v.
@@ -250,9 +250,9 @@ topic_to_string(Topic, String) :-
     term_string(Topic, String, [quoted(true), numbervars(true)]).
 
 :- multifile
-    prolog_debug_tools:debugging_hook/0.
+    prolog_debug_tools:debugging_hook/1.
 
-prolog_debug_tools:debugging_hook :-
+prolog_debug_tools:debugging_hook(_DebugMode) :-
     (   debugging(_, true, _)
     ->  list_debug_topics([active(true)])
     ).
@@ -382,6 +382,8 @@ assertion(G) :-
 assertion_failed(Reason, G) :-
     prolog:assertion_failed(Reason, G),
     !.
+assertion_failed(unwind(_), _) :-
+    !.
 assertion_failed(Reason, _) :-
     assertion_rethrow(Reason),
     !,
@@ -397,8 +399,6 @@ assertion_failed(Reason, G) :-
 assertion_failed.
 
 assertion_rethrow(time_limit_exceeded).
-assertion_rethrow('$aborted').
-
 
                  /*******************************
                  *           EXPANSION          *
@@ -488,3 +488,10 @@ debug_topic(debug_topic(_, TopicString, false, _To)) -->
 :- multifile sandbox:safe_meta/2.
 
 sandbox:safe_meta(prolog_debug:assertion(X), [X]).
+
+		 /*******************************
+		 *  SUPPRESS AUTOLOAD WARNINGS	*
+		 *******************************/
+
+'$nowarn_autoload'(debug/1, _).
+'$nowarn_autoload'(nodebug/1, _).

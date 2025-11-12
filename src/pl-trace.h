@@ -3,9 +3,10 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2020, University of Amsterdam
+    Copyright (c)  1985-2025, University of Amsterdam
                               VU University Amsterdam
 			      CWI, Amsterdam
+			      SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -52,28 +53,28 @@
 #define LDFUNC_DECLARATIONS
 
 void		suspendTrace(int suspend);	/* suspend/resume tracing */
-int		isDebugFrame(LocalFrame FR);
+bool		isDebugFrame(const LocalFrame FR, int port);
 int		tracePort(LocalFrame frame, Choice bfr,
 			  int port, Code PC);
 void		initTracer(void);
-int		enable_debug_on_interrupt(int enable);
+bool		enable_debug_on_interrupt(bool enable);
 void		resetTracer(void);
-int		tracemode(int new, int *old);
-int		debugmode(debug_type new, debug_type *old);
-int		trace_if_space(void);
-int		put_frame_goal(term_t goal, LocalFrame frame);
-word		pl_trace(void);
-word		pl_notrace(void);
-word		pl_tracing(void);
-word		pl_spy(term_t p);
-word		pl_nospy(term_t p);
-word		pl_leash(term_t old, term_t new);
-word		pl_visible(term_t old, term_t new);
-word		pl_debuglevel(term_t old, term_t new);
-word		pl_prolog_current_frame(term_t fr);
-int		PL_put_frame(term_t t, LocalFrame fr);
-void		PL_put_choice(term_t t, Choice ch);
+bool		tracemode(bool new, bool *old);
+bool		debugmode(debug_type new, debug_type *old);
+bool		trace_if_space(void);
+bool		put_frame_goal(term_t goal, LocalFrame frame);
+foreign_t	pl_trace(void);
+foreign_t	pl_notrace(void);
+foreign_t	pl_tracing(void);
+foreign_t	pl_spy(term_t p);
+foreign_t	pl_nospy(term_t p);
+foreign_t	pl_leash(term_t old, term_t new);
+foreign_t	pl_visible(term_t old, term_t new);
+foreign_t	pl_debuglevel(term_t old, term_t new);
+foreign_t	pl_prolog_current_frame(term_t fr);
+bool		PL_put_frame(term_t t, LocalFrame fr);
+bool		PL_put_choice(term_t t, Choice ch);
 
 #undef LDFUNC_DECLARATIONS
 
-#endif /*_PL_TRACE_H*/			
+#endif /*_PL_TRACE_H*/

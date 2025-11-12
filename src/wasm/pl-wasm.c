@@ -3,9 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2022, University of Amsterdam
-                         VU University Amsterdam
-		         CWI, Amsterdam
+    Copyright (c)  2022-2025, SWI-Prolog Solutions.h
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -37,12 +35,21 @@
 #include "../pl-incl.h"
 #include <emscripten.h>
 
+PL_EXPORT(buf_mark_t)		WASM_mark_string_buffers(void);
 PL_EXPORT(const char *)		WASM_ttymode(void);
+PL_EXPORT(void)			WASM_bind_standard_streams(void);
 PL_EXPORT(term_t)		WASM_yield_request(void);
 PL_EXPORT(void)			WASM_set_yield_result(term_t result);
 PL_EXPORT(size_t)		WASM_variable_id(term_t t);
 PL_EXPORT(int)			js_unify_obj(term_t t, int32_t id);
 PL_EXPORT(int32_t)		js_get_obj(term_t t);
+
+buf_mark_t
+WASM_mark_string_buffers(void)
+{ buf_mark_t mark;
+  PL_mark_string_buffers(&mark);
+  return mark;
+}
 
 const char *
 WASM_ttymode(void)
@@ -75,42 +82,52 @@ WASM_variable_id(term_t t)
  * Out
  */
 
-static term_t yield_request = 0;
-static term_t yield_result  = 0;
-static int    yield_unified = FALSE;
-
 static
 PRED_IMPL("$await", 2, await, PL_FA_NONDETERMINISTIC)
-{ switch(CTX_CNTRL)
+{ PRED_LD
+
+  switch(CTX_CNTRL)
   { case FRG_FIRST_CALL:
-    { yield_request = A1;
-      yield_result  = A2;
-      yield_unified = FALSE;
-      PL_yield_address(&yield_request);
+    { DEBUG(MSG_WASM_ASYNC, Sdprintf("$await: wait on engine %p\n", LD));
+      LD->wasm.yield_request = A1;
+      LD->wasm.yield_result  = A2;
+      LD->wasm.yield_unified = false;
+      PL_yield_address(&LD->wasm.yield_request);
     }
     case PL_RESUME:
-    { int rc = yield_unified;
+    { DEBUG(MSG_WASM_ASYNC, Sdprintf("$await: resume on engine %p\n", LD));
+      bool rc = LD->wasm.yield_unified;
 
-      yield_request = 0;
-      yield_result  = 0;
-      yield_unified = FALSE;
+      LD->wasm.yield_request = 0;
+      LD->wasm.yield_result  = 0;
+      LD->wasm.yield_unified = false;
 
       return rc;
     }
     case PL_PRUNED:
     default:
-      return TRUE;
+      return true;
   }
 }
 
 term_t
 WASM_yield_request(void)
-{ return yield_request;
+{ GET_LD
+  return LD->wasm.yield_request;
 }
 
 void
 WASM_set_yield_result(term_t result)
-{ yield_unified = PL_unify(yield_result, result);
+{ GET_LD
+
+  DEBUG(MSG_WASM_ASYNC,
+	Sdprintf("set_yield_result: on engine %p; "
+		 "LD->wasm.yield_result = %zd\n",
+		 LD, LD->wasm.yield_result));
+  if ( !LD->wasm.yield_result )
+    PL_api_error("WASM_set_yield_result(): not in await/2");
+
+  LD->wasm.yield_unified = PL_unify(LD->wasm.yield_result, result);
 }
 
 static
@@ -123,7 +140,7 @@ PRED_IMPL("js_run_script", 1, js_run_script, 0)
   }
   PL_STRINGS_RELEASE();
 
-  return TRUE;
+  return true;
 }
 
 static
@@ -170,7 +187,7 @@ write_jsobj_ref(IOSTREAM *out, atom_t aref, int flags)
   SfprintfX(out, "<js_%Ws>(%d)", s, ref->id);
   PL_STRINGS_RELEASE();
 
-  return TRUE;
+  return true;
 }
 
 
@@ -180,7 +197,7 @@ release_jsobj_blob(atom_t aref)
 
   EM_ASM({ release_registered_object($0); }, ref->id);
 
-  return TRUE;
+  return true;
 }
 
 
@@ -236,6 +253,44 @@ js_get_obj(term_t t)
   return -1;
 }
 
+		 /*******************************
+		 *       STANDARD STREAMS       *
+		 *******************************/
+
+static IOFUNCTIONS orig_functions;
+static IOFUNCTIONS wasm_functions;
+
+static void
+wasm_flush(void *handle)
+{ int32_t fd = (int32_t)(intptr_t)handle;
+
+  EM_ASM({ flush_std_stream($0); }, fd);
+}
+
+static ssize_t
+wasm_write_std(void *handle, char *buf, size_t size)
+{ ssize_t rc = orig_functions.write(handle, buf, size);
+  if ( rc == size )
+    wasm_flush(handle);
+  return rc;
+}
+
+static int
+wasm_control_std(void *handle, int cmd, void *closure)
+{ int rc = orig_functions.control(handle, cmd, closure);
+  if ( rc == 0 && cmd == SIO_FLUSHOUTPUT )
+    wasm_flush(handle);
+  return rc;
+}
+
+void
+WASM_bind_standard_streams(void)
+{ orig_functions = wasm_functions = *Serror->functions;
+  wasm_functions.write = wasm_write_std;
+  wasm_functions.control = wasm_control_std;
+  Serror->functions = &wasm_functions;
+  Soutput->functions = &wasm_functions;
+}
 
 		 /*******************************
 		 *      PUBLISH PREDICATES	*

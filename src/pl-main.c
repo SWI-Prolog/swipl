@@ -3,9 +3,10 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2020, University of Amsterdam
+    Copyright (c)  1985-2025, University of Amsterdam
                               VU University Amsterdam
 			      CWI, Amsterdam
+			      SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -35,6 +36,7 @@
 */
 
 #include <stdio.h>
+#include <stdbool.h>
 #ifndef __WINDOWS__
 #if defined(_MSC_VER) || defined(__MINGW32__)
 #define __WINDOWS__ 1
@@ -48,11 +50,10 @@
 #include "SWI-Prolog.h"
 #include <signal.h>
 
+#if !SWIPL_EPILOG
 #ifndef O_CTRLC
 #define O_CTRLC 1
 #endif
-#ifndef O_ANSI_COLORS
-#define O_ANSI_COLORS 1
 #endif
 #ifndef HAVE_WMAIN
 #define HAVE_WMAIN 1
@@ -87,10 +88,10 @@ consoleHandlerRoutine(DWORD id)
 #else
       PL_raise(SIGINT);
 #endif
-      return TRUE;
+      return true;
   }
 
-  return FALSE;
+  return false;
 }
 #endif
 
@@ -127,25 +128,21 @@ main(int argc, char **argv)
 {
 #if O_CTRLC
   main_thread_id = GetCurrentThreadId();
-  SetConsoleCtrlHandler((PHANDLER_ROUTINE)consoleHandlerRoutine, TRUE);
-#endif
-
-#if O_ANSI_COLORS
-  PL_w32_wrap_ansi_console();	/* decode ANSI color sequences (ESC[...m) */
+  SetConsoleCtrlHandler((PHANDLER_ROUTINE)consoleHandlerRoutine, true);
 #endif
 
   force_malloc_dependency();
 
+#if SWIPL_EPILOG
+  PL_set_prolog_flag("epilog", PL_BOOL, true);
+#endif
   if ( !PL_initialise(argc, argv) )
     PL_halt(1);
 
-  for(;;)
-  { int status = PL_toplevel() ? 0 : 1;
+  int status = PL_toplevel() ? 0 : 1;
+  PL_halt(status);
 
-    PL_halt(status);
-  }
-
-  return 0;
+  return status;
 }
 
 

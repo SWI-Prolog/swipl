@@ -89,9 +89,9 @@ emptySegStack(segstack *s)
 	( segStackHasData(stack)				\
 		? ( (stack)->top -= sizeof(type),		\
 		    *to = *(type*)(stack)->top,			\
-		    TRUE					\
+		    true					\
 		  )						\
-		: !(stack)->last || !(stack)->last->previous ? FALSE \
+		: !(stack)->last || !(stack)->last->previous ? false \
 		: popSegStack_((stack), to)			\
 	)
 
@@ -99,7 +99,7 @@ emptySegStack(segstack *s)
 	( segStackHasSpace(stack, sizeof(type))			\
 		? ( *(type*)(stack)->top = data,		\
 		    (stack)->top += sizeof(type),		\
-		    TRUE					\
+		    true					\
 		  )						\
 		: !!pushSegStack_((stack), &data)		\
 	)
@@ -111,6 +111,7 @@ COMMON(void*)	topOfSegStack(segstack *stack);
 COMMON(void)	popTopOfSegStack_(segstack *stack);
 COMMON(void)	scanSegStack(segstack *s, void (*func)(void *cell));
 COMMON(void)	clearSegStack_(segstack *s);
+COMMON(void)	free_segstack_chunks(segchunk *c);
 
 		 /*******************************
 		 *	       INLINE		*
@@ -121,6 +122,19 @@ clearSegStack(segstack *s)
 { if ( s->first )
     clearSegStack_(s);
 }
+
+
+static inline void
+discardSegStack(segstack *s)
+{ segchunk *c = s->first;
+
+  if ( c )
+  { if ( !c->allocated )
+      c = c->next;
+    free_segstack_chunks(c);
+  }
+}
+
 
 
 static inline void
@@ -155,10 +169,10 @@ static inline int
 quickPopTopOfSegStack(segstack *stack)
 { if ( stack->top >= stack->base + stack->unit_size )
   { stack->top -= stack->unit_size;
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 

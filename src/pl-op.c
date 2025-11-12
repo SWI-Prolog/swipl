@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2021, University of Amsterdam
+    Copyright (c)  1985-2024, University of Amsterdam
 			      CWI, Amsterdam
 			      SWI-Prolog Solutions b.v.
     All rights reserved.
@@ -79,7 +79,7 @@ typedef struct _operator		/* storage in tables */
 
 typedef struct _opdef			/* predefined and enumerated */
 { atom_t name;
-  short  type;
+  unsigned char type;
   short  priority;
 } opdef;
 
@@ -90,27 +90,28 @@ typedef struct _opdef			/* predefined and enumerated */
 		 *******************************/
 
 static void
-copyOperatorSymbol(void *name, void **value)
-{ operator *op = *value;
+copyOperatorSymbol(table_key_t name, table_value_t *value)
+{ operator *op = val2ptr(*value);
   operator *o2 = allocHeapOrHalt(sizeof(*o2));
 
+  PL_register_atom((atom_t) name);
   *o2 = *op;
-  *value = o2;
+  *value = ptr2val(o2);
 }
 
 
 static void
-freeOperatorSymbol(void *name, void *value)
-{ operator *op = value;
+freeOperatorSymbol(table_key_t name, table_value_t value)
+{ operator *op = val2ptr(value);
 
   PL_unregister_atom((atom_t) name);
   freeHeap(op, sizeof(*op));
 }
 
 
-static Table
+static TableWP
 newOperatorTable(int size)
-{ Table t = newHTable(size);
+{ TableWP t = newHTableWP(size);
 
   t->copy_symbol = copyOperatorSymbol;
   t->free_symbol = freeOperatorSymbol;
@@ -129,11 +130,11 @@ tables.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static int
-defOperator(Module m, atom_t name, int type, int priority, int force)
+defOperator(Module m, atom_t name, unsigned char type, short priority, int force)
 { GET_LD
   operator *op;
   int t = (type & OP_MASK);		/* OP_PREFIX, ... */
-  int must_reg = FALSE;
+  int must_reg = false;
 
   DEBUG(MSG_OPERATOR, Sdprintf(":- op(%d, %s, %s) in module %s\n",
 			       priority,
@@ -162,11 +163,11 @@ defOperator(Module m, atom_t name, int type, int priority, int force)
   if ( !m->operators )
     m->operators = newOperatorTable(8);
 
-  if ( (op = lookupHTable(m->operators, (void *)name)) )
+  if ( (op = lookupHTableWP(m->operators, name)) )
   { ;
   } else if ( priority < 0 )
   { PL_UNLOCK(L_OP);				/* already inherited: do not change */
-    return TRUE;
+    return true;
   } else
   { op = allocHeapOrHalt(sizeof(*op));
 
@@ -177,18 +178,18 @@ defOperator(Module m, atom_t name, int type, int priority, int force)
     op->type[OP_INFIX]       = OP_INHERIT;
     op->type[OP_POSTFIX]     = OP_INHERIT;
 
-    must_reg = TRUE;
+    must_reg = true;
   }
 
   op->priority[t] = priority;
   op->type[t]     = (priority >= 0 ? type : OP_INHERIT);
   if ( must_reg )
   { PL_register_atom(name);
-    addNewHTable(m->operators, (void *)name, op);
+    addNewHTableWP(m->operators, name, op);
   }
   PL_UNLOCK(L_OP);
 
-  return TRUE;
+  return true;
 }
 
 
@@ -208,7 +209,7 @@ visibleOperator(Module m, atom_t name, int kind)
   ListCell c;
 
   if ( m->operators &&
-       (op = lookupHTable(m->operators, (void *)name)) )
+       (op = lookupHTableWP(m->operators, name)) )
   { if ( op->type[kind] != OP_INHERIT )
       return op;
   }
@@ -221,8 +222,9 @@ visibleOperator(Module m, atom_t name, int kind)
 }
 
 
-int
-currentOperator(Module m, atom_t name, int kind, int *type, int *priority)
+bool
+currentOperator(Module m, atom_t name, int kind,
+		unsigned char *type, short *priority)
 { operator *op;
 
   assert(kind >= OP_PREFIX && kind <= OP_POSTFIX);
@@ -242,11 +244,11 @@ currentOperator(Module m, atom_t name, int kind, int *type, int *priority)
 		     *priority,
 		     PL_atom_chars(m->name)));
 
-      succeed;
+      return true;
     }
   }
 
-  fail;
+  return false;
 }
 
 
@@ -278,7 +280,8 @@ scanPriorityOperator(Module m, atom_t name, int *done, int sofar)
   if ( *done != 0x7 )
   { operator *op;
 
-    if ( m->operators && (op = lookupHTable(m->operators, (void *)name)) )
+    if ( m->operators &&
+	 (op = lookupHTableWP(m->operators, name)) )
       sofar = maxOp(op, done, sofar);
 
     if ( *done != 0x7 )
@@ -310,7 +313,7 @@ priorityOperator(Module m, atom_t name)
 		 *	  PROLOG BINDING	*
 		 *******************************/
 
-static int
+static unsigned char
 atomToOperatorType(atom_t atom)
 { if (atom == ATOM_fx)			return OP_FX;
   else if (atom == ATOM_fy)		return OP_FY;
@@ -346,7 +349,7 @@ PRED_IMPL("op", 3, op, PL_FA_TRANSPARENT|PL_FA_ISO)
 { PRED_LD
   atom_t nm;
   atom_t tp;
-  int t;
+  unsigned char t;
   int p;
   Module m = MODULE_parse;
 
@@ -355,7 +358,7 @@ PRED_IMPL("op", 3, op, PL_FA_TRANSPARENT|PL_FA_ISO)
   term_t name = A3;
 
   if ( !PL_strip_module(name, &m, name) )
-    return FALSE;
+    return false;
   if ( m == MODULE_system )
   { term_t t = PL_new_term_ref();
     term_t a = PL_new_term_ref();
@@ -368,16 +371,16 @@ PRED_IMPL("op", 3, op, PL_FA_TRANSPARENT|PL_FA_ISO)
   }
 
   if ( !PL_get_atom_ex(type, &tp) )
-    return FALSE;
+    return false;
   if ( !PL_get_integer_ex(pri, &p) )
-    return FALSE;
+    return false;
   if ( !((p >= 0 && p <= OP_MAXPRIORITY) || (p == -1 && m != MODULE_user)) )
     return PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_operator_priority, pri);
   if ( !(t = atomToOperatorType(tp)) )
     return PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_operator_specifier, type);
 
   if ( PL_get_atom(name, &nm) )
-  { return defOperator(m, nm, t, p, FALSE);
+  { return defOperator(m, nm, t, (short)p, false);
   } else
   { term_t l = PL_copy_term_ref(name);
     term_t e = PL_new_term_ref();
@@ -385,14 +388,14 @@ PRED_IMPL("op", 3, op, PL_FA_TRANSPARENT|PL_FA_ISO)
     while( PL_get_list_ex(l, e, l) )
     { if ( !PL_get_atom(e, &nm) )
 	return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_atom, e);
-      if ( !defOperator(m, nm, t, p, FALSE) )
-	return FALSE;
+      if ( !defOperator(m, nm, t, (short)p, false) )
+	return false;
     }
     if ( !PL_get_nil_ex(l) )
-      return FALSE;
+      return false;
   }
 
-  return TRUE;
+  return true;
 }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -402,7 +405,7 @@ of matching operators and (on backtracking) return the matching ones.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static void
-addOpToBuffer(Buffer b, atom_t name, int type, int priority)
+addOpToBuffer(Buffer b, atom_t name, unsigned char type, short priority)
 { opdef *op = baseBuffer(b, opdef);
   int mx    = (int)entriesBuffer(b, opdef);
   int i;
@@ -421,13 +424,16 @@ addOpToBuffer(Buffer b, atom_t name, int type, int priority)
 
 
 static void
-addOpsFromTable(Table t, atom_t name, int priority, int type, Buffer b)
-{ TableEnum e = newTableEnum(t);
-  atom_t nm;
-  operator *op;
+addOpsFromTable(TableWP t, atom_t name, int priority, int type, Buffer b)
+{ TableEnum e = newTableEnumWP(t);
+  table_key_t tk;
+  table_value_t tv;
 
-  while( advanceTableEnum(e, (void**)&nm, (void**)&op) )
-  { if ( nm == name || name == NULL_ATOM )
+  while( advanceTableEnum(e, &tk, &tv) )
+  { atom_t nm = (atom_t)tk;
+    operator *op = val2ptr(tv);
+
+    if ( nm == name || name == NULL_ATOM )
     { if ( type )
       { int kind = type&OP_MASK;
 
@@ -483,7 +489,7 @@ typedef struct
 
 
 #define current_op(m, inherit, prec, type, name, h) LDFUNC(current_op, m, inherit, prec, type, name, h)
-static word
+static foreign_t
 current_op(DECL_LD Module m, int inherit,
 	   term_t prec, term_t type, term_t name,
 	   control_t h)
@@ -502,7 +508,7 @@ current_op(DECL_LD Module m, int inherit,
       if ( PL_is_variable(name) )
 	nm = NULL_ATOM;
       else if ( !PL_get_atom_ex(name, &nm) )
-	return FALSE;
+	return false;
 
       if ( PL_is_variable(prec) )
       { p = 0;
@@ -510,7 +516,7 @@ current_op(DECL_LD Module m, int inherit,
       { if ( !(p > 0 && p <= 1200) )
 	  return PL_domain_error("operator_priority", prec);
       } else
-      { return FALSE;
+      { return false;
       }
 
       if ( PL_is_variable(type) )
@@ -520,7 +526,7 @@ current_op(DECL_LD Module m, int inherit,
 	  return PL_error(NULL, 0, NULL, ERR_DOMAIN,
 			  ATOM_operator_specifier, type);
       } else
-	return FALSE;
+	return false;
 
       e = allocHeapOrHalt(sizeof(*e));
       b = &e->buffer;
@@ -568,7 +574,7 @@ current_op(DECL_LD Module m, int inherit,
     { if ( e->index == mx )
       { discardBuffer(&e->buffer);
         freeHeap(e, sizeof(*e));
-	return TRUE;
+	return true;
       }
       ForeignRedoPtr(e);
     }
@@ -591,18 +597,18 @@ get_op_module(DECL_LD term_t a3, term_t name, Module *m)
 
   if ( !(p=stripModuleName(valTermRef(a3), &mname)) ||
        !(w=linkValG(p)) )
-    return FALSE;
+    return false;
   *valTermRef(name) = w;
 
   if ( *m && (*m)->name == mname )
-    return TRUE;
+    return true;
   if ( mname && !(*m=acquireModule(mname)) )
   { DEBUG(MSG_OPERATOR, Sdprintf("Could not acquire module %s\n",
 				 PL_atom_chars(mname)));
     *m = MODULE_user;
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -613,15 +619,15 @@ PRED_IMPL("current_op", 3, current_op,
   Module mp = MODULE_parse;
   Module m  = mp;
   term_t name = A3;
-  word rc;
+  foreign_t rc;
 
   if ( CTX_CNTRL != FRG_CUTTED )
   { if ( !(name = PL_new_term_ref()) ||
 	 !get_op_module(A3, name, &m) )
-      return FALSE;
+      return false;
   }
 
-  rc = current_op(m, TRUE, A1, A2, name, PL__ctx);
+  rc = current_op(m, true, A1, A2, name, PL__ctx);
   if ( m != mp )
     releaseModule(m);
 
@@ -645,10 +651,10 @@ PRED_IMPL("$local_op", 3, local_op, PL_FA_NONDETERMINISTIC|PL_FA_TRANSPARENT)
   if ( CTX_CNTRL != FRG_CUTTED )
   { if ( !(name = PL_new_term_ref()) ||
 	 !get_op_module(A3, name, &m) )
-      return FALSE;
+      return false;
   }
 
-  return current_op(m, FALSE, A1, A2, name, PL__ctx);
+  return current_op(m, false, A1, A2, name, PL__ctx);
 }
 
 
@@ -677,6 +683,7 @@ static const opdef operators[] = {
   OP(ATOM_prove,		 OP_FX,	 1200),	/* :- */
   OP(ATOM_prove,		 OP_XFX, 1200),
   OP(ATOM_ssu_commit,		 OP_XFX, 1200), /* => */
+  OP(ATOM_ssu_dcg,		 OP_XFX, 1200), /* ==> */
 //OP(ATOM_ssu_choice,		 OP_XFX, 1200), /* ?=> */
   OP(ATOM_semicolon,		 OP_XFY, 1100),	/* ; */
   OP(ATOM_bar,			 OP_XFY, 1105),	/* | */
@@ -735,11 +742,11 @@ initOperators(void)
   MODULE_system->operators = newOperatorTable(128);
 
   for( op = operators; op->name; op++ )
-    defOperator(MODULE_system, op->name, op->type, op->priority, TRUE);
+    defOperator(MODULE_system, op->name, op->type, op->priority, true);
 
   if ( !GD->options.traditional )
-  { defOperator(MODULE_system, PL_new_atom("."), OP_YFX, 100, TRUE);
-    defOperator(MODULE_system, ATOM_colon_eq,    OP_XFX, 800, TRUE);
+  { defOperator(MODULE_system, PL_new_atom("."), OP_YFX, 100, true);
+    defOperator(MODULE_system, ATOM_colon_eq,    OP_XFX, 800, true);
   }
 }
 

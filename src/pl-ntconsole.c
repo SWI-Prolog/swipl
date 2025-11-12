@@ -3,8 +3,9 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1995-2018, University of Amsterdam
+    Copyright (c)  1995-2025, University of Amsterdam
 			      CWI, Amsterdam
+			      SWI-Prolog Solutions b.v.
     Copyright (C): 2009-2017, SCIENTIFIC SOFTWARE AND SYSTEMS LIMITED
     All rights reserved.
 
@@ -34,13 +35,12 @@
     POSSIBILITY OF SUCH DAMAGE.
 */
 
+#define SWIPL_WINDOWS_NATIVE_ACCESS 1
 #define WINDOWS_LEAN_AND_MEAN 1
 #include <winsock2.h>
 #include <windows.h>
 #include "pl-incl.h"
 #include "pl-nt.h"
-
-static int running_under_wine = FALSE;
 
 #define ANSI_MAGIC		(0x734ab9de)
 #define ANSI_BUFFER_SIZE	(256)
@@ -100,10 +100,10 @@ flush_ansi(ansi_stream *as)
 
     if (as->handletype == HDL_CONSOLE)
     { rc = WriteConsoleW(as->hConsole,
-		         &as->buffer[written],
-		         (DWORD)(as->buffered-written),
-		         &done,
-		         NULL);
+			 &as->buffer[written],
+			 (DWORD)(as->buffered-written),
+			 &done,
+			 NULL);
     } else
     { rc = WriteFile(as->hConsole,
                      &as->buffer[written],
@@ -134,17 +134,17 @@ buffer is really full we need to flush anyway. This should never happen.
 
 static int
 send_ansi(ansi_stream *as, int chr)
-{ int flush = FALSE;
+{ int flush = false;
 
   as->buffer[as->buffered++] = chr;
 
   if ( IS_UTF16_LEAD(chr) )
   { if ( as->buffered >= ANSI_BUFFER_SIZE )
-      flush = TRUE;
+      flush = true;
   } else
   { if ( as->buffered >= ANSI_BUFFER_SIZE-1 ||
 	 (chr == '\n' && (as->pStream->flags & SIO_LBUF)) )
-      flush = TRUE;
+      flush = true;
   }
 
   if ( flush )
@@ -398,6 +398,11 @@ control_ansi(void *handle, int op, void *data)
       *fp = (int)(intptr_t)as->saved_handle; /* is one of 0,1,2 */
       return 0;
     }
+    case SIO_GETWINHANDLE:
+    { HANDLE *dp = data;
+      *dp = as->hConsole;
+      return 0;
+    }
     default:
       return -1;
   }
@@ -423,7 +428,7 @@ Sread_win32_console(void *handle, char *buffer, size_t size)
   BOOL rc;
   DWORD done;
   DWORD mode;
-  int isRaw = FALSE;
+  int isRaw = false;
 
   if ( Suser_input &&
        Suser_input->handle == handle &&
@@ -431,12 +436,7 @@ Sread_win32_console(void *handle, char *buffer, size_t size)
   { if ( GetConsoleMode(as->hConsole, &mode) &&
 	 SetConsoleMode(as->hConsole,
 			mode & ~(ENABLE_LINE_INPUT|ENABLE_ECHO_INPUT)) )
-      isRaw = TRUE;
-  }
-
-  if ( !running_under_wine )
-  { if ( !PL_wait_for_console_input(as->hConsole) )
-      goto error;
+      isRaw = true;
   }
 
   if ( isRaw )
@@ -461,7 +461,6 @@ Sread_win32_console(void *handle, char *buffer, size_t size)
     return done * sizeof(wchar_t);
   }
 
-error:
   if ( isRaw )
     SetConsoleMode(as->hConsole, mode);
 
@@ -491,7 +490,7 @@ wrap_console(HANDLE h, IOSTREAM *s, IOFUNCTIONS *funcs)
   s->functions = funcs;
   s->flags &= ~SIO_FILE;
 
-  return TRUE;
+  return true;
 }
 
 
@@ -503,23 +502,28 @@ init_output(void *handle, CONSOLE_SCREEN_BUFFER_INFO *info)
 }
 
 
-int
+bool
+win_isconsole(HANDLE h)
+{ DWORD mode;
+  return GetConsoleMode(h, &mode);
+}
+
+bool
 PL_w32_wrap_ansi_console(void)
 { HANDLE hIn    = GetStdHandle(STD_INPUT_HANDLE);
   HANDLE hOut   = GetStdHandle(STD_OUTPUT_HANDLE);
   HANDLE hError = GetStdHandle(STD_ERROR_HANDLE);
   CONSOLE_SCREEN_BUFFER_INFO info;
 
-  running_under_wine = (PL_w32_running_under_wine() != NULL);
-
-  if ( hIn    == INVALID_HANDLE_VALUE || GetFileType(hIn) != FILE_TYPE_CHAR ||
-       hOut   == INVALID_HANDLE_VALUE || !GetConsoleScreenBufferInfo(hOut,&info)||
-       hError == INVALID_HANDLE_VALUE || GetFileType(hIn) != FILE_TYPE_CHAR )
-  { return FALSE;
+  if ( hIn    == INVALID_HANDLE_VALUE || !win_isconsole(hIn) ||
+       hOut   == INVALID_HANDLE_VALUE || !win_isconsole(hOut) ||
+       hError == INVALID_HANDLE_VALUE || !win_isconsole(hError) ||
+       !GetConsoleScreenBufferInfo(hOut, &info) )
+  { return false;
   }
 
   saved_functions       = Sinput->functions;
-  con_functions	        = *Sinput->functions;
+  con_functions		= *Sinput->functions;
   con_functions.read    = Sread_win32_console;
   con_functions.write   = write_ansi;
   con_functions.close   = close_ansi;
@@ -533,6 +537,31 @@ PL_w32_wrap_ansi_console(void)
   init_output(Soutput->handle, &info);
   init_output(Serror->handle, &info);
 
-  PL_set_prolog_flag("tty_control", PL_BOOL, TRUE);
-  return TRUE;
+  PL_set_prolog_flag("tty_control", PL_BOOL, true);
+  return true;
+}
+
+
+/**
+ * Get the screen size of the console.
+ * @param s A Prolog stream that refers to the console output.  Normally
+ * `Suser_output`.
+ */
+
+bool
+win32_console_size(IOSTREAM *s, int *cols, int *rows)
+{ if ( s )
+  { HANDLE h = Swinhandle(s);
+
+    if ( h )
+    { CONSOLE_SCREEN_BUFFER_INFO csbi;
+      if ( GetConsoleScreenBufferInfo(h, &csbi) )
+      { *cols = csbi.dwSize.X;
+	*rows = csbi.dwSize.Y;
+	return true;
+      }
+    }
+  }
+
+  return false;
 }

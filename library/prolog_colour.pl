@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org/projects/xpce/
-    Copyright (c)  2011-2023, University of Amsterdam
+    Copyright (c)  2011-2025, University of Amsterdam
                               VU University Amsterdam
                               CWI, Amsterdam
                               SWI-Prolog Solutions b.v.
@@ -111,7 +111,8 @@ This module defines reusable code to colourise Prolog source.
                  module,
                  stream,
                  closure,
-                 singletons).
+                 singletons,
+                 current_variable).
 
 colour_state_source_id(State, SourceID) :-
     colour_state_source_id_list(State, SourceIDList),
@@ -345,41 +346,37 @@ safe_push_op(P, T, N0, State) :-
 %   by the cross-referencer.
 
 fix_operators((:- Directive), M, Src) :-
-    ground(Directive),
-    catch(process_directive(Directive, M, Src), _, true),
+    callable(Directive),
+    acyclic_term(Directive),
+    catch(process_directive(Directive, M, Src), error(_,_), true),
     !.
 fix_operators(_, _, _).
 
 :- multifile
     prolog:xref_update_syntax/2.
 
-process_directive(Directive, M, _Src) :-
-    prolog:xref_update_syntax(Directive, M),
-    !.
-process_directive(style_check(X), _, _) :-
-    !,
+process_directive(Directive, M, _Src),
+    ground(Directive),
+    prolog:xref_update_syntax((:- Directive), M) =>
+    true.
+process_directive(style_check(X), _, _), ground(X) =>
     style_check(X).
-process_directive(set_prolog_flag(Flag, Value), M, _) :-
-    syntax_flag(Flag),
-    !,
+process_directive(set_prolog_flag(Flag, Value), M, _),
+    ground(Flag+Value),
+    syntax_flag(Flag) =>
     set_prolog_flag(M:Flag, Value).
-process_directive(M:op(P,T,N), _, Src) :-
-    !,
+process_directive(M:op(P,T,N), _, Src), ground(M) =>
     process_directive(op(P,T,N), M, Src).
-process_directive(op(P,T,N), M, Src) :-
-    !,
+process_directive(op(P,T,N), M, Src), ground(op(P,T,N)) =>
     safe_push_op(P, T, M:N, Src).
-process_directive(module(_Name, Export), M, Src) :-
-    !,
+process_directive(module(_Name, Export), M, Src), ground(Export) =>
     forall(member(op(P,A,N), Export),
            safe_push_op(P,A,M:N, Src)).
-process_directive(use_module(Spec), _, Src) :-
-    !,
+process_directive(use_module(Spec), _, Src), ground(Spec) =>
     catch(process_use_module1(Spec, Src), _, true).
-process_directive(use_module(Spec, Imports), _, Src) :-
-    !,
+process_directive(use_module(Spec, Imports), _, Src), ground(Spec), is_list(Imports) =>
     catch(process_use_module2(Spec, Imports, Src), _, true).
-process_directive(Directive, _, Src) :-
+process_directive(Directive, _, Src), ground(Directive) =>
     prolog_source:expand((:-Directive), Src, _).
 
 syntax_flag(character_escapes).
@@ -491,9 +488,11 @@ colourise_query(QueryString, TB) :-
 %
 %   Options:
 %
-%     * subterm_positions(-TermPos)
-%     Return complete term-layout.  If an error is read, this is a
-%     term error_position(StartClause, EndClause, ErrorPos)
+%     - subterm_positions(-TermPos)
+%       Return complete term-layout.  If an error is read, this is a
+%       term error_position(StartClause, EndClause, ErrorPos)
+%     - current_variable(+VarName)
+%       Variable to highlight
 
 prolog_colourise_term(Stream, SourceId, ColourItem, Options) :-
     to_list(SourceId, SourceIdList),
@@ -517,6 +516,7 @@ prolog_colourise_term(Stream, SourceId, ColourItem, Options) :-
           operators(Ops),
           error(Error),
           subterm_positions(TermPos),
+          variable_names(VarNames),
           singletons(Singletons0),
           comments(Comments)
         | Opts
@@ -524,6 +524,7 @@ prolog_colourise_term(Stream, SourceId, ColourItem, Options) :-
     (   var(Error)
     ->  warnable_singletons(Singletons0, Singletons),
         colour_state_singletons(TB, Singletons),
+        set_current_variable(TB, VarNames, Options),
         colour_item(range, TB, TermPos),            % Call to allow clearing
         colourise_term(Term, TB, TermPos, Comments)
     ;   character_count(Stream, End),
@@ -544,6 +545,9 @@ show_syntax_error(TB, Pos:Message, Range) :-
 show_syntax_error(TB, _:Message, Range) :-
     colour_item(syntax_error(Message, Range), TB, Range).
 
+%!  singleton(@Var, +TB) is semidet.
+%
+%   True when Var is a singleton.
 
 singleton(Var, TB) :-
     colour_state_singletons(TB, Singletons),
@@ -554,6 +558,18 @@ member_var(V, [_=V2|_]) :-
     !.
 member_var(V, [_|T]) :-
     member_var(V, T).
+
+set_current_variable(TB, VarNames, Options) :-
+    option(current_variable(Name), Options),
+    memberchk(Name=CV, VarNames),
+    !,
+    colour_state_current_variable(TB, CV).
+set_current_variable(_, _, _).
+
+current_variable(Var, TB) :-
+    colour_state_current_variable(TB, Current),
+    Var == Current.
+
 
 %!  colourise_term(+Term, +TB, +Termpos, +Comments)
 %
@@ -672,6 +688,26 @@ colourise_term((Head --> Body), TB,                     % TBD: expansion!
     !,
     colour_item(grammar_rule,       TB, F-T),
     colour_item(neck(-->),          TB, FF-FT),
+    colourise_extended_head(Head, 2, TB, HP),
+    colourise_dcg(Body, Head,       TB, BP).
+colourise_term(((Head,RHC) ==> Body), TB,
+               term_position(F,T,FF,FT,
+                             [ term_position(_,_,_,_,[HP,RHCP]),
+                               BP
+                             ])) :-
+    !,
+    extend(Head, 2, HeadEx),
+    colour_item(grammar_rule,        TB, F-T),
+    colour_item(rule_condition,      TB, RHCP),
+    colourise_body(RHC, HeadEx,      TB, RHCP),
+    colour_item(neck(==>),           TB, FF-FT),
+    colourise_extended_head(Head, 2, TB, HP),
+    colourise_dcg(Body, Head,        TB, BP).
+colourise_term((Head ==> Body), TB,                     % TBD: expansion!
+               term_position(F,T,FF,FT,[HP,BP])) :-
+    !,
+    colour_item(grammar_rule,       TB, F-T),
+    colour_item(neck(==>),          TB, FF-FT),
     colourise_extended_head(Head, 2, TB, HP),
     colourise_dcg(Body, Head,       TB, BP).
 colourise_term(:->(Head, Body), TB,
@@ -1536,6 +1572,8 @@ colourise_term_arg(Var, TB, Pos) :-                     % variable
     !,
     (   singleton(Var, TB)
     ->  colour_item(singleton, TB, Pos)
+    ;   current_variable(Var, TB)
+    ->  colour_item(current_variable, TB, Pos)
     ;   colour_item(var, TB, Pos)
     ).
 colourise_term_arg(List, TB, list_position(F, T, Elms, Tail)) :-
@@ -1652,11 +1690,12 @@ colourise_expression(Compound, TB, Pos) :-
     !,
     (   dict_field_extraction(Compound)
     ->  colourise_term_arg(Compound, TB, Pos)
-    ;   current_arithmetic_function(Compound)
-    ->  colour_item(function, TB, FF-FT)
-    ;   colour_item(no_function, TB, FF-FT)
-    ),
-    colourise_expression_args(Compound, TB, Pos).
+    ;   (   current_arithmetic_function(Compound)
+        ->  colour_item(function, TB, FF-FT)
+        ;   colour_item(no_function, TB, FF-FT)
+        ),
+        colourise_expression_args(Compound, TB, Pos)
+    ).
 colourise_expression(Atom, TB, Pos) :-
     atom(Atom),
     !,
@@ -2229,15 +2268,20 @@ colourise_prolog_flag_name(Name, TB, Pos) :-
 known_flag(android).
 known_flag(android_api).
 known_flag(apple).
+known_flag(apple_universal_binary).
 known_flag(asan).
+known_flag(associated_file).
 known_flag(break_level).
+known_flag(bundle).
 known_flag(conda).
 known_flag(dde).
 known_flag(emscripten).
+known_flag(engines).
 known_flag(executable_format).
 known_flag(gc_thread).
 known_flag(gmp_version).
 known_flag(gui).
+known_flag(linux).
 known_flag(max_rational_size).
 known_flag(mitigate_spectre).
 known_flag(msys2).
@@ -2547,6 +2591,7 @@ def_goal_colours(public(_),              built_in-[declarations(public)]).
 def_goal_colours(det(_),                 built_in-[declarations(det)]).
 def_goal_colours(table(_),               built_in-[declarations(table)]).
 def_goal_colours(meta_predicate(_),      built_in-[meta_declarations]).
+def_goal_colours(mode(_),                built_in-[meta_declarations]).
 def_goal_colours(consult(_),             built_in-[file]).
 def_goal_colours(include(_),             built_in-[file]).
 def_goal_colours(ensure_loaded(_),       built_in-[file]).
@@ -2660,7 +2705,7 @@ def_style(head(exported,_),        [colour(blue), bold(true)]).
 def_style(head(public(_),_),       [colour('#016300'), bold(true)]).
 def_style(head(extern(_),_),       [colour(blue), bold(true)]).
 def_style(head(dynamic,_),         [colour(magenta), bold(true)]).
-def_style(head(multifile,_),       [colour(navy_blue), bold(true)]).
+def_style(head(multifile(_),_),    [colour(navy_blue), bold(true)]).
 def_style(head(unreferenced,_),    [colour(red), bold(true)]).
 def_style(head(hook,_),            [colour(blue), underline(true)]).
 def_style(head(meta,_),            []).
@@ -3207,6 +3252,8 @@ syntax_message(neck(=>)) -->
     [ 'Rule' ].
 syntax_message(neck(-->)) -->
     [ 'Grammar rule' ].
+syntax_message(neck(==>)) -->
+    [ 'SSU Grammar rule' ].
 syntax_message(macro(String)) -->
     [ 'Macro indicator (expands to ~s)'-[String] ].
 syntax_message(flag_name(Name)) -->

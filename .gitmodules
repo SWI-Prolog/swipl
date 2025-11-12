@@ -82,18 +82,12 @@
 [submodule "debian"]
 	path = debian
 	url = ../distro-debian.git
-[submodule "packages/swipl-win"]
-	path = packages/swipl-win
-	url = ../packages-swipl-win.git
 [submodule "packages/pengines"]
 	path = packages/pengines
 	url = ../packages-pengines.git
 [submodule "packages/cql"]
 	path = packages/cql
 	url = ../packages-cql.git
-[submodule "packages/readline"]
-	path = packages/readline
-	url = ../packages-readline.git
 [submodule "packages/libedit"]
 	path = packages/libedit
 	url = ../packages-libedit.git
@@ -121,3 +115,6 @@
 [submodule "packages/swipy"]
 	path = packages/swipy
 	url = ../packages-swipy
+[submodule "packages/json"]
+	path = packages/json
+	url = ../packages-json.git

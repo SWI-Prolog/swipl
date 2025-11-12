@@ -84,7 +84,7 @@ pushSegStack_(segstack *stack, void *data)
     if ( !chunk )
       return NULL;			/* out of memory */
 
-    chunk->allocated = TRUE;
+    chunk->allocated = true;
     chunk->size = chunksize;
     chunk->next = NULL;
     chunk->previous = stack->last;
@@ -118,7 +118,7 @@ pushRecordSegStack(segstack *stack, Record r)
     *rp++ = r;
     stack->top = (char*)rp;
 
-    return TRUE;
+    return true;
   } else
   { return !!pushSegStack_(stack, &r);
   }
@@ -139,7 +139,7 @@ popSegStack_(segstack *stack, void *data)
     if ( data )
       memcpy(data, stack->top, stack->unit_size);
 
-    return TRUE;
+    return true;
   } else
   { segchunk *chunk = stack->last;
 
@@ -159,7 +159,7 @@ popSegStack_(segstack *stack, void *data)
       }
     }
 
-    return FALSE;
+    return false;
   }
 }
 
@@ -229,8 +229,8 @@ Therefore $collect_findall_bag/2 locks if it needs to call the expensive
 chunk-popping popTopOfSegStack_().
 
 With thanks to Eugeniy Meshcheryakov for   finding this and running many
-tests. The issue is triggered by Tests/thread_agc_findall.pl, notably on
-slow single core hardware.
+tests. The issue  is   triggered  by tests/thread/thread_agc_findall.pl,
+notably on slow single core hardware.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static inline void
@@ -261,6 +261,15 @@ scanSegStack(segstack *stack, void (*func)(void *cell))
   }
 }
 
+void
+free_segstack_chunks(segchunk *c)
+{ segchunk *n;
+
+  for(; c; c = n)
+  { n = c->next;
+    tmp_free(c);
+  }
+}
 
 void
 clearSegStack_(segstack *s)
@@ -276,15 +285,9 @@ clearSegStack_(segstack *s)
     s->max  = addPointer(c, c->size);
     s->chunk_count = 1;
 
-    for(c=n; c; c = n)
-    { n = c->next;
-      tmp_free(c);
-    }
+    free_segstack_chunks(n);
   } else				/* all dynamic chunks */
-  { for(; c; c = n)
-    { n = c->next;
-      tmp_free(c);
-    }
+  { free_segstack_chunks(c);
     memset(s, 0, sizeof(*s));
   }
 }

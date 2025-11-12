@@ -3,7 +3,8 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2019, VU University Amsterdam
+    Copyright (c)  2019-2025, VU University Amsterdam
+                              SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -33,6 +34,8 @@
 */
 
 :- module(prolog_theme_dark, []).
+:- autoload(library(lists), [member/2]).
+:- autoload(library(pce), [send/2]).
 
 /** <module> SWI-Prolog theme file -- dark
 
@@ -134,6 +137,8 @@ style(goal(built_in,_),          [colour(cyan)]).
 style(goal(imported(_),_),       [colour(cyan)]).
 style(goal(autoload(_),_),       [colour(dark_cyan)]).
 style(goal(global,_),            [colour(dark_cyan)]).
+style(goal(global(dynamic,_),_), [colour(magenta)]).
+style(goal(global(_,_),_),       [colour(dark_cyan)]).
 style(goal(undefined,_),         [colour(orange)]).
 style(goal(thread_local(_),_),   [colour(magenta), underline(true)]).
 style(goal(dynamic(_),_),        [colour(magenta)]).
@@ -152,7 +157,7 @@ style(goal(not_callable,_),      [background(orange)]).
 style(function,                  [colour(cyan)]).
 style(no_function,               [colour(orange)]).
 
-style(option_name,               [colour('#3434ba')]).
+style(option_name,               [colour(dodgerblue)]).
 style(no_option_name,            [colour(orange)]).
 
 style(head(exported,_),          [colour(cyan), bold(true)]).
@@ -170,6 +175,7 @@ style(head(iso,_),               [background(orange), bold(true)]).
 style(head(def_iso,_),           [colour(cyan), bold(true)]).
 style(head(def_swi,_),           [colour(cyan), bold(true)]).
 style(head(_,_),                 [bold(true)]).
+style(rule_condition,            [background(darkgreen)]).
 
 style(module(_),                 [colour(light_slate_blue)]).
 style(comment(_),                [colour(green)]).
@@ -198,7 +204,7 @@ style(class(undefined,_),        [colour(red), underline(true)]).
 style(prolog_data,               [colour(cyan), underline(true)]).
 style(flag_name(_),              [colour(cyan)]).
 style(no_flag_name(_),           [colour(red)]).
-style(unused_import,             [colour(cyan), background(pink)]).
+style(unused_import,             [colour(cyan), background(maroon)]).
 style(undefined_import,          [colour(red)]).
 
 style(constraint(_),             [colour(darkcyan)]).
@@ -212,7 +218,7 @@ style(op_type(_),                [colour(cyan)]).
 
 style(qq_type,                   [bold(true)]).
 style(qq(_),                     [colour(cyan), bold(true)]).
-style(qq_content(_),             [colour(red4)]).
+style(qq_content(_),             [colour(coral2)]).
 
 style(dict_tag,                  [bold(true)]).
 style(dict_key,                  [bold(true)]).
@@ -232,28 +238,132 @@ style(table_mode(_),             [bold(true)]).
 
 
 		 /*******************************
-		 *         GUI DEFAULTS		*
+		 *         GUI DEFAULTS         *
 		 *******************************/
 
 :- op(200, fy,  @).
 :- op(800, xfx, :=).
 
 pce:on_load :-
-    pce_set_defaults.
+    pce_set_defaults(true).
 
-pce_set_defaults :-
+:- initialization
+    setup_if_loaded.
+
+setup_if_loaded :-
+    current_predicate(pce:send/2),
+    !,
+    pce_set_defaults(true).
+setup_if_loaded.
+
+
+%!  pce_set_defaults(+Loaded)
+%
+%   Adjust xpce defaults. This can either be   run before xpce is loaded
+%   or as part of the xpce initialization.
+
+pce_set_defaults(Loaded) :-
     pce_style(Class, Properties),
     member(Prop, Properties),
     Prop =.. [Name,Value],
     term_string(Value, String),
     send(@default_table, append, Name, vector(Class, String)),
+    update_class_variable(Loaded, Class, Name, Value),
+    update_instances(Class, Prop),
     fail ; true.
+
+update_class_variable(true, ClassName, Name, Value) :-
+    get(@(classes), member, ClassName, Class),
+    !,
+    get(Class, class_variable, Name, ClassVar),
+    (   get(ClassVar, context, ContextClass),
+        get(ContextClass, name, ClassName)
+    ->  send(ClassVar, value, Value)
+    ;   new(_, class_variable(ClassName, Name, Value))
+    ).
+update_class_variable(_, _, _, _).
+
+update_instances(display, Prop) :-
+    send(@display, Prop).
 
 %!  pce_style(+Class, -Attributes)
 %
-%   Set XPCE class variales for Class. This  is normally done by loading
+%   Set XPCE class variables for Class. This is normally done by loading
 %   a _resource file_, but doing it from   Prolog keeps the entire theme
 %   in a single file.
+
+% General
+
+pce_style(display,
+          [ foreground(white),
+            background(black)
+          ]).
+
+pce_style(window,
+          [ colour(white),
+            background(black)
+          ]).
+
+pce_style(dialog,
+          [ colour(black),
+            background(grey80)
+          ]).
+
+pce_style(graphical,
+          [ selected_foreground(black),
+            selected_background(white)
+          ]).
+
+pce_style(text,
+          [ selection_style(style(background := yellow3,
+                                  colour := black))
+          ]).
+
+% Epilog (next generation swipl-win)
+
+pce_style(terminal_image,
+          [ background(black),
+            colour(white),
+            selection_style(style(background := yellow, colour := black)),
+            ansi_colours(vector(colour(black),	   % black
+                                colour(firebrick1),    % red
+                                colour(forestgreen),   % green
+                                colour(goldenrod),     % yellow
+                                colour(steelblue),     % blue
+                                colour(mediumorchid),  % magenta
+                                colour(darkturquoise), % cyan
+                                colour(lightgray),     % white
+                                /* Bright versions */
+                                colour(gray40),	   % black
+                                colour(orangered),     % red
+                                colour(limegreen),     % green
+                                colour(khaki),         % yellow
+                                colour(dodgerblue),    % blue
+                                colour(violet),        % magenta
+                                colour(cyan),          % cyan
+                                colour(snow)           % white
+                               ))
+          ]).
+
+pce_style(text_cursor,
+          [ colour(firebrick1)
+          ]).
+
+% Dialog
+
+pce_style(text_item,
+          [ text_colour(white),
+            elevation(elevation('0,25mm', background := black))
+          ]).
+
+pce_style(menu,
+          [ text_colour(white)
+          ]).
+
+pce_style(list_browser,
+          [ selection_style(style(background := yellow, colour := black)),
+            isearch_style(style(background := green, colour := black))
+          ]).
 
 % PceEmacs
 
@@ -292,6 +402,40 @@ pce_style(prolog_source_structure,
             colour(white)
           ]).
 
+% Profiler
+
+pce_style(prof_details,
+          [ header_background(khaki3)
+          ]).
+pce_style(prof_node_text,
+          [ colour('dodger_blue')
+          ]).
+
+% Debug messages
+
+pce_style(prolog_debug_browser,
+          [ enabled_style(style(colour := green))
+          ]).
+
+% Cross referencer
+
+pce_style(xref_predicate_text,
+          [ colour(green),
+            colour_autoload(steel_blue),
+            colour_global(steel_blue)
+          ]).
+pce_style(xref_file_graph_node,
+          [ colour(white),
+            background(grey35)
+          ]).
+
+% XPCE manual
+
+pce_style(man_editor,
+          [ jump_style(style(colour := green,
+                             underline := true))
+          ]).
+
 %!  prolog_source_view:port_style(+Port, -StyleAttributes)
 %
 %   Override style attributes for indicating  a   specific  port  in the
@@ -303,4 +447,6 @@ pce_style(prolog_source_structure,
 
 prolog_source_view:port_style(call, [background(forest_green), colour(black)]).
 prolog_source_view:port_style(fail, [background(indian_red),   colour(black)]).
-prolog_source_view:port_style(_,    [colour(black)]).
+prolog_source_view:port_style(redo, [background(yellow3),      colour(black)]).
+prolog_source_view:port_style(Type, [colour(black)]) :-
+    Type \== breakpoint.

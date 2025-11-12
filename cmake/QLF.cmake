@@ -9,18 +9,22 @@
 #	           [COMMENT comment]
 #		   [DEPENDS ...])
 #
-# Add a custom target that runs Prolog to create output in the locally created
-# Prolog home ${SWIPL_BUILD_HOME}.  The created product is added to the installation
-# target at the same location.
+# Add a custom target that runs Prolog   to create output in the locally
+# created Prolog home ${SWIPL_BUILD_HOME}. The  created product is added
+# to the installation target at the same location.
+#
+# Generate QLF files for the given libraries.  This is used to compile a
+# couple of large (aggregate) .qlf files.   If  INSTALL_QLF is used, all
+# sources are compiled to .qlf, so we do not need this.
 #
 # Variables:
 #   - ${SWIPL_COMMAND_DEPENDS} is added to the dependencies
 
 function(add_swipl_target name)
-  set(options --no-packs "--home=${SWIPL_BUILD_HOME}")
+  set(options --no-packs "--home=${SWIPL_BUILD_HOME}" -DSDL_VIDEODRIVER=dummy)
   cmake_parse_arguments(
       my "QUIET;QLF;NOINSTALL"
-         "COMMENT;COMMAND;APP"
+         "COMMENT;COMMAND;APP;WORKING_DIRECTORY"
          "OUTPUT;BYPRODUCTS;SCRIPT;DEPENDS;OPTIONS;LIBS"
          ${ARGN})
 
@@ -46,7 +50,7 @@ function(add_swipl_target name)
       set(options ${options} -g "use_module(library(${s}))")
     endforeach()
     foreach(s ${my_SCRIPT})
-      set(options ${options} -s ${s})
+      set(options ${options} -l ${s})
     endforeach()
     set(options ${options} -g ${my_COMMAND} --)
   elseif(my_APP)
@@ -58,9 +62,10 @@ function(add_swipl_target name)
   add_custom_command(
       OUTPUT ${my_OUTPUT}
       BYPRODUCTS ${my_BYPRODUCTS}
-      COMMAND ${CMAKE_COMMAND} -E env --unset=DISPLAY
+      COMMAND ${CMAKE_COMMAND} -E env --unset=DISPLAY SDL_VIDEODRIVER=dummy
 	      ${PROG_SWIPL} ${options} ${my_OPTIONS}
       COMMENT "${my_COMMENT}"
+      WORKING_DIRECTORY "${my_WORKING_DIRECTORY}"
       DEPENDS core prolog_home
               ${SWIPL_COMMAND_DEPENDS} "${my_DEPENDS}"
       VERBATIM)
@@ -71,6 +76,7 @@ function(add_swipl_target name)
   if(NOT my_NOINSTALL)
     list(GET my_OUTPUT 0 primary)
     string(REPLACE "${SWIPL_BUILD_HOME}" "" rel "${primary}")
+    string(REGEX REPLACE "^/*([^/].*)" "\\1" rel "${rel}")
     get_filename_component(rel ${rel} DIRECTORY)
     install(FILES ${primary}
 	    DESTINATION ${SWIPL_INSTALL_PREFIX}/${rel})
@@ -87,25 +93,30 @@ endfunction()
 # library(pldoc).
 
 function(add_qcompile_target target)
-  cmake_parse_arguments(my "" "" "SOURCES;DEPENDS;PRELOAD" ${ARGN})
+  if(NOT INSTALL_QLF)
+    cmake_parse_arguments(my "" "" "SOURCES;DEPENDS;EXPECTDEPS;PRELOAD" ${ARGN})
 
-  prepend(src ${SWIPL_QLF_BASE}/ ${my_SOURCES})
-  set(src ${src} ${SWIPL_QLF_BASE}/${target}.pl)
-  string(REPLACE "/" "-" tname "${target}")
+    prepend(src ${SWIPL_QLF_BASE}/ ${my_SOURCES})
+    set(src ${src} ${SWIPL_QLF_BASE}/${target}.pl)
+    string(REPLACE "/" "-" tname "${target}")
 
-  if(my_PRELOAD)
-    set(extra --preload ${my_PRELOAD})
-  else()
-    set(extra)
+    if(my_PRELOAD)
+      set(extra --preload ${my_PRELOAD})
+    else()
+      set(extra)
+    endif()
+
+    set(expectdeps ${src} ${my_EXPECTDEPS})
+
+    add_swipl_target(
+	qlf-${tname}
+	OUTPUT ${SWIPL_QLF_BASE}/${target}.qlf
+	APP qlf
+	OPTIONS compile ${SWIPL_QLF_BASE}/${target}
+	        --expect-deps ${expectdeps} ${extra}
+	COMMENT "QLF compiling ${target}.qlf"
+	DEPENDS ${src} ${my_DEPENDS})
   endif()
-
-  add_swipl_target(
-      qlf-${tname}
-      OUTPUT ${SWIPL_QLF_BASE}/${target}.qlf
-      APP qlf
-      OPTIONS compile ${SWIPL_QLF_BASE}/${target} --expect-deps ${src} ${extra}
-      COMMENT "QLF compiling ${target}.qlf"
-      DEPENDS ${src} ${my_DEPENDS})
 endfunction()
 
 # run_installed_swipl(command
@@ -161,17 +172,21 @@ function(run_installed_swipl command)
 endfunction()
 
 # qcompile(spec ...)
-# Generate QLF files for the given libraries.
+#
+# Generate QLF files for the given libraries.  This is used to compile a
+# couple of large (aggregate) .qlf files.   If  INSTALL_QLF is used, all
+# sources are compiled to .qlf, so we do not need this.
 
 function(qcompile)
-  cmake_parse_arguments(my "" "RC" "LIBRARIES" ${ARGN})
-  if(NOT my_RC)
-    set(my_RC none)
+  if(NOT INSTALL_QLF)
+    cmake_parse_arguments(my "" "RC" "LIBRARIES" ${ARGN})
+    if(NOT my_RC)
+      set(my_RC none)
+    endif()
+    foreach(f ${my_LIBRARIES})
+      run_installed_swipl("qcompile(library(${f}))"
+			  RC ${my_RC}
+			  COMMENT "-- QLF compiling library(${f})")
+    endforeach()
   endif()
-  foreach(f ${my_LIBRARIES})
-    run_installed_swipl("qcompile(library(${f}))"
-			RC ${my_RC}
-			COMMENT "-- QLF compiling library(${f})")
-  endforeach()
 endfunction()
-

@@ -38,6 +38,7 @@
 #ifndef PL_STREAM_H_INCLUDED
 #define PL_STREAM_H_INCLUDED
 
+#define SWIPL_WINDOWS_NATIVE_ACCESS 1
 #include "SWI-Stream.h"
 
 void		unallocStream(IOSTREAM *s);
@@ -84,7 +85,7 @@ dbgfd(void)
     { char *f;
 
       tried = 1;
-      if ( (f = getenv("SWI_DEBUG_IOREF")) )
+      if ( (f = getenv("SWIPL_DEBUG_IOREF")) )
 	debugfd = fopen(f, "w");
     }
   }

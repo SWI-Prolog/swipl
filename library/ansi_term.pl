@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2010-2023, VU University Amsterdam
+    Copyright (c)  2010-2025, VU University Amsterdam
                               CWI, Amsterdam
                               SWI-Prolog Solutions b.v.
     All rights reserved.
@@ -70,8 +70,8 @@ The behavior of this library is controlled by two Prolog flags:
 :- multifile
     prolog:console_color/2,                     % +Term, -AnsiAttrs
     supports_get_color/0,
-    hyperlink/2.                                % +Stream, +Spec
-
+    hyperlink/2,                                % +Stream, +Spec
+    tty_url_hook/2.                             % +For, -URL
 
 color_term_flag_default(true) :-
     stream_property(user_input, tty(true)),
@@ -92,8 +92,8 @@ init_color_term_flag :-
                          keep(true)
                        ]).
 
-:- init_color_term_flag.
-
+:- initialization
+    init_color_term_flag.
 
 :- meta_predicate
     keep_line_pos(+, 0).
@@ -104,7 +104,7 @@ init_color_term_flag :-
 %!  ansi_format(+ClassOrAttributes, +Format, +Args) is det.
 %
 %   Format text with ANSI  attributes.   This  predicate  behaves as
-%   format/2 using Format and Args, but if the =current_output= is a
+%   format/2 using Format and Args, but if the `current_output` is a
 %   terminal, it adds ANSI escape sequences according to Attributes.
 %   For example, to print a text in bold cyan, do
 %
@@ -130,16 +130,16 @@ init_color_term_flag :-
 %       24-bit (direct color) specification.  The components are
 %       integers in the range 0..255.
 %
-%   Defined color constants are below.  =default=   can  be  used to
+%   Defined color constants are below.  `default`   can  be  used to
 %   access the default color of the terminal.
 %
 %     - black, red, green, yellow, blue, magenta, cyan, white
 %
 %   ANSI sequences are sent if and only if
 %
-%     - The =current_output= has the property tty(true) (see
+%     - The `current_output` has the property tty(true) (see
 %       stream_property/2).
-%     - The Prolog flag =color_term= is =true=.
+%     - The Prolog flag `color_term` is `true`.
 
 ansi_format(Attr, Format, Args) :-
     ansi_format(current_output, Attr, Format, Args).
@@ -147,8 +147,9 @@ ansi_format(Attr, Format, Args) :-
 ansi_format(Stream, Class, Format, Args) :-
     stream_property(Stream, tty(true)),
     current_prolog_flag(color_term, true),
-    !,
     class_attrs(Class, Attr),
+    Attr \== [],
+    !,
     phrase(sgr_codes_ex(Attr), Codes),
     atomic_list_concat(Codes, ;, Code),
     with_output_to(
@@ -341,7 +342,7 @@ hex_color(D1,V) :-
 %   Hook that allows  for  mapping  abstract   terms  to  concrete  ANSI
 %   attributes. This hook  is  used  by   _theme_  files  to  adjust the
 %   rendering based on  user  preferences   and  context.  Defaults  are
-%   defined in the file `boot/messages.pl`.
+%   defined in the file `boot/messages.pl`, default_theme/2.
 %
 %   @see library(theme/dark) for an example  implementation and the Term
 %   values used by the system messages.
@@ -436,35 +437,63 @@ location_label(File:Line, Label) =>
 location_label(File, Label) =>
     format(string(Label), '~w', [File]).
 
-ansi_hyperlink(Stream, Location, Label) :-
-    hyperlink(Stream, url(Location, Label)),
-    !.
-ansi_hyperlink(Stream, File:Line:Column, Label) :-
-    !,
-    (   url_file_name(URI, File)
-    ->  format(Stream, '\e]8;;~w#~d:~d\e\\~w\e]8;;\e\\',
-               [ URI, Line, Column, Label ])
+ansi_hyperlink(Stream, Location, Label),
+    hyperlink(Stream, url(Location, Label)) =>
+    true.
+ansi_hyperlink(Stream, Location, Label) =>
+    (   location_url(Location, URL)
+    ->  keep_line_pos(Stream,
+                      format(Stream, '\e]8;;~w\e\\', [URL])),
+        format(Stream, '~w', [Label]),
+        keep_line_pos(Stream,
+                      format(Stream, '\e]8;;\e\\', []))
     ;   format(Stream, '~w', [Label])
     ).
-ansi_hyperlink(Stream, File:Line, Label) :-
-    !,
-    (   url_file_name(URI, File)
-    ->  format(Stream, '\e]8;;~w#~w\e\\~w\e]8;;\e\\',
-               [ URI, Line, Label ])
-    ;   format(Stream, '~w', [Label])
-    ).
-ansi_hyperlink(Stream, File, Label) :-
-    (   url_file_name(URI, File)
-    ->  format(Stream, '\e]8;;~w\e\\~w\e]8;;\e\\',
-               [ URI, Label ])
-    ;   format(Stream, '~w', [Label])
-    ).
+
+is_url(URL) :-
+    (   atom(URL)
+    ->  true
+    ;   string(URL)
+    ),
+    url_prefix(Prefix),
+    sub_string(URL, 0, _, _, Prefix).
+
+url_prefix('http://').
+url_prefix('https://').
+url_prefix('file://').
+
+%!  location_url(+Location, -URL) is det.
+%
+%   Translate Location into a (file) URL.   This  predicate is hooked by
+%   tty_url_hook/2  with  the  same  signature  to  allow  for  actions,
+%   location specifiers or URL schemes.
+
+location_url(Location, URL),
+    tty_url_hook(Location, URL0) =>
+    URL = URL0.
+location_url(File:Line:Column, URL) =>
+    url_file_name(FileURL, File),
+    format(string(URL), '~w#~d:~d', [FileURL, Line, Column]).
+location_url(File:Line, URL) =>
+    url_file_name(FileURL, File),
+    format(string(URL), '~w#~w', [FileURL, Line]).
+location_url(File, URL) =>
+    url_file_name(URL, File).
+
+%!  tty_url_hook(+Location, -URL)
+%
+%   Hook for location_url/2.
+
 
 %!  url_file_name(-URL, +File) is semidet.
 %
 %   Same as uri_file_name/2 in mode (-,+), but   as a core library we do
 %   not wish to depend on the `clib` package and its foreign support.
 
+url_file_name(URL, File) :-
+    is_url(File), !,
+    current_prolog_flag(hyperlink_term, true),
+    URL = File.
 url_file_name(URL, File) :-
     current_prolog_flag(hyperlink_term, true),
     absolute_file_name(File, AbsFile),
@@ -527,6 +556,7 @@ keep_line_pos(_, G) :-
 %   integers in the range 0..65535.
 
 ansi_get_color(Which0, RGB) :-
+    \+ current_prolog_flag(console_menu, true),
     stream_property(user_input, tty(true)),
     stream_property(user_output, tty(true)),
     stream_property(user_error, tty(true)),

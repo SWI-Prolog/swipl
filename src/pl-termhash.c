@@ -70,32 +70,17 @@ typedef struct th_data
 } th_data;
 
 
-static void *
-allocBuffer(Buffer b, size_t size)
-{ void *ptr;
-
-  if ( b->top + size > b->max )
-  { if ( !growBuffer(b, size) )
-      return NULL;
-  }
-  ptr = b->top;
-  b->top += size;
-
-  return ptr;
-}
-
-
 #define primitiveHashValue(term, hval) LDFUNC(primitiveHashValue, term, hval)
 static int
 primitiveHashValue(DECL_LD word term, unsigned int *hval)
 { switch(tag(term))
   { case TAG_VAR:
     case TAG_ATTVAR:
-      return FALSE;
+      return false;
     case TAG_ATOM:
     { *hval = MurmurHashAligned2(&atomValue(term)->hash_value,
 				 sizeof(unsigned int), *hval);
-      return TRUE;
+      return true;
     }
     case TAG_STRING:
     { size_t len;
@@ -110,10 +95,10 @@ primitiveHashValue(DECL_LD word term, unsigned int *hval)
 	{ *hval = MurmurHashAligned2(text.text.t, text.length, *hval);
 	  PL_free_text(&text);
 	} else
-	  return FALSE;
+	  return false;
       }
 
-      return TRUE;
+      return true;
     }
     case TAG_INTEGER:
       if ( storage(term) == STG_INLINE )
@@ -121,7 +106,7 @@ primitiveHashValue(DECL_LD word term, unsigned int *hval)
 
 	*hval = MurmurHashAligned2(&v, sizeof(v), *hval);
 
-	return TRUE;
+	return true;
       }
     /*FALLTHROUGH*/
     case TAG_FLOAT:
@@ -130,11 +115,11 @@ primitiveHashValue(DECL_LD word term, unsigned int *hval)
 
 	*hval = MurmurHashAligned2(p+1, n*sizeof(word), *hval);
 
-	return TRUE;
+	return true;
       }
     default:
       assert(0);
-      return FALSE;
+      return false;
   }
 }
 
@@ -145,7 +130,7 @@ start_term(DECL_LD th_data *work, Buffer b, word w)
 { atom_t name;
 
   work->term     = valueTerm(w);
-  work->functor  = work->term->definition;
+  work->functor  = word2functor(work->term->definition);
   work->hash     = MURMUR_SEED;
   work->arg      = 0;
   work->in_cycle = 0;
@@ -196,7 +181,7 @@ next_arg(DECL_LD th_data **workp, Buffer b)
       if ( work->in_cycle /*&& parent->functor == work->functor*/ ) /* (*) */
       { DEBUG(1, Sdprintf("Mark parent %ld as cycle\n",
 			  nodeID(parent, b)));
-	parent->in_cycle = TRUE;
+	parent->in_cycle = true;
       }
       DEBUG(1, Sdprintf("Updated hash in node %ld%s to %d\n",
 			work->parent_offset,
@@ -224,7 +209,7 @@ update_cycle(th_data *here, th_data *start, Buffer b)
   for(;;)
   { DEBUG(1, Sdprintf("Marking cycle for node %ld\n",
 		      nodeID(here, b)));
-    here->in_cycle = TRUE;
+    here->in_cycle = true;
     if ( here == start )
       break;
     here = nodePTR(here->parent_offset, b);
@@ -243,11 +228,11 @@ termHashValue(DECL_LD Word p, unsigned int *hval)
   { tmp_buffer tmp;
     Buffer b = (Buffer)&tmp;
     th_data *work;
-    int rc = TRUE;
+    int rc = true;
     Functor t = valueTerm(*p);
 
     initBuffer(&tmp);
-    work = allocBuffer(b, sizeof(*work));	/* cannot fail */
+    work = allocFromBuffer(b, sizeof(*work));	/* cannot fail */
     start_term(work, b, *p);
     work->parent_offset = (size_t)-1;
     t->definition = consInt(0);
@@ -257,7 +242,7 @@ termHashValue(DECL_LD Word p, unsigned int *hval)
       { if ( primitiveHashValue(*p, &work->hash) )
 	{ work->arg++;
 	} else
-	{ rc = FALSE;
+	{ rc = false;
 	  goto out;
 	}
       } else
@@ -277,13 +262,13 @@ termHashValue(DECL_LD Word p, unsigned int *hval)
 			      valInt(t->definition), seen->hash,
 			      nodeID(work, b), work->hash));
 	    if ( seen->in_cycle /*&& seen->functor == work->functor*/ )
-	      work->in_cycle = TRUE;
+	      work->in_cycle = true;
 	  }
 	  work->arg++;
 	} else
 	{ size_t parent = nodeID(work, b);
 
-	  if ( !(work = allocBuffer(b, sizeof(*work))) )
+	  if ( !(work = allocFromBuffer(b, sizeof(*work))) )
 	  { rc = -1;			/* out of memory */
 	    goto out;
 	  }
@@ -298,7 +283,7 @@ termHashValue(DECL_LD Word p, unsigned int *hval)
     { th_data *d   = baseBuffer(b, th_data);
       th_data *end = d + entriesBuffer(b, th_data);
 
-      if ( rc == TRUE )
+      if ( rc == true )
 	*hval = d->hash;
 
       for(; d<end; d++)
@@ -328,12 +313,12 @@ PRED_IMPL("term_hash", 2, term_hash, 0)
   rc = termHashValue(p, &hraw);
 
   if ( rc )
-  { hraw = hraw & PLMAXTAGGEDINT32;	/* ensure tagged (portable) */
+  { hraw = hraw & PLMAXTAGGEDINT;	/* ensure tagged (portable) */
 
     return PL_unify_integer(A2, hraw);
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -440,7 +425,7 @@ push_var(Word p, sha1_state *state)
 
 static int
 push_attvar(Word p, sha1_state *state)
-{ Word w = (Word)*p;
+{ Word w = word2ptr(Word, *p);
   return ( pushSegStack(&state->vars, p, Word) &&
 	   pushSegStack(&state->vars, w, Word) );
 }
@@ -504,7 +489,7 @@ variant_sha1(DECL_LD ac_term_agenda *agenda, sha1_state *state)
       }
       case TAG_INTEGER:
       { if ( !isIndirect(w) )
-	{ int64_t val = valInteger(w);
+	{ int64_t val = valInt(w);
 
 	  HASH("i", 1);
 	  HASH(&val, sizeof(val));
@@ -533,7 +518,7 @@ variant_sha1(DECL_LD ac_term_agenda *agenda, sha1_state *state)
 	switch(ac_pushTermAgenda(agenda, w, &f))
 	{ case -1:			/* Resource error */
 	    return E_RESOURCE;
-	  case FALSE:			/* Cycle */
+	  case false:			/* Cycle */
 	    return E_CYCLE;
 	  default:
 	  { FunctorDef fd = valueFunctor(f);
@@ -575,7 +560,7 @@ variant_hash(DECL_LD term_t term, termhash_t *hash, hash_algo algorithm)
   rc = variant_sha1(&agenda, &state);
   ac_clearTermAgenda(&agenda);
   while(popSegStack(&state.vars, &p, Word))
-  { word w = (word)p;
+  { word w = ptr2word(p);
     if ( unlikely(isAttVar(w)) )
     { popSegStack(&state.vars, &p, Word);
       *p = w;
@@ -603,7 +588,7 @@ variant_hash(DECL_LD term_t term, termhash_t *hash, hash_algo algorithm)
   else
     hash->murmur = hash_end(state.ctx.murmur);
 
-  return TRUE;
+  return true;
 }
 
 /** variant_sha1(@Term, -SHA1:string) is det.
@@ -634,7 +619,7 @@ PRED_IMPL("variant_sha1", 2, variant_sha1, 0)
 
     return PL_unify_chars(A2, PL_ATOM|REP_ISO_LATIN_1, sizeof(hex), hex);
   } else
-  { return FALSE;
+  { return false;
   }
 }
 
@@ -646,7 +631,7 @@ PRED_IMPL("variant_hash", 2, variant_hash, 0)
   if ( variant_hash(A1, &hash, HASH_MURMUR) )
   { return PL_unify_integer(A2, hash.murmur&PLMAXTAGGEDINT32);
   } else
-  { return FALSE;
+  { return false;
   }
 }
 

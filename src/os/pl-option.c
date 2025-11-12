@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2011-2022, University of Amsterdam
+    Copyright (c)  2011-2024, University of Amsterdam
 			      VU University Amsterdam
 			      SWI-Prolog Solutions b.v.
     All rights reserved.
@@ -43,6 +43,7 @@ Option list (or dict) processing.  See PL_scan_options() for details.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 #define MAXOPTIONS 64
+#define HAS_OPT_MODE(f,m) (((f)&OPT_UNKNOWN_MASK) == (m))
 
 typedef union
 { int      *b;				/* boolean value */
@@ -66,64 +67,64 @@ get_optval(DECL_LD optvalue valp, const PL_option_t *spec, term_t val)
     { int bval;
 
       if ( !PL_get_bool_ex(val, &bval) )
-	return FALSE;
+	return false;
       *valp.b = bval;
 
-      return TRUE;
+      return true;
     }
     case OPT_INT:
     { if ( !PL_get_integer_ex(val, valp.i) )
-	return FALSE;
+	return false;
 
-      return TRUE;
+      return true;
     }
     case OPT_INT64:
     { if ( (spec->type & OPT_INF) && PL_is_inf(val) )
 	*valp.i64 = INT64_MAX;
       else if ( !PL_get_int64_ex(val, valp.i64) )
-	return FALSE;
+	return false;
 
-      return TRUE;
+      return true;
     }
     case OPT_UINT64:
     { if ( (spec->type & OPT_INF) && PL_is_inf(val) )
 	*valp.ui64 = (uint64_t)-1;
       if ( !PL_get_uint64_ex(val, valp.ui64) )
-	return FALSE;
+	return false;
 
-      return TRUE;
+      return true;
     }
     case OPT_SIZE:
     { if ( (spec->type & OPT_INF) && PL_is_inf(val) )
 	*valp.sz = (size_t)-1;
       else if ( !PL_get_size_ex(val, valp.sz) )
-	return FALSE;
+	return false;
 
-      return TRUE;
+      return true;
     }
     case OPT_DOUBLE:
     { if ( !PL_get_float_ex(val, valp.f) )
-	return FALSE;
+	return false;
 
-      return TRUE;
+      return true;
     }
     case OPT_STRING:
     { char *str;
 
       if ( !PL_get_chars(val, &str, CVT_ALL|REP_UTF8|BUF_STACK|CVT_EXCEPTION) )
-	return FALSE;
+	return false;
       *valp.s = str;
 
-      return TRUE;
+      return true;
     }
     case OPT_ATOM:
     { atom_t a;
 
       if ( !PL_get_atom_ex(val, &a) )
-	return FALSE;
+	return false;
       *valp.a = a;
 
-      return TRUE;
+      return true;
     }
 #ifdef O_LOCALE
     case OPT_LOCALE:
@@ -131,22 +132,22 @@ get_optval(DECL_LD optvalue valp, const PL_option_t *spec, term_t val)
       PL_locale **lp = valp.ptr;
 
       if ( !getLocaleEx(val, &l) )
-	return FALSE;
+	return false;
       *lp = l;
 
-      return TRUE;
+      return true;
     }
 #endif
     case OPT_TERM:
     { *valp.t = PL_copy_term_ref(val); /* can't reuse anymore */
 
-      return TRUE;
+      return true;
     }
     default:
       assert(0);
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -157,7 +158,8 @@ typedef struct dictopt_ctx
   int			flags;
 } dictopt_ctx;
 
-#define dict_option(key, value, last, closure) LDFUNC(dict_option, key, value, last, closure)
+#define dict_option(key, value, last, closure) \
+	LDFUNC(dict_option, key, value, last, closure)
 
 static int
 dict_option(DECL_LD term_t key, term_t value, int last, void *closure)
@@ -177,14 +179,23 @@ dict_option(DECL_LD term_t key, term_t value, int last, void *closure)
     }
   }
 
-  if ( (ctx->flags&OPT_ALL) )
+  if ( !HAS_OPT_MODE(ctx->flags, OPT_UNKNOWN_IGNORE) )
   { term_t kv;
-    int rc = ( (kv=PL_new_term_ref()) &&
-	       PL_cons_functor(kv, FUNCTOR_colon2, key, value) &&
-	       PL_domain_error(ctx->opttype, kv)
-	     );
-    (void)rc;
-    return -1;
+
+    if ( !((kv=PL_new_term_ref()) &&
+	   PL_cons_functor(kv, FUNCTOR_colon2, key, value)) )
+      return -1;
+
+    if ( HAS_OPT_MODE(ctx->flags, OPT_UNKNOWN_ERROR) )
+    { if ( !PL_domain_error(ctx->opttype, kv) )
+	return -1;
+      return -1;
+    }
+    if ( !printMessage(ATOM_warning,
+			 PL_FUNCTOR, FUNCTOR_unknown_option2,
+			   PL_CHARS, ctx->opttype,
+			   PL_TERM, kv) )
+      return -1;
   }
 
   return 0;				/* unprocessed key */
@@ -217,13 +228,13 @@ dict_options(DECL_LD term_t dict, int flags, const char *opttype,
   ctx.flags   = flags;
   ctx.opttype = opttype;
 
-  return _PL_for_dict(dict, dict_option, &ctx, 0) == 0 ? TRUE : FALSE;
+  return _PL_for_dict(dict, dict_option, &ctx, 0) == 0;
 }
 
 #define vscan_options(list, flags, name, specs, args) \
 	LDFUNC(vscan_options, list, flags, name, specs, args)
 
-static int
+static bool
 vscan_options(DECL_LD term_t options, int flags, const char *opttype,
 	      const PL_option_t *specs, va_list args)
 { const PL_option_t *s;
@@ -231,12 +242,12 @@ vscan_options(DECL_LD term_t options, int flags, const char *opttype,
   term_t list;
   term_t av, head, tmp, val;
   int n;
-  int candiscard = TRUE;
+  int candiscard = true;
   int count = 0;
   (void)opttype;
 
-  if ( truePrologFlag(PLFLAG_ISO) )
-    flags |= OPT_ALL;
+  if ( flags == OPT_UNKNOWN_DEFAULT )
+    flags = LD->prolog_flag.unknown_option;
 
   for( n=0, s = specs; s->name; s++, n++ )
   { if ( n >= MAXOPTIONS )
@@ -256,7 +267,7 @@ vscan_options(DECL_LD term_t options, int flags, const char *opttype,
   while ( PL_get_list(list, head, list) )
   { atom_t name;
     size_t arity;
-    int implicit_true = FALSE;
+    int implicit_true = false;
 
     if ( count++ == 1000 )
     { if ( !PL_is_acyclic(list) )
@@ -272,13 +283,11 @@ vscan_options(DECL_LD term_t options, int flags, const char *opttype,
 	_PL_get_arg(2, head, val);
       } else if ( arity == 1 )
       { _PL_get_arg(1, head, val);
-      } else if ( arity == 0 )
-      { implicit_true = TRUE;
+      } else if ( arity == 0 && !truePrologFlag(PLFLAG_ISO) )
+      { implicit_true = true;
       } else
       { goto itemerror;
       }
-    } else if ( PL_is_variable(head) )
-    { return PL_error(NULL, 0, NULL, ERR_INSTANTIATION);
     } else
     { itemerror:
       return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_option, head);
@@ -288,23 +297,27 @@ vscan_options(DECL_LD term_t options, int flags, const char *opttype,
     { if ( s->name == name )
       { if ( implicit_true )
 	{ if ( (s->type&OPT_TYPE_MASK) == OPT_BOOL )
-	  { *(values[n].b) = TRUE;
+	  { *(values[n].b) = true;
 	    break;
 	  }
 	  goto itemerror;
 	}
 	if ( !get_optval(values[n], s, val) )
-	  return FALSE;
+	  return false;
 	if ( (s->type&OPT_TYPE_MASK) == OPT_TERM )
-	  candiscard = FALSE;
+	  candiscard = false;
 	break;
       }
     }
 
-    if ( !s->name && (implicit_true || (flags & OPT_ALL)) )
-    { if ( implicit_true )
-	goto itemerror;
-      return PL_domain_error(opttype, head);
+    if ( !s->name && !HAS_OPT_MODE(flags, OPT_UNKNOWN_IGNORE) )
+    { if ( HAS_OPT_MODE(flags, OPT_UNKNOWN_ERROR) )
+	return PL_domain_error(opttype, head);
+      if ( !printMessage(ATOM_warning,
+			 PL_FUNCTOR, FUNCTOR_unknown_option2,
+			   PL_CHARS, opttype,
+			   PL_TERM, head) )
+	return false;
     }
   }
 
@@ -318,10 +331,10 @@ vscan_options(DECL_LD term_t options, int flags, const char *opttype,
 }
 
 
-int
+bool
 PL_scan_options(DECL_LD term_t options, int flags, const char *opttype,
 		const PL_option_t *specs, ...)
-{ int rc;
+{ bool rc;
   va_list args;
 
   va_start(args, specs);
@@ -331,12 +344,13 @@ PL_scan_options(DECL_LD term_t options, int flags, const char *opttype,
   return rc;
 }
 
-API_STUB(int)
+API_STUB(bool)
 (PL_scan_options)(term_t options, int flags, const char *opttype,
 		  PL_option_t *specs, ...)
-( int rc;
+( bool rc;
   va_list args;
 
+  valid_term_t(options);
   for(PL_option_t *s = specs; s->name || s->string; s++)
   { if ( !s->name && s->string )
       s->name = PL_new_atom(s->string);

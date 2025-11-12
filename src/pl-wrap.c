@@ -3,9 +3,10 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2019, University of Amsterdam
-                         VU University Amsterdam
-		         CWI, Amsterdam
+    Copyright (c)  2019-2025, University of Amsterdam
+                              VU University Amsterdam
+			      CWI, Amsterdam
+			      SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -57,7 +58,7 @@ predicate _supervisor_:
     - A pointer to P in impl.wrapped.predicate
     - A pointer to P's supervisor in impl.wrapped.supervisor
     - A supervisor running S_WRAP.
-  - I_USERCALLN picks up call(Closure, Arg ...) and sets up a
+  - I_CALLN picks up call(Closure, Arg ...) and sets up a
     call using the closure's copy.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
@@ -72,7 +73,7 @@ write_closure(IOSTREAM *s, atom_t aref, int flags)
   (void)flags;
 
   Sfprintf(s, "<closure>(%s)", predicateName(&c->def));
-  return TRUE;
+  return true;
 }
 
 
@@ -88,10 +89,10 @@ release_closure(atom_t aref)
 { closure *c = PL_blob_data(aref, NULL, NULL);
   Definition def = &c->def;
 
-  freeCodesDefinition(def, FALSE);
+  freeCodesDefinition(def, false);
   free_lingering(&def->lingering, GEN_MAX);
 
-  return TRUE;
+  return true;
 }
 
 
@@ -100,7 +101,8 @@ save_closure(atom_t aref, IOSTREAM *fd)
 { closure *c = PL_blob_data(aref, NULL, NULL);
   (void)fd;
 
-  return PL_warning("Cannot save closure <closure>(%s)", predicateName(&c->def));
+  return PL_warning("Cannot save closure <closure>(%s)",
+		    predicateName(&c->def));
 }
 
 
@@ -125,11 +127,12 @@ PL_blob_t _PL_closure_blob =
 };
 
 
-static int
+static bool
 unify_closure(term_t t, Definition def, Code supervisor)
 { closure c;
 
   c.def = *def;
+  c.def.lingering = NULL;
   c.def.impl.wrapped.predicate  = def;
   c.def.impl.wrapped.supervisor = supervisor;
   c.def.codes = SUPERVISOR(wrapper);
@@ -143,7 +146,7 @@ unify_closure(term_t t, Definition def, Code supervisor)
  * if t is not a closure.
  */
 
-int
+bool
 get_closure_predicate(DECL_LD term_t t, Definition *def)
 { void *data;
   PL_blob_t *type;
@@ -153,10 +156,10 @@ get_closure_predicate(DECL_LD term_t t, Definition *def)
   { closure *c = data;
     *def = c->def.impl.wrapped.predicate;
 
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -179,7 +182,7 @@ will eventually trap this and re-create an appropriate new supervisor.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 void
-resetWrappedSupervisor(Definition def0, int do_linger)
+resetWrappedSupervisor(Definition def0, bool do_linger)
 { Definition def = def0;
   Code codes = def->codes;
 
@@ -225,7 +228,7 @@ assert_wrapper(DECL_LD term_t clause)
     ClauseRef cref;
 
     if ( !dref )
-    { retractClauseDefinition(def, cl, FALSE);
+    { retractClauseDefinition(def, cl, false);
       return NULL;
     }
     acquire_def(def);
@@ -245,8 +248,10 @@ assert_wrapper(DECL_LD term_t clause)
 }
 
 
-#define unify_wrapped(wrapped, closure, head) LDFUNC(unify_wrapped, wrapped, closure, head)
-static int
+#define unify_wrapped(wrapped, closure, head) \
+	LDFUNC(unify_wrapped, wrapped, closure, head)
+
+static bool
 unify_wrapped(DECL_LD term_t wrapped, atom_t closure, term_t head)
 { Word from;
 
@@ -266,14 +271,11 @@ retry:
       for(; arity > 0; arity--)
 	*to++ = linkValI(f++);
 
-      return _PL_unify_atomic(wrapped, w);
+      return PL_unify_atomic(wrapped, w);
     } else
-    { int rc;
-
-      if ( (rc = ensureGlobalSpace(1+arity, ALLOW_GC)) == TRUE )
+    { if ( ensureGlobalSpace(1+arity, ALLOW_GC) )
 	goto retry;
-
-      return raiseStackOverflow(rc);
+      return false;
     }
   } else
   { return PL_unify_atom(wrapped, closure);
@@ -301,7 +303,7 @@ PRED_IMPL("$c_wrap_predicate", 5, c_wrap_predicate, PL_FA_TRANSPARENT)
 
   if ( !PL_get_atom_ex(A2, &wname) ||
        !get_procedure(A1, &proc, head, GP_DEFINE) )
-    return FALSE;
+    return false;
   def = proc->definition;
 
   if ( (codes = find_wrapper(def, wname)) )
@@ -310,15 +312,15 @@ PRED_IMPL("$c_wrap_predicate", 5, c_wrap_predicate, PL_FA_TRANSPARENT)
 
     if ( !PL_unify_atom(closure, aref) ||
 	 !unify_wrapped(A4, aref, head) )
-      return FALSE;
+      return false;
 
     if ( (cref = assert_wrapper(A5)) )
-    { Clause cl = ((ClauseRef)codes[1])->value.clause;
+    { Clause cl = code2ptr(ClauseRef, codes[1])->value.clause;
 
-      codes[1] = (code)cref;
-      retractClauseDefinition(cl->predicate, cl, FALSE);
+      codes[1] = ptr2code(cref);
+      retractClauseDefinition(cl->predicate, cl, false);
 
-      return TRUE;
+      return true;
     }
   } else
   { if ( unify_closure(closure, def, def->codes) )
@@ -327,7 +329,7 @@ PRED_IMPL("$c_wrap_predicate", 5, c_wrap_predicate, PL_FA_TRANSPARENT)
 
       if ( !PL_get_atom_ex(closure, &aref) ||
 	   !unify_wrapped(A4, aref, head) )
-	return FALSE;				/* something really wrong */
+	return false;				/* something really wrong */
 
       if ( (cref = assert_wrapper(A5)) )
       { codes = allocCodes(4);
@@ -335,18 +337,19 @@ PRED_IMPL("$c_wrap_predicate", 5, c_wrap_predicate, PL_FA_TRANSPARENT)
 	PL_register_atom(wname);
 
 	codes[0] = encode(S_CALLWRAPPER);
-	codes[1] = (code)cref;
+	codes[1] = ptr2code(cref);
 	codes[2] = (code)aref;
 	codes[3] = (code)wname;
 
+	def->codes = SUPERVISOR(virgin);
 	setSupervisor(def, codes);
 
-	return TRUE;
+	return true;
       }
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -370,15 +373,15 @@ PRED_IMPL("wrapped_predicate", 2, wrapped_predicate, PL_FA_TRANSPARENT)
 
       for(;;)
       { closure *c = PL_blob_data(codes[2], NULL, NULL);
-	ClauseRef cref = (ClauseRef)codes[1];
+	ClauseRef cref = code2ptr(ClauseRef, codes[1]);
 
 	if ( !PL_put_clref(ct, cref->value.clause) ||
 	     !PL_unify_list(tail, head, tail) ||
 	     !PL_unify_term(head,
 			    PL_FUNCTOR, FUNCTOR_minus2,
-			      PL_ATOM, codes[3],
+			      PL_ATOM, code2atom(codes[3]),
 			      PL_TERM, ct) )
-	  return FALSE;
+	  return false;
 
 	codes = c->def.impl.wrapped.supervisor;
 	if ( codes[0] != encode(S_CALLWRAPPER) )
@@ -387,7 +390,7 @@ PRED_IMPL("wrapped_predicate", 2, wrapped_predicate, PL_FA_TRANSPARENT)
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -408,7 +411,7 @@ PRED_IMPL("$wrapped_implementation", 3, wrapped_implementation,
 
   if ( !PL_get_atom_ex(A2, &wname) ||
        !get_procedure(A1, &proc, head, GP_RESOLVE) )
-    return FALSE;
+    return false;
 
   if ( (codes = find_wrapper(proc->definition, wname)) )
   { atom_t aref = codes[2];
@@ -435,7 +438,7 @@ PRED_IMPL("$wrapped_implementation", 3, wrapped_implementation,
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -457,7 +460,7 @@ PRED_IMPL("unwrap_predicate", 2, uwrap_predicate, PL_FA_TRANSPARENT)
     Code codes = *cp;
 
     while ( codes[0] == encode(S_CALLWRAPPER) )
-    { ClauseRef cref = (ClauseRef)codes[1];
+    { ClauseRef cref = code2ptr(ClauseRef, codes[1]);
       Clause cl = cref->value.clause;
       atom_t aref = (atom_t)codes[2];
       atom_t wname = (atom_t)codes[3];
@@ -469,18 +472,16 @@ PRED_IMPL("unwrap_predicate", 2, uwrap_predicate, PL_FA_TRANSPARENT)
 	continue;
       }
 
-      retractClauseDefinition(cl->predicate, cl, FALSE);
+      retractClauseDefinition(cl->predicate, cl, false);
       *cp = cls->def.impl.wrapped.supervisor;
 
-      freeSupervisor(def, codes, TRUE);
-      PL_unregister_atom(aref);
-      PL_unregister_atom(wname);
+      freeSupervisor(def, codes, true);
 
-      return TRUE;
+      return true;
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 

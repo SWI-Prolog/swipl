@@ -229,11 +229,11 @@ static int
 bump_ref(indirect *h, unsigned int refs)
 { for(;;)
   { if ( COMPARE_AND_SWAP_UINT(&h->references, refs, refs+1) )
-    { return TRUE;
+    { return true;
     } else
     { refs = h->references;
       if ( !INDIRECT_IS_VALID(refs) )
-	return FALSE;
+	return false;
     }
   }
 }
@@ -260,7 +260,7 @@ static indirect *
 reserve_indirect(DECL_LD indirect_table *tab, word val)
 { size_t index;
   int i;
-  int last = FALSE;
+  int last = false;
 
   for(index=tab->no_hole_before, i=MSB(index); !last; i++)
   { size_t upto = (size_t)2<<i;
@@ -268,7 +268,7 @@ reserve_indirect(DECL_LD indirect_table *tab, word val)
 
     if ( upto >= tab->highest )
     { upto = tab->highest;
-      last = TRUE;
+      last = true;
     }
 
     for(; index<upto; index++)
@@ -334,7 +334,7 @@ rehash_indirect_table(indirect_table *tab)
     indirect_buckets *newtab = PL_malloc(sizeof(*newtab));
     unsigned int mask;
     size_t index;
-    int i, last=FALSE;
+    int i, last=false;
 
     newtab->size    = oldtab->size * 2;
     newtab->buckets = PL_malloc(newtab->size*sizeof(*newtab->buckets));
@@ -348,7 +348,7 @@ rehash_indirect_table(indirect_table *tab)
 
       if ( upto >= tab->highest )
       { upto = tab->highest;
-	last = TRUE;
+	last = true;
       }
 
       for(; index<upto; index++)
@@ -372,7 +372,7 @@ rehash_indirect_table(indirect_table *tab)
 
 word
 extern_indirect(DECL_LD indirect_table *tab, word val, Word *gp)
-{ size_t index = val>>LMASK_BITS;
+{ size_t index = (size_t)(val>>LMASK_BITS);
   int idx = MSB(index);
   indirect *h = &tab->array.blocks[idx][index];
   size_t wsize = wsizeofInd(h->header);
@@ -381,7 +381,7 @@ extern_indirect(DECL_LD indirect_table *tab, word val, Word *gp)
   if ( !hasGlobalSpace(wsize+2) )
   { int rc;
 
-    if ( (rc=ensureGlobalSpace(wsize+2, ALLOW_GC)) != TRUE )
+    if ( (rc=ensureGlobalSpace(wsize+2, ALLOW_GC)) != true )
     { raiseStackOverflow(rc);
       return 0;
     }
@@ -407,7 +407,7 @@ extern_indirect(DECL_LD indirect_table *tab, word val, Word *gp)
 
 word
 extern_indirect_no_shift(DECL_LD indirect_table *tab, word val)
-{ size_t index = val>>LMASK_BITS;
+{ size_t index = (size_t)(val>>LMASK_BITS);
   int idx = MSB(index);
   indirect *h = &tab->array.blocks[idx][index];
   size_t wsize = wsizeofInd(h->header);
@@ -429,7 +429,7 @@ extern_indirect_no_shift(DECL_LD indirect_table *tab, word val)
 
 size_t
 gsize_indirect(indirect_table *tab, word val)
-{ size_t index = val>>LMASK_BITS;
+{ size_t index = (size_t)(val>>LMASK_BITS);
   int idx = MSB(index);
   indirect *h = &tab->array.blocks[idx][index];
   size_t wsize = wsizeofInd(h->header);

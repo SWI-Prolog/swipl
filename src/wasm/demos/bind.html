@@ -1,0 +1,107 @@
+<html>
+  <head>
+  <title>SWI-Prolog DOM manipulation and event handling</title>
+  </head>
+  <body>
+    <h1>Handling events in Prolog</h1>
+
+    <script src="/wasm/swipl-bundle.js"></script>
+    <script>
+      let Prolog;
+      let Module;
+      var options = {
+	arguments: ["-q"],
+	locateFile: (file) => '/wasm/' + file
+      };
+      (async (a) => {
+        Module = await SWIPL(options);
+	Prolog = Module.prolog;
+        Prolog.load_scripts()
+      })();
+    </script>
+
+    <p>This demo illustrates event handling using the
+       <a href="https://tau-prolog.org/">Tau-Prolog</a> compatible
+       <code>library(dom)</code>.  We show two versions, one using
+       exclusively the Tau-Prolog module and one using SWI-Prolog's
+       general calling to JavaScript.
+
+    <p>
+      If you click the buttons, the label of the clicked button is changed.
+    </p>
+
+    <h2>Using Tau-Prolog library(dom)</h2>
+
+    <p>This version uses Tau-Prolog library(dom) library to manipulate
+    the DOM and bind the event handling.
+    </p>
+
+    <div id="tau-demo"></div>
+
+    <script id="tau-button-demo" type="text/prolog">
+      :- module(tau_demo, []).
+      :- use_module(library(dom)).
+
+      :- initialization(run).
+
+      run :-
+        create(button, Button),
+	set_html(Button, "click"),
+	get_by_id("tau-demo", Div),
+	append_child(Div, Button),
+        bind(Button, click, _Ev, test(Button)).
+
+      test(Button) :-
+	get_html(Button, Text),
+	string_concat(Text, " and again", NewText),
+	set_html(Button, NewText).
+    </script>
+
+    <pre id="tau-button-src">
+    </pre>
+
+    <script>
+    document.getElementById("tau-button-src").textContent =
+      document.getElementById("tau-button-demo").textContent;
+    </script>
+
+    <h2>Using SWI-Prolog's JavaScript binding</h2>
+
+    <p>
+      This versions uses SWI-Prolog's general JavaScript interface for
+      manipulating the DOM.  Note that <code>bind/4</code> is part of
+      the low level <code>library(wasm)</code>.  In
+      addition, <code>library(wasm)</code>
+      provides <code>bind_async/4</code> which makes the event-handler
+      create a new asynchronous task.
+    </p>
+
+    <div id="swi-demo"></div>
+
+    <script id="swi-button-demo" type="text/prolog">
+      :- module(swi_demo, []).
+
+      :- initialization(run).
+
+      run :-
+        Button := document.createElement("button"),
+        Button.innerHTML := "click",
+	_ := document.getElementById("swi-demo").appendChild(Button),
+      bind(Button, click, _Ev, test(Button)).
+
+      test(Button) :-
+        Text := Button.innerHTML,
+        string_concat(Text, " and again", NewText),
+        Button.innerHTML := NewText.
+    </script>
+
+    <pre id="swi-button-src">
+    </pre>
+
+    <script>
+    document.getElementById("swi-button-src").textContent =
+      document.getElementById("swi-button-demo").textContent;
+    </script>
+
+  </body>
+</html>

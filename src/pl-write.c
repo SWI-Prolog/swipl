@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2024, University of Amsterdam
+    Copyright (c)  1985-2025, University of Amsterdam
                               VU University Amsterdam
 			      CWI, Amsterdam
 			      SWI-Prolog Solutions b.v.
@@ -51,6 +51,8 @@
 #include "os/pl-ctype.h"
 #include "os/pl-utf8.h"
 #include "os/pl-prologflag.h"
+#include "os/pl-fmt.h"
+#include "pl-termset.h"
 #include <stdio.h>			/* sprintf() */
 #include <errno.h>
 #ifdef HAVE_LOCALE_H
@@ -71,6 +73,8 @@ typedef struct
 { unsigned int flags;			/* PL_WRT_* flags */
   int   max_depth;			/* depth limit */
   int   depth;				/* current depth */
+  atom_t integer_format;		/* How to format integers */
+  atom_t float_format;			/* How to format floats */
   atom_t spacing;			/* Where to insert spaces */
   Module module;			/* Module for operators */
   IOSTREAM *out;			/* stream to write to */
@@ -78,6 +82,12 @@ typedef struct
   term_t write_options;			/* original write options */
   term_t prec_opt;			/* term in write options with prec */
 } write_options;
+
+#define WRITE_OPTIONS_DEFAULTS \
+	{ .spacing = ATOM_standard, \
+	  .integer_format = ATOM_int_format_specifier, \
+	  .float_format = ATOM_float_format_specifier \
+	}
 
 #define W_OP_ARG	1		/* writeTerm() location argument */
 
@@ -139,12 +149,12 @@ varName(term_t t, char *name)
 }
 
 
-static int
+static bool
 atomIsVarName(atom_t a)
 { Atom atom = atomValue(a);
 
-  if ( false(atom->type, PL_BLOB_TEXT) || atom->length == 0 )
-    fail;
+  if ( isoff(atom->type, PL_BLOB_TEXT) || atom->length == 0 )
+    return false;
   if ( isUCSAtom(atom) )
   { pl_wchar_t *w = (pl_wchar_t*)atom->name;
     size_t len = atom->length / sizeof(pl_wchar_t);
@@ -157,20 +167,20 @@ atomIsVarName(atom_t a)
     if ( isUpper(*s) || *s == '_' )
     { for(s++; --len > 0; s++)
       { if ( !isAlpha(*s) )
-	  return FALSE;
+	  return false;
       }
 
-      return TRUE;
+      return true;
     }
 
-    return FALSE;
+    return false;
   }
 }
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-Return:	TRUE:  processes
-	FALSE: not processed
+Return:	true:  processes
+	false: not processed
 	-1:    error
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
@@ -182,25 +192,25 @@ writeNumberVar(DECL_LD term_t t, write_options *options)
 
   deRef(p);
   if ( !isTerm(*p) )
-    return FALSE;
+    return false;
   f = valueTerm(*p);
 
   if ( f->definition != FUNCTOR_isovar1 )
-    return FALSE;
+    return false;
 
   if ( LD->var_names.numbervars_frame )
   { FliFrame fr = (FliFrame)valTermRef(LD->var_names.numbervars_frame);
 
     FLI_ASSERT_VALID(fr);
-    if ( false(options, PL_WRT_NUMBERVARS) &&
-         fr->mark.globaltop > (Word)f )
-      return FALSE;			/* older $VAR term */
+    if ( isoff(options, PL_WRT_NUMBERVARS) &&
+         fr->mark.globaltop.as_ptr > (Word)f )
+      return false;			/* older $VAR term */
   }
 
   p = &f->arguments[0];
   deRef(p);
-  if ( isTaggedInt(*p) || isBignum(*p) )
-  { int64_t n = valInteger(*p);
+  if ( isTaggedInt(*p) )
+  { int64_t n = valInt(*p);
     char buf[32];			/* Max is H354745078340568300 */
 
     if ( n < 0 )
@@ -210,24 +220,24 @@ writeNumberVar(DECL_LD term_t t, write_options *options)
       int64_t j = n / 26;
 
       if ( j == 0 )
-      { buf[0] = i+'A';
+      { buf[0] = (char)(i+'A');
 	buf[1] = EOS;
       } else
       { sprintf(buf, "%c%" PRId64, i+'A', j);
       }
     }
 
-    return PutToken(buf, options->out) ? TRUE : -1;
+    return PutToken(buf, options->out) ? true : -1;
   }
 
-  if ( isAtom(*p) && atomIsVarName(*p) )
+  if ( isAtom(*p) && atomIsVarName(word2atom(*p)) )
   { write_options o2 = *options;
     clear(&o2, PL_WRT_QUOTED);
 
-    return writeAtom(*p, &o2) ? TRUE : -1;
+    return writeAtom(word2atom(*p), &o2) ? true : -1;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -261,11 +271,11 @@ wr_is_symbol(int c, write_options *options)
 static int
 code_requires_quoted(int c, IOSTREAM *fd, int flags)
 { if ( c > 0x7f && (flags&PL_WRT_QUOTE_NON_ASCII) )
-    return TRUE;
+    return true;
   if ( fd && Scanrepresent(c, fd) != 0 )
-    return TRUE;
+    return true;
 
-  return FALSE;
+  return false;
 }
 
 static int
@@ -280,7 +290,7 @@ atomType(atom_t a, write_options *options)
   if ( len == 0 )
     return AT_QUOTE;
 
-  if ( isLower(*s) || (true(m, M_VARPREFIX) && isAlpha(*s)) )
+  if ( isLower(*s) || (ison(m, M_VARPREFIX) && isAlpha(*s)) )
   { do
     { for( ++s;
 	   --len > 0 && isAlpha(*s) && !code_requires_quoted(*s, fd, flags);
@@ -289,7 +299,7 @@ atomType(atom_t a, write_options *options)
     } while ( len >= 2 &&
 	      *s == '.' && isAlpha(s[1]) &&
 	      truePrologFlagNoLD(PLFLAG_DOT_IN_ATOM) &&
-	      (!options || false(options, PL_WRT_NODOTINATOM))
+	      (!options || isoff(options, PL_WRT_NODOTINATOM))
 	    );
 
     return len == 0 ? AT_LOWER : AT_QUOTE;
@@ -337,7 +347,7 @@ unquoted_atomW(atom_t atom, IOSTREAM *fd, int flags)
   int c;
 
   if ( len == 0 )
-    return FALSE;
+    return false;
 
   s1 = get_wchar(s, &c);
   if ( !f_is_prolog_atom_start(c) )	/* Sequence of symbol chars */
@@ -346,13 +356,13 @@ unquoted_atomW(atom_t atom, IOSTREAM *fd, int flags)
 
       if ( !f_is_prolog_symbol(c) ||
 	   code_requires_quoted(c, fd, flags) )
-	return FALSE;
+	return false;
     }
-    return TRUE;
+    return true;
   }
 
   if ( code_requires_quoted(c, fd, flags) )
-    return FALSE;
+    return false;
 
   s = s1;				/* 1st char is ID_START */
   int dot_in_atom = ( truePrologFlagNoLD(PLFLAG_DOT_IN_ATOM) &&
@@ -366,15 +376,15 @@ unquoted_atomW(atom_t atom, IOSTREAM *fd, int flags)
       if ( f_is_prolog_identifier_continue(c) &&
 	   !code_requires_quoted(c, fd, flags) )
 	continue;
-      return FALSE;
+      return false;
     }
 
     if ( !f_is_prolog_identifier_continue(c) ||
 	 code_requires_quoted(c, fd, flags) )
-      return FALSE;
+      return false;
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -382,7 +392,7 @@ int
 unquoted_atom(atom_t a)
 { Atom ap = atomValue(a);
 
-  if ( true(ap->type, PL_BLOB_TEXT) )
+  if ( ison(ap->type, PL_BLOB_TEXT) )
   { if ( !ap->type->write )		/* ordinary atoms */
     { return atomType(a, NULL) != AT_QUOTE;
     } else if ( isUCSAtom(ap) )		/* wide atoms */
@@ -390,7 +400,7 @@ unquoted_atom(atom_t a)
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -412,10 +422,10 @@ PutString(const char *str, IOSTREAM *s)
 
   for( ; *q != EOS; q++ )
   { if ( Sputcode(*q, s) == EOF )
-      return FALSE;
+      return false;
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -444,10 +454,10 @@ PutStringN(const char *str, size_t length, IOSTREAM *s)
 
   for(i=0; i<length; i++, q++)
   { if ( Sputcode(*q, s) == EOF )
-      return FALSE;
+      return false;
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -470,17 +480,17 @@ static bool
 needSpace(int c, IOSTREAM *s)
 { if ( c == EOF )
   { s->lastc = EOF;
-    return FALSE;
+    return false;
   }
   if ( s->lastc == EOF )
-    return FALSE;
+    return false;
 
   if ( (s->lastc&C_PREFIX_SIGN) && (isDigit(c) || f_is_prolog_symbol(c)) )
-    return TRUE;
+    return true;
   if ( (s->lastc&C_PREFIX_OP) && ( c == '(' || c == '{' ) )
-    return TRUE;				/* avoid op(...) */
+    return true;				/* avoid op(...) */
   if ( (s->lastc&C_INFIX_OP) && c == '(' )
-    return FALSE;
+    return false;
 
   s->lastc &= ~C_MASK;
 
@@ -491,24 +501,24 @@ needSpace(int c, IOSTREAM *s)
 	(c == '\'' && (isDigit(s->lastc))) ||
 	(isquote(c) && s->lastc == c)
        ) )
-    return TRUE;
+    return true;
 
-  return FALSE;
+  return false;
 }
 
 
-static int
+static int			/* false, true, TRUE_WITH_SPACE */
 PutOpenToken(int c, IOSTREAM *s)
 { if ( needSpace(c, s) )
   { TRY(Putc(' ', s));
     return TRUE_WITH_SPACE;
   }
 
-  return TRUE;
+  return true;
 }
 
 
-static int
+static int			/* false, true, TRUE_WITH_SPACE */
 PutToken(const char *s, IOSTREAM *stream)
 { if ( s[0] )
   { int rc;
@@ -519,11 +529,11 @@ PutToken(const char *s, IOSTREAM *stream)
     return rc;
   }
 
-  return TRUE;
+  return true;
 }
 
 
-static int
+static int			/* false, true, TRUE_WITH_SPACE */
 PutTokenN(const char *s, size_t len, IOSTREAM *stream)
 { if ( len > 0 )
   { int rc;
@@ -534,7 +544,7 @@ PutTokenN(const char *s, size_t len, IOSTREAM *stream)
     return rc;
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -546,7 +556,7 @@ openbrace to avoid interpretation as a term.   E.g. not (a,b) instead of
 not(a,b).  Reported by Stefan.Mueller@dfki.de.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static int
+static int			/* false, true, TRUE_WITH_SPACE */
 PutOpenBrace(IOSTREAM *s)
 { int rc;
 
@@ -575,7 +585,7 @@ putQuoted(int c, int quote, int flags, IOSTREAM *stream)
       esc[1] = EOS;
 
       if ( c == quote )
-      { esc[0] = c;
+      { esc[0] = (char)c;
       } else
       { switch(c)
 	{ case 7:
@@ -626,7 +636,7 @@ putQuoted(int c, int quote, int flags, IOSTREAM *stream)
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -648,6 +658,31 @@ writeQuoted(IOSTREAM *stream, const char *text, size_t len, int quote,
 
 #if O_ATTVAR
 static bool
+writeAttributes(term_t t, int prec, write_options *options, int flags)
+{ term_t name  = PL_new_term_ref();
+  term_t value = PL_new_term_ref();
+  term_t att   = PL_new_term_ref();
+
+  for(bool first=true; PL_is_functor(t, FUNCTOR_att3); first = false)
+  { _PL_get_arg(1, t, name);
+    _PL_get_arg(2, t, value);
+    _PL_get_arg(3, t, t);
+
+    if ( !first && !PutComma(options) )
+      return false;
+    if ( !PL_cons_functor(att, FUNCTOR_colon2, name, value) ||
+	 !writeTerm(att, 999, options, W_COMPOUND_ARG) )
+      return false;
+  }
+  if ( !PL_get_nil(t) &&
+       !writeTerm(t, 999, options, W_COMPOUND_ARG) )
+    return false;
+
+  PL_reset_term_refs(name);
+  return true;
+}
+
+static bool
 writeAttVar(term_t av, write_options *options)
 { GET_LD
   char buf[32];
@@ -661,19 +696,19 @@ writeAttVar(term_t av, write_options *options)
     term_t a;
 
     if ( !(fid = PL_open_foreign_frame()) )
-      return FALSE;
+      return false;
 
     Sputcode('{', options->out);
     a = PL_new_term_ref();
     PL_get_attr(av, a);
-    if ( !writeTerm(a, 1200, options, W_TOP) )
-      return FALSE;
+    if ( !writeAttributes(a, 1200, options, W_TOP) )
+      return false;
     Sputcode('}', options->out);
     PL_close_foreign_frame(fid);
 
-    return TRUE;
+    return true;
   } else if ( (options->flags & PL_WRT_ATTVAR_PORTRAY) &&
-	      GD->cleaning <= CLN_PROLOG )
+	      GD->halt.cleaning <= CLN_PROLOG )
   { predicate_t pred;
     IOSTREAM *old;
     wakeup_state wstate;
@@ -683,14 +718,14 @@ writeAttVar(term_t av, write_options *options)
 			 &GD->procedures.portray_attvar1);
 
     if ( !enterPortray() )
-      return FALSE;
-    if ( !saveWakeup(&wstate, TRUE) )
-      return FALSE;
+      return false;
+    if ( !saveWakeup(&wstate, true) )
+      return false;
     old = Scurout;
     Scurout = options->out;
     rc = PL_call_predicate(NULL, PL_Q_NODEBUG|PL_Q_PASS_EXCEPTION, pred, av);
-    if ( rc != TRUE && !PL_exception(0) )
-      rc = TRUE;
+    if ( rc != true && !PL_exception(0) )
+      rc = true;
     Scurout = old;
     restoreWakeup(&wstate);
     leavePortray();
@@ -721,13 +756,13 @@ writeBlob(atom_t a, write_options *options)
 }
 
 
-static int				/* FALSE, TRUE or TRUE_WITH_SPACE */
+static int				/* false, true or TRUE_WITH_SPACE */
 writeAtom(atom_t a, write_options *options)
 { Atom atom = atomValue(a);
 
   if ( (options->flags & PL_WRT_BLOB_PORTRAY) &&
-       false(atom->type, PL_BLOB_TEXT) &&
-       GD->cleaning <= CLN_PROLOG &&
+       isoff(atom->type, PL_BLOB_TEXT) &&
+       GD->halt.cleaning <= CLN_PROLOG &&
        a != ATOM_nil )
   { GET_LD
     int rc;
@@ -735,28 +770,28 @@ writeAtom(atom_t a, write_options *options)
     term_t av;
 
     if ( !(fid = PL_open_foreign_frame()) )
-      return FALSE;
+      return false;
     av = PL_new_term_ref();
     PL_put_atom(av, a);
     rc = callPortray(av, 1200, options);
     PL_close_foreign_frame(fid);
     switch(rc)
-    { case TRUE:
-	return TRUE;
-      case FALSE:
+    { case true:
+	return true;
+      case false:
 	break;
       default:
-	return FALSE;				/* error */
+	return false;				/* error */
     }
   }
 
   if ( atom->type->write )
     return ((*atom->type->write)(options->out, a, options->flags) &&
 	    !Sferror(options->out));
-  if ( false(atom->type, PL_BLOB_TEXT) )
+  if ( isoff(atom->type, PL_BLOB_TEXT) )
     return writeBlob(a, options);
 
-  if ( true(options, PL_WRT_QUOTED) )
+  if ( ison(options, PL_WRT_QUOTED) )
   { switch( atomType(a, options) )
     { case AT_LOWER:
       case AT_SYMBOL:
@@ -781,19 +816,18 @@ writeAtom(atom_t a, write_options *options)
 }
 
 
-int
+bool
 writeAtomToStream(IOSTREAM *s, atom_t atom)
-{ write_options options;
+{ write_options options = WRITE_OPTIONS_DEFAULTS;
 
-  memset(&options, 0, sizeof(options));
   options.out = s;
   options.module = MODULE_user;
 
-  return writeAtom(atom, &options);
+  return !!writeAtom(atom, &options);
 }
 
 
-int
+bool
 writeUCSAtom(IOSTREAM *fd, atom_t atom, int flags)
 { Atom a = atomValue(atom);
   const pl_wchar_t *s = (const pl_wchar_t*)a->name;
@@ -821,21 +855,21 @@ writeUCSAtom(IOSTREAM *fd, atom_t atom, int flags)
 
     get_wchar(s, &c);
     if ( !PutOpenToken(c, fd) )
-      return FALSE;
+      return false;
 
     while ( s < e )
     { s = get_wchar(s, &c);
 
       if ( !Putc(c, fd) )
-	return FALSE;
+	return false;
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 #ifdef O_RESERVED_SYMBOLS
-int
+bool
 writeReservedSymbol(IOSTREAM *fd, atom_t atom, int flags)
 { Atom a = atomValue(atom);
   const char *s = a->name;
@@ -843,7 +877,7 @@ writeReservedSymbol(IOSTREAM *fd, atom_t atom, int flags)
   const char *e = &s[len];
 
   if ( atom == ATOM_nil )
-    return PutToken("[]", fd);
+    return !!PutToken("[]", fd);
 
   if ( (flags&PL_WRT_QUOTED) )
   { char quote = '\'';
@@ -853,7 +887,7 @@ writeReservedSymbol(IOSTREAM *fd, atom_t atom, int flags)
 	 Putc(quote, fd) )
     { while(s < e)
       { if ( !putQuoted(*s++, quote, flags, fd) )
-	  return FALSE;
+	  return false;
       }
 
       return Putc(quote, fd);
@@ -861,13 +895,13 @@ writeReservedSymbol(IOSTREAM *fd, atom_t atom, int flags)
   }
 
   if ( s < e && !PutOpenToken(s[0], fd) )
-    return FALSE;
+    return false;
   for( ; s<e; s++)
   { if ( !Putc(*s, fd) )
-      return FALSE;
+      return false;
   }
 
-  return TRUE;
+  return true;
 }
 #endif
 
@@ -878,15 +912,15 @@ static int
 writeString(term_t t, write_options *options)
 { GET_LD
   PL_chars_t txt;
-  int rc = TRUE;
+  int rc = true;
 
   PL_STRINGS_MARK();
   PL_get_text(t, &txt, CVT_STRING);
 
-  if ( true(options, PL_WRT_QUOTED) )
+  if ( ison(options, PL_WRT_QUOTED) )
   { int quote;
 
-    if ( true(options, PL_WRT_BACKQUOTED_STRING) )
+    if ( ison(options, PL_WRT_BACKQUOTED_STRING) )
       quote = '`';
     else
       quote = '"';
@@ -1035,14 +1069,6 @@ NaN_value(double f)
 }
 
 
-static char *
-writeNaN(double f, char *buf)
-{ format_float(NaN_value(f), buf);
-  strcat(buf, "NaN");
-  return buf;
-}
-
-
 strnumstat
 make_nan(double *f)
 { union ieee754_double u;
@@ -1058,39 +1084,53 @@ make_nan(double *f)
 }
 
 
-static char *
-writeINF(double f, char *buf)
+static size_t
+writeNaN(char *buf, size_t len, double f)
+{ size_t sz = format_float(buf, len, NaN_value(f), 3, 'e');
+
+  if ( sz+4 < len )
+    strcpy(buf+sz, "NaN");
+  return sz+3;
+}
+
+static size_t
+writeINF(char *buf, size_t len, double f)
 { number n;
 
   n.value.f = f;
   n.type = V_FLOAT;
 
   if ( ar_signbit(&n) < 0 )
-    return strcpy(buf, "-1.0Inf");
-  else
-    return strcpy(buf, "1.0Inf");
+  { if ( len >= 8 )
+      strcpy(buf, "-1.0Inf");
+    return 7;
+  } else
+  { if ( len >= 7 )
+      strcpy(buf, "1.0Inf");
+    return 6;
+  }
 }
 
 
-static char *
-format_special_float(double f, char *buf)
+static size_t
+format_special_float(char *buf, size_t len, double f)
 {
 #ifdef HAVE_FPCLASSIFY
   switch(fpclassify(f))
   { case FP_NAN:
-      return writeNaN(f, buf);
+      return writeNaN(buf, len, f);
     case FP_INFINITE:
-      return writeINF(f, buf);
+      return writeINF(buf, len, f);
   }
 #else
 #ifdef HAVE_FPCLASS
   switch(fpclass(f))
   { case FP_SNAN:
     case FP_QNAN:
-      return writeNaN(f, buf);
+      return writeNaN(buf, len, f);
     case FP_NINF:
     case FP_PINF:
-      return writeINF(f, buf);
+      return writeINF(buf, len, f);
     case FP_NDENORM:		/* pos/neg denormalized non-zero */
     case FP_PDENORM:
     case FP_NNORM:			/* pos/neg normalized non-zero */
@@ -1104,112 +1144,148 @@ format_special_float(double f, char *buf)
   switch(_fpclass(f))
   { case _FPCLASS_SNAN:
     case _FPCLASS_QNAN:
-      return writeNaN(f, buf);
+      return writeNaN(buf, len, f);
     case _FPCLASS_NINF:
     case _FPCLASS_PINF:
-      return writeINF(f, buf);
+      return writeINF(buf, len, f);
   }
 #else
 #ifdef HAVE_ISINF
   if ( isinf(f) )
-  { return writeINF(f, buf);
+  { return writeINF(buf, len, f);
   } else
 #endif
 #ifdef HAVE_ISNAN
   if ( isnan(f) )
-  { return writeNaN(f, buf);
+  { return writeNaN(buf, len, f);
   }
 #endif
 #endif /*HAVE__FPCLASS*/
 #endif /*HAVE_FPCLASS*/
 #endif /*HAVE_FPCLASSIFY*/
 
-  return NULL;
+  return 0;
 }
 
 
-char *
-format_float(double f, char *buf)
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Format a float in fixed point or exponential notation with the minimal
+number of digits such that it is read back to the same value.
+
+Parameters:
+  - `buf` is where the result is stored.
+  - `size` is the size of `buf`
+  - `f` is the float to be formatted
+  - `N` is the number as used by format `~Nh`.  See format/2.
+  - `E` is 'e' or 'E'
+
+Return:
+  - Number of characters output, minus the terminating 0
+  - If truncated, the return value >= size
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+size_t
+format_float(char *buf, size_t size, double f, int N, char E)
 { char *end, *o=buf, *s;
   int decpt, sign;
+  size_t sz;
+  char *limit = &buf[size];
 
-  if ( (s=format_special_float(f, buf)) )
-    return s;
+  if ( (sz=format_special_float(buf, size, f)) )
+    return sz;
 
   s = dtoa(f, 0, 30, &decpt, &sign, &end);
-  DEBUG(2, Sdprintf("decpt=%d, sign=%d, len = %d, '%s'\n",
-		    decpt, sign, end-s, s));
+  DEBUG(MSG_WRITE_FLOAT,
+	Sdprintf("dtoa(): decpt=%d, sign=%d, len = %d, '%s'\n",
+		 decpt, sign, end-s, s));
+
+#undef OUT				/* minwindef.h */
+#define OUT(c) \
+	do { if ( o<limit ) *o++ = (c); else o++; } while(0)
+#define OUTN(s,n) \
+	do { if ( o+(n) <= limit ) memcpy(o, s, (n)); o+=(n); } while(0)
+#define OUTS(s) OUTN(s, strlen(s))
 
   if ( sign )
-    *o++ = '-';
+    OUT('-');
 
   if ( decpt <= 0 )			/* decimal dot before */
-  { if ( decpt <= -4 )
-    { *o++ = s[0];
-      *o++ = '.';
+  { int e = decpt-1;
+    if ( N < 0 || e < -N-1 )
+    { OUT(s[0]);
+      OUT('.');
       if ( end-s > 1 )
-      { memcpy(o, s+1, end-s-1);
-	o += end-s-1;
+      { OUTN(s+1, end-s-1);
       } else
-	*o++ = '0';
-      sprintf(o, "e%d", decpt-1);
+	OUT('0');
+      char eb[16];
+      snprintf(eb, sizeof(eb), "%c%03d", E, e);
+      OUTS(eb);
     } else
     { int i;
 
-      *o++ = '0';
-      *o++ = '.';
+      OUT('0');
+      OUT('.');
       for(i=0; i < -decpt; i++)
-	*o++ = '0';
-      memcpy(o, s, end-s);
-      o[end-s] = 0;
+	OUT('0');
+      OUTN(s, end-s);
     }
-  } else if ( end-s > decpt )		/* decimal dot inside */
-  { memcpy(o, s, decpt);
-    o += decpt;
-    *o++ = '.';
-    memcpy(o, s+decpt, end-s-decpt);
-    o[end-s-decpt] = 0;
+  } else if ( N >=0 && end-s > decpt ) /* decimal dot inside */
+  { OUTN(s, decpt);
+    OUT('.');
+    OUTN(s+decpt, end-s-decpt);
   } else				/* decimal dot after */
   { int i;
-    int trailing = decpt-(int)(end-s);
+    int d = (int)(end-s);
+    int trailing = decpt-d;
+    int exp = trailing+d-1;
 
-    if ( decpt > 15 )			/* over precision: use eE */
-    { *o++ = s[0];
-      *o++ = '.';
-      if ( end-s > 1 )
-      { trailing += (int)(end-s)-1;
-	memcpy(o, s+1, end-s-1);
-	o += end-s-1;
+    DEBUG(MSG_WRITE_FLOAT,
+	  Sdprintf("trailing = %d; exp=%d; d=%d; N=%d\n",
+		   trailing, exp, d, N));
+    if ( N < 0 || exp >= N+d )	/* over precision: use eE */
+    { OUT(s[0]);
+      OUT('.');
+      if ( d > 1 )
+      { OUTN(s+1, d-1);
       } else
-	*o++ = '0';
-      sprintf(o, "e+%d", trailing);
+	OUT('0');
+      char eb[16];
+      snprintf(eb, sizeof(eb), "%c+%02d", E, exp);
+      OUTS(eb);
     } else				/* within precision trail with .0 */
-    { memcpy(o, s, end-s);
-      o += end-s;
+    { OUTN(s, end-s);
 
-      for(i=(int)(end-s); i<decpt; i++)
-	*o++ = '0';
-      *o++ = '.';
-      *o++ = '0';
-      *o = 0;
+      for(i=d; i<decpt; i++)
+	OUT('0');
+      OUT('.');
+      OUT('0');
     }
   }
 
+#undef OUTN
+#undef OUTS
+#undef OUT
+
   freedtoa(s);
 
-  return buf;
+  if ( o < limit )
+    *o = 0;
+  else if ( size > 0 )
+    buf[size-1] = 0;
+  return o-buf;
 }
 
 #ifdef O_BIGNUM
-static int
+static bool
 mpz_get_str_ex(char *buf, int base, mpz_t mpz)
 { int rc;
 
   /* mpz_get_str() can perform large intermediate allocations */
   EXCEPTION_GUARDED({ mpz_get_str(buf, 10, mpz);
-                      rc = TRUE;
+                      rc = true;
 		    },
-		    { rc = FALSE;
+		    { rc = false;
 		    });
 
   return rc;
@@ -1217,12 +1293,12 @@ mpz_get_str_ex(char *buf, int base, mpz_t mpz)
 
 
 #define writeMPZ(mpz, options) LDFUNC(writeMPZ, mpz, options)
-static int
+static bool
 writeMPZ(DECL_LD mpz_t mpz, write_options *options)
 { char tmp[1024];
   char *buf;
   size_t sz = (mpz_sizeinbase(mpz, 2)*10)/3 + 10; /* log2(10)=3.322 */
-  int rc;
+  bool rc;
 
   if ( sz <= sizeof(tmp) )
     buf = tmp;
@@ -1246,44 +1322,64 @@ writeMPZ(DECL_LD mpz_t mpz, write_options *options)
 }
 #endif
 
-static int
-WriteNumber(Number n, write_options *options)
-{
-#ifdef O_GMP
-  GET_LD
-#endif
+static bool
+separate_number(IOSTREAM *s, Number n, PL_chars_t *fmt)
+{ int c;
 
-  switch(n->type)
+  if ( fmt->length > 0 )
+    c = text_get_char(fmt, 0);
+  else
+    c = -1;
+
+  if ( !(c >= 0 && c != '~') )
+    c = ar_signbit(n) < 0 ? '-' : '0';
+
+  if ( needSpace(c, s) )
+    return Putc(' ', s);
+
+  return true;
+}
+
+#define writeNumber(t, options) LDFUNC(writeNumber, t, options)
+
+static bool
+writeNumber(DECL_LD term_t t, write_options *options)
+{ number n;
+
+  PL_get_number(t, &n);
+
+  switch(n.type)
   { case V_INTEGER:
-    { char buf[32];
-
-      sprintf(buf, "%" PRId64, n->value.i);
-      return PutToken(buf, options->out);
-    }
+    case V_FLOAT:
 #ifdef O_BIGNUM
     case V_MPZ:
-      return writeMPZ(n->value.mpz, options);
+#endif
+    { PL_chars_t fmt;
+
+      get_atom_text(n.type == V_FLOAT ? options->float_format
+				      : options->integer_format,
+		    &fmt);
+      if ( !separate_number(options->out, &n, &fmt) )
+	return false;
+
+      return do_format(options->out, &fmt, 1, t, options->module);
+    }
+#ifdef O_BIGNUM
     case V_MPQ:
     { mpz_t num, den;			/* num/den */
-      char sep = true(options, PL_WRT_RAT_NATURAL) ? '/' : 'r';
+      char sep = ison(options, PL_WRT_RAT_NATURAL) ? '/' : 'r';
 
-      num[0] = *mpq_numref(n->value.mpq);
-      den[0] = *mpq_denref(n->value.mpq);
+      num[0] = *mpq_numref(n.value.mpq);
+      den[0] = *mpq_denref(n.value.mpq);
       return ( writeMPZ(num, options) &&
 	       Sputcode(sep, options->out) != EOF &&
 	       (options->out->lastc = EOF) &&
 	       writeMPZ(den, options) );
     }
 #endif
-    case V_FLOAT:
-    { char buf[100];
-
-      format_float(n->value.f, buf);
-      return PutToken(buf, options->out);
-    }
     default:
       assert(0);
-      return FALSE;			/* make compiler happy */
+      return false;			/* make compiler happy */
   }
 }
 
@@ -1308,11 +1404,7 @@ writePrimitive(term_t t, write_options *options)
     return writeAtom(a, options);
 
   if ( PL_is_number(t) )		/* beware of automatic conversion */
-  { number n;
-
-    PL_get_number(t, &n);
-    return WriteNumber(&n, options);
-  }
+    return writeNumber(t, options);
 
 #if O_STRING
   if ( PL_is_string(t) )
@@ -1334,7 +1426,7 @@ pl_nl(DECL_LD term_t stream)
     return streamStatus(s);
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -1366,7 +1458,7 @@ put_write_options(term_t opts_in, write_options *options)
   term_t tail = PL_copy_term_ref(opts_in);
   term_t newhead = PL_new_term_ref();
   term_t newtail = PL_copy_term_ref(newlist);
-  int rc = TRUE;
+  int rc = true;
 
   while(rc && PL_get_list(tail, head, tail))
   { if ( !PL_is_functor(head, FUNCTOR_priority1) )
@@ -1395,7 +1487,7 @@ enterPortray(DECL_LD)
 { if ( LD->IO.portray_nesting >= MAX_PORTRAY_NESTING )
     return PL_resource_error("portray_nesting");
   LD->IO.portray_nesting++;
-  return TRUE;
+  return true;
 }
 
 
@@ -1405,14 +1497,14 @@ leavePortray(DECL_LD)
 }
 
 
-/* returns: -1: error, FALSE: failed, TRUE: succeeded
+/* returns: -1: error, false: failed, true: succeeded
 */
 
 static int
 callPortray(term_t arg, int prec, write_options *options)
 { predicate_t pred;
 
-  if ( GD->cleaning > CLN_PROLOG )
+  if ( GD->halt.cleaning > CLN_PROLOG )
     fail;				/* avoid dangerous callbacks */
 
   if ( options->portray_goal )
@@ -1420,7 +1512,7 @@ callPortray(term_t arg, int prec, write_options *options)
   } else
   { pred = _PL_predicate("portray", 1, "user", &GD->procedures.portray);
     if ( !pred->definition->impl.any.defined )
-      return FALSE;
+      return false;
   }
 
   { GET_LD
@@ -1431,7 +1523,7 @@ callPortray(term_t arg, int prec, write_options *options)
 
     if ( !enterPortray() )
       return -1;
-    if ( !saveWakeup(&wstate, TRUE) )
+    if ( !saveWakeup(&wstate, true) )
       return -1;
     Scurout = options->out;
     if ( options->portray_goal )
@@ -1467,10 +1559,10 @@ writeTerm(term_t t, int prec, write_options *options, int flags)
   fid_t fid;
 
   if ( !(fid = PL_open_foreign_frame()) )
-    return FALSE;
+    return false;
 
   if ( PL_handle_signals() < 0 )
-  { rval = FALSE;
+  { rval = false;
     goto out;
   }
 
@@ -1495,7 +1587,7 @@ writeList(term_t list, write_options *options)
   term_t head = PL_new_term_ref();
   term_t l    = PL_copy_term_ref(list);
 
-  if ( false(options, PL_WRT_DOTLISTS|PL_WRT_NO_LISTS) )
+  if ( isoff(options, PL_WRT_DOTLISTS|PL_WRT_NO_LISTS) )
   { TRY(Putc('[', options->out));
     for(;;)
     { PL_get_list(l, head, l);
@@ -1520,49 +1612,49 @@ writeList(term_t list, write_options *options)
 
     for(;;)
     { PL_get_list(l, head, l);
-      if ( true(options, PL_WRT_DOTLISTS) )
+      if ( ison(options, PL_WRT_DOTLISTS) )
       { if ( !PutToken(".", options->out) )
-	  return FALSE;
+	  return false;
       } else
       { if ( !writeAtom(ATOM_dot, options) )
-	  return FALSE;
+	  return false;
       }
 
       if ( !Putc('(', options->out) ||
 	   !writeTerm(head, 999, options, W_COMPOUND_ARG) ||
 	   !PutComma(options) )
-	return FALSE;
+	return false;
 
       depth++;
 
       if ( PL_get_nil(l) )
       { if ( !PutToken("[]", options->out) )
-	  return FALSE;
+	  return false;
 	break;
       }
 
       if ( ++options->depth >= options->max_depth && options->max_depth )
       { if ( !PutToken("...", options->out) )
-	  return FALSE;
+	  return false;
 	while(depth-->0)
 	{ if ( !Putc(')', options->out) )
-	    return FALSE;
+	    return false;
 	}
-	return TRUE;
+	return true;
       }
 
       if ( !PL_is_functor(l, FUNCTOR_dot2) )
       { if ( !writeTerm(l, 999, options, W_COMPOUND_ARG) )
-	  return FALSE;
+	  return false;
 	break;
       }
     }
 
     while(depth-->0)
     { if ( !Putc(')', options->out) )
-	return FALSE;
+	return false;
     }
-    return TRUE;
+    return true;
   }
 }
 
@@ -1574,10 +1666,10 @@ isBlockOp(DECL_LD term_t t, term_t arg, atom_t functor)
   { _PL_get_arg(1, t, arg);
     if ( (functor == ATOM_nil  && PL_is_pair(arg)) ||
 	 (functor == ATOM_curl && PL_is_functor(arg, FUNCTOR_curl1)) )
-      return TRUE;
+      return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 #define writeDictPair(name, value, last, closure) LDFUNC(writeDictPair, name, value, last, closure)
@@ -1601,19 +1693,20 @@ writeTerm2(term_t t, int prec, write_options *options, int flags)
 { GET_LD
   atom_t functor;
   size_t arity, n;
-  int op_type, op_pri;
+  unsigned char op_type;
+  short op_pri;
   atom_t a;
   IOSTREAM *out = options->out;
 
   if ( !PL_is_variable(t) &&
-       true(options, PL_WRT_PORTRAY) )
+       ison(options, PL_WRT_PORTRAY) )
   { switch( callPortray(t, prec, options) )
-    { case TRUE:
-	return TRUE;
-      case FALSE:
+    { case true:
+	return true;
+      case false:
 	break;
       default:					/* error */
-	return FALSE;
+	return false;
     }
   }
 
@@ -1630,17 +1723,17 @@ writeTerm2(term_t t, int prec, write_options *options, int flags)
   if ( !PL_get_name_arity(t, &functor, &arity) )
   { return writePrimitive(t, options);
   } else
-  { if ( true(options, PL_WRT_NUMBERVARS|PL_WRT_VARNAMES) )
+  { if ( ison(options, PL_WRT_NUMBERVARS|PL_WRT_VARNAMES) )
     { switch( writeNumberVar(t, options) )
       { case -1:
-	  return FALSE;
-	case TRUE:
-	  return TRUE;
+	  return false;
+	case true:
+	  return true;
       }
     }
 
 					/* handle {a,b,c} */
-    if ( false(options, PL_WRT_BRACETERMS) &&
+    if ( isoff(options, PL_WRT_BRACETERMS) &&
 	 functor == ATOM_curl && arity == 1 )
     { term_t arg;
 
@@ -1649,9 +1742,9 @@ writeTerm2(term_t t, int prec, write_options *options, int flags)
 	   PutToken("{", out) &&
 	   writeTerm(arg, 1200, options, W_TOP) &&
 	   Putc('}', out) )
-	return TRUE;
+	return true;
 
-      return FALSE;
+      return false;
     }
 
 					/* handle lists */
@@ -1659,7 +1752,7 @@ writeTerm2(term_t t, int prec, write_options *options, int flags)
       return writeList(t, options);
 
 					/* handle dicts */
-    if ( false(options, PL_WRT_NODICT) &&
+    if ( isoff(options, PL_WRT_NODICT) &&
 	 functor == ATOM_dict && PL_is_dict(t) )
     { term_t class;
 
@@ -1669,17 +1762,17 @@ writeTerm2(term_t t, int prec, write_options *options, int flags)
 	     Putc('{', out) &&
 	     _PL_for_dict(t, writeDictPair, options, PL_FOR_DICT_SORTED) == 0 &&
 	     Putc('}', out) )
-	  return TRUE;
+	  return true;
       }
 
-      return FALSE;
+      return false;
     }
 					/* operators */
-    if ( false(options, PL_WRT_IGNOREOPS) )
+    if ( isoff(options, PL_WRT_IGNOREOPS) )
     { term_t arg;
 
       if ( !(arg=PL_new_term_ref()) )
-	return FALSE;
+	return false;
 
       if ( arity == 1 ||
 	  (arity == 2 && isBlockOp(t, arg, functor)) )
@@ -1766,9 +1859,15 @@ writeTerm2(term_t t, int prec, write_options *options, int flags)
 	    { TRY(PutBar(options));
 	    } else if ( functor == ATOM_fdot )
 	    { TRY(PutToken(".", out));
+	    } else if ( functor == ATOM_divide &&
+			ison(options, PL_WRT_RAT_NATURAL) &&
+			PL_is_integer(arg) &&
+			_PL_get_arg(1, t, arg) &&
+			PL_is_number(arg) )
+	    { TRY(PutString(" / ", out));
 	    } else
 	    { switch(writeAtom(functor, options))
-	      { case FALSE:
+	      { case false:
 		  fail;
 		case TRUE_WITH_SPACE:
 		  TRY(Putc(' ', out));
@@ -1825,7 +1924,7 @@ reunify_acyclic_substitutions(term_t substitutions, term_t cycles,
        !(c_head = PL_new_term_ref()) ||
        !(var    = PL_new_term_ref()) ||
        !(value  = PL_new_term_ref()) )
-    return FALSE;
+    return false;
 
   while(PL_get_list(s_tail, s_head, s_tail))
   { _PL_get_arg(1, s_head, var);
@@ -1835,15 +1934,15 @@ reunify_acyclic_substitutions(term_t substitutions, term_t cycles,
       { if ( !PL_unify_term(var,
 			    PL_FUNCTOR, FUNCTOR_isovar1,
 			      PL_INTPTR, --count) )
-	  return FALSE;
+	  return false;
       }
 
       if ( !PL_unify_list(c_tail, c_head, c_tail) ||
 	   !PL_unify(c_head, s_head) )
-	return FALSE;
+	return false;
     } else
     { if ( !PL_unify(var, value) )
-	return FALSE;
+	return false;
     }
   }
 
@@ -1851,13 +1950,13 @@ reunify_acyclic_substitutions(term_t substitutions, term_t cycles,
 }
 
 
-static int
+static bool
 writeTopTerm(term_t term, int prec, write_options *options)
 { GET_LD
-  int rc;
+  bool rc;
   int wflags;
 
-  if ( true(options, PL_WRT_PARTIAL) && prec != 999 && prec != 1200 )
+  if ( ison(options, PL_WRT_PARTIAL) && prec != 999 && prec != 1200 )
     wflags = W_OP_ARG;
   else
     wflags = W_TOP;
@@ -1884,10 +1983,10 @@ writeTopTerm(term_t term, int prec, write_options *options)
 	 !PL_factorize_term(term, template, substitutions) ||
 	 !reunify_acyclic_substitutions(substitutions, cycles, options) ||
 	 !PL_unify_term(at_term,
-			PL_FUNCTOR, FUNCTOR_xpceref2,
+			PL_FUNCTOR, FUNCTOR_at_sign2,
 			  PL_TERM, template,
 			  PL_TERM, cycles) )
-      return FALSE;
+      return false;
     C_STACK_OVERFLOW_GUARDED(
 	rc,
 	writeTerm(at_term, prec, options, wflags),
@@ -1901,7 +2000,7 @@ writeTopTerm(term_t term, int prec, write_options *options)
 
 
 #define bind_varnames(names) LDFUNC(bind_varnames, names)
-static int
+static bool
 bind_varnames(DECL_LD term_t names)
 { term_t tail, head, var, namet;
   int check_cycle_after = 1000;
@@ -1910,7 +2009,7 @@ bind_varnames(DECL_LD term_t names)
        !(head = PL_new_term_ref()) ||
        !(var  = PL_new_term_ref()) ||
        !(namet = PL_new_term_ref()) )
-    return FALSE;
+    return false;
 
   while(PL_get_list_ex(tail, head, tail))
   { if ( PL_is_functor(head, FUNCTOR_equals2) )
@@ -1920,7 +2019,7 @@ bind_varnames(DECL_LD term_t names)
       _PL_get_arg(1, head, namet);
 
       if ( !PL_get_atom_ex(namet, &name) )
-	return FALSE;
+	return false;
       if ( !atomIsVarName(name) )
 	return PL_domain_error("variable_name", namet);
 
@@ -1928,13 +2027,13 @@ bind_varnames(DECL_LD term_t names)
       { if ( !PL_unify_term(var,
 			    PL_FUNCTOR, FUNCTOR_isovar1,
 			      PL_ATOM, name) )
-	  return FALSE;
+	  return false;
       }
     } else
       return PL_type_error("variable_assignment", head);
 
     if ( --check_cycle_after == 0 &&
-	 lengthList(tail, FALSE) == -1 )
+	 lengthList(tail, false) == -1 )
       return PL_type_error("list", head);
   }
 
@@ -1997,49 +2096,50 @@ static const PL_option_t write_term_options[] =
   { ATOM_nl,			    OPT_BOOL },
   { ATOM_fullstop,		    OPT_BOOL },
   { ATOM_no_lists,		    OPT_BOOL },
+  { ATOM_integer_format,	    OPT_ATOM },
+  { ATOM_float_format,		    OPT_ATOM },
   { NULL_ATOM,			    0 }
 };
 
 foreign_t
 pl_write_term3(term_t stream, term_t term, term_t opts)
 { GET_LD
-  bool quoted     = FALSE;
-  bool ignore_ops = FALSE;
-  bool dotlists   = FALSE;
-  bool braceterms = TRUE;
-  bool numbervars = -1;			/* not set */
-  bool portray    = FALSE;
+  int quoted      = false;
+  int ignore_ops  = false;
+  int dotlists    = false;
+  int braceterms  = true;
+  int numbervars  = -1;			/* not set */
+  int portray     = false;
   term_t gportray = 0;
   atom_t bq       = 0;
-  bool charescape = -1;			/* not set */
-  bool charescape_unicode = -1;
-  bool quote_non_ascii = FALSE;
+  int  charescape = -1;			/* not set */
+  int charescape_unicode = -1;
+  int quote_non_ascii = false;
   atom_t mname    = ATOM_user;
   atom_t attr     = ATOM_nil;
   atom_t blobs    = ATOM_nil;
   int  priority   = 1200;
-  bool partial    = FALSE;
-  bool cycles     = TRUE;
-  bool nl         = FALSE;
-  bool fullstop   = FALSE;
-  bool no_lists   = FALSE;
+  int partial     = false;
+  int cycles      = true;
+  int nl          = false;
+  int fullstop    = false;
+  int no_lists    = false;
   term_t varnames = 0;
   IOSTREAM *s = NULL;
-  write_options options;
+  write_options options = WRITE_OPTIONS_DEFAULTS;
   int rc;
 
-  memset(&options, 0, sizeof(options));
-  options.spacing = ATOM_standard;
-
   if ( !PL_scan_options(opts, 0, "write_option", write_term_options,
-		     &quoted, &quote_non_ascii, &ignore_ops, &dotlists, &braceterms,
-		     &numbervars, &portray, &portray, &gportray,
-		     &charescape, &charescape_unicode,
-		     &options.max_depth, &mname,
-		     &bq, &attr, &priority, &partial, &options.spacing,
-		     &blobs, &cycles, &varnames, &nl, &fullstop,
-		     &no_lists) )
-    fail;
+			&quoted, &quote_non_ascii, &ignore_ops, &dotlists, &braceterms,
+			&numbervars, &portray, &portray, &gportray,
+			&charescape, &charescape_unicode,
+			&options.max_depth, &mname,
+			&bq, &attr, &priority, &partial, &options.spacing,
+			&blobs, &cycles, &varnames, &nl, &fullstop,
+			&no_lists,
+			&options.integer_format,
+			&options.float_format) )
+    return false;
 
   if ( attr == ATOM_nil )
   { options.flags |= LD->prolog_flag.write_attributes;
@@ -2080,24 +2180,24 @@ pl_write_term3(term_t stream, term_t term, term_t opts)
   options.module = isCurrentModule(mname);
   if ( !options.module )
     options.module = MODULE_user;
-  if ( charescape == TRUE ||
-       (charescape == -1 && true(options.module, M_CHARESCAPE)) )
+  if ( charescape == true ||
+       (charescape == -1 && ison(options.module, M_CHARESCAPE)) )
     options.flags |= PL_WRT_CHARESCAPES;
-  if ( charescape_unicode == TRUE ||
+  if ( charescape_unicode == true ||
        (charescape_unicode == -1 && truePrologFlag(PLFLAG_CHARESCAPE_UNICODE)) )
     options.flags |= PL_WRT_CHARESCAPES_UNICODE;
-  if ( true(options.module, RAT_NATURAL) )
+  if ( ison(options.module, RAT_NATURAL) )
     options.flags |= PL_WRT_RAT_NATURAL;
   if ( gportray )
   { options.portray_goal = gportray;
     if ( !put_write_options(opts, &options) ||
 	 !PL_qualify(options.portray_goal, options.portray_goal) )
-      return FALSE;
-    if ( false(&options, PL_WRT_BLOB_PORTRAY) )
-      portray = TRUE;
+      return false;
+    if ( isoff(&options, PL_WRT_BLOB_PORTRAY) )
+      portray = true;
   }
   if ( numbervars == -1 )
-    numbervars = (portray ? TRUE : FALSE);
+    numbervars = (portray ? true : false);
 
   if ( quoted )          options.flags |= PL_WRT_QUOTED;
   if ( quote_non_ascii ) options.flags |= PL_WRT_QUOTE_NON_ASCII;
@@ -2113,7 +2213,7 @@ pl_write_term3(term_t stream, term_t term, term_t opts)
   { unsigned int flags = 0;
 
     if ( !setBackQuotes(bq, &flags) )
-      return FALSE;
+      return false;
     if ( (flags&BQ_STRING) )
       options.flags |= PL_WRT_BACKQUOTED_STRING;
     else if ( flags == 0 )
@@ -2161,18 +2261,17 @@ pl_write_term(term_t term, term_t options)
 }
 
 
-int
+bool
 PL_write_term(IOSTREAM *s, term_t term, int precedence, int flags)
-{ write_options options;
+{ write_options options = WRITE_OPTIONS_DEFAULTS;
   int rc;
 
-  memset(&options, 0, sizeof(options));
   options.flags	    = flags & ~PL_WRT_NEWLINE;
   options.out	    = s;
   options.module    = MODULE_user;
 
   if ( !(flags & (PL_WRT_CHARESCAPES|PL_WRT_NO_CHARESCAPES) ) )
-  { if ( true(options.module, M_CHARESCAPE) )
+  { if ( ison(options.module, M_CHARESCAPE) )
       options.flags |= PL_WRT_CHARESCAPES;
   }
 
@@ -2183,31 +2282,32 @@ PL_write_term(IOSTREAM *s, term_t term, int precedence, int flags)
       rc = Putc('\n', s);
     rc = PL_release_stream(s) && rc;
   } else
-    rc = FALSE;
+    rc = false;
 
   return rc;
 }
 
 
-static word
+static foreign_t
 do_write2(term_t stream, term_t term, int flags, int canonical)
 { GET_LD
   IOSTREAM *s;
 
   if ( getTextOutputStream(stream, &s) )
-  { write_options options;
+  { write_options options = WRITE_OPTIONS_DEFAULTS;
     int rc;
 
-    memset(&options, 0, sizeof(options));
     options.flags     = flags;
     if ( !canonical )
       options.flags |= LD->prolog_flag.write_attributes;
     options.out	      = s;
     options.module    = MODULE_user;
-    if ( true(options.module, M_CHARESCAPE) )
+    if ( ison(options.module, M_CHARESCAPE) )
       options.flags |= PL_WRT_CHARESCAPES;
-    if ( true(options.module, BQ_STRING) )
+    if ( ison(options.module, BQ_STRING) )
       options.flags |= PL_WRT_BACKQUOTED_STRING;
+    if ( ison(options.module, RAT_NATURAL) )
+      options.flags |= PL_WRT_RAT_NATURAL;
 
     PutOpenToken(EOF, s);		/* reset this */
     rc = writeTopTerm(term, 1200, &options);
@@ -2217,23 +2317,23 @@ do_write2(term_t stream, term_t term, int flags, int canonical)
     return streamStatus(s) && rc;
   }
 
-  return FALSE;
+  return false;
 }
 
 
 foreign_t
 pl_write2(term_t stream, term_t term)
-{ return do_write2(stream, term, PL_WRT_NUMBERVARS, FALSE);
+{ return do_write2(stream, term, PL_WRT_NUMBERVARS, false);
 }
 
 foreign_t
 pl_writeln2(term_t stream, term_t term)
-{ return do_write2(stream, term, PL_WRT_NUMBERVARS|PL_WRT_NEWLINE, FALSE);
+{ return do_write2(stream, term, PL_WRT_NUMBERVARS|PL_WRT_NEWLINE, false);
 }
 
 foreign_t
 pl_writeq2(term_t stream, term_t term)
-{ return do_write2(stream, term, PL_WRT_QUOTED|PL_WRT_NUMBERVARS, FALSE);
+{ return do_write2(stream, term, PL_WRT_QUOTED|PL_WRT_NUMBERVARS, false);
 }
 
 foreign_t
@@ -2247,34 +2347,34 @@ pl_print2(term_t stream, term_t term)
     rc = pl_write_term3(stream, term, opts);
   else
     rc = do_write2(stream, term,
-		   PL_WRT_PORTRAY|PL_WRT_NUMBERVARS|PL_WRT_QUOTED, FALSE);
+		   PL_WRT_PORTRAY|PL_WRT_NUMBERVARS|PL_WRT_QUOTED, false);
 
   PL_discard_foreign_frame(fid);
 
   return rc;
 }
 
-word
+foreign_t
 pl_write_canonical2(term_t stream, term_t term)
 { GET_LD
   nv_options options;
-  word rc;
+  foreign_t rc;
 
-  BEGIN_NUMBERVARS(TRUE);
+  BEGIN_NUMBERVARS(true);
 
   options.functor = FUNCTOR_isovar1;
   options.on_attvar = AV_SKIP;
   options.singletons = PL_is_acyclic(term);
-  options.numbered_check = FALSE;
+  options.numbered_check = false;
 
   rc = ( numberVars(term, &options, 0) != NV_ERROR &&
 	 do_write2(stream, term,
 		   PL_WRT_QUOTED|PL_WRT_QUOTE_NON_ASCII|
 		   PL_WRT_IGNOREOPS|PL_WRT_VARNAMES|
-		   PL_WRT_NODOTINATOM|PL_WRT_BRACETERMS, TRUE)
+		   PL_WRT_NODOTINATOM|PL_WRT_BRACETERMS, true)
        );
 
-  END_NUMBERVARS(TRUE);
+  END_NUMBERVARS(true);
 
   return rc;
 }
@@ -2301,7 +2401,7 @@ pl_write_canonical(term_t term)
 
 foreign_t
 pl_writeln(term_t term)
-{ return do_write2(0, term, PL_WRT_NUMBERVARS|PL_WRT_NEWLINE, FALSE);
+{ return do_write2(0, term, PL_WRT_NUMBERVARS|PL_WRT_NEWLINE, false);
 }
 
 
@@ -2343,21 +2443,21 @@ PRED_IMPL("$put_quoted", 4, put_quoted_codes, 0)
   size_t i, len;
   int quote;
   int flags = PL_WRT_CHARESCAPES;
-  int rc = TRUE;
-  bool charescape_unicode = -1;
+  int rc = true;
+  int charescape_unicode = -1;
 
   if ( !PL_scan_options(A4, 0, "write_option", put_quoted_options,
-		     &charescape_unicode) )
-    return FALSE;
+			&charescape_unicode) )
+    return false;
 
-  if ( charescape_unicode == TRUE ||
+  if ( charescape_unicode == true ||
        (charescape_unicode == -1 && truePrologFlag(PLFLAG_CHARESCAPE_UNICODE)) )
     flags |= PL_WRT_CHARESCAPES_UNICODE;
 
   if ( !PL_get_stream_handle(A1, &out) ||
-       !PL_get_char_ex(A2, &quote, FALSE) ||
+       !PL_get_char_ex(A2, &quote, false) ||
        !PL_get_wchars(A3, &len, &w, CVT_LIST|CVT_STRING|CVT_EXCEPTION) )
-    return FALSE;
+    return false;
 
   for(i=0; rc && i<len; i++)
     rc = putQuoted(w[i], quote, flags, out);
@@ -2433,7 +2533,7 @@ PRED_IMPL("write_length", 3, write_length, 0)
 
       _PL_get_arg(1, head, a);
       if ( !PL_get_int64_ex(a, &lss.length) )
-	return FALSE;
+	return false;
     }
   }
 
@@ -2466,7 +2566,7 @@ PRED_IMPL("write_length", 3, write_length, 0)
       return PL_unify_int64(A2, len);
   }
 
-  return FALSE;
+  return false;
 }
 
 

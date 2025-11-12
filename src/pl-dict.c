@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2013-2022, VU University Amsterdam
+    Copyright (c)  2013-2025, VU University Amsterdam
 			      SWI-Prolog Solutions b.v.
     All rights reserved.
 
@@ -43,6 +43,7 @@
 #include "pl-fli.h"
 #include "pl-gc.h"
 #include "pl-gvar.h"
+#include "pl-copyterm.h"
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Dicts are associative arrays,  where  keys   are  either  atoms  or small
@@ -86,32 +87,51 @@ dict_functor(int pairs)
   }
 }
 
+static bool
+is_dict_functor(functor_t f)
+{ FunctorDef fd = valueFunctor(f);
+
+  return ( fd->name == ATOM_dict &&
+	   fd->arity%2 == 1 );
+}
+
+#define is_dict_term(w) \
+	LDFUNC(is_dict_term, w)
+
+static bool
+is_dict_term(DECL_LD word w)
+{ if ( isTerm(w) )
+  { Functor f = valueTerm(w);
+
+    return is_dict_functor(f->definition);
+  }
+
+  return false;
+}
+
 		 /*******************************
 		 *      LOW-LEVEL FUNCTIONS	*
 		 *******************************/
 
 #define get_dict_ex(t, dp, ex) LDFUNC(get_dict_ex, t, dp, ex)
-static int
-get_dict_ex(DECL_LD term_t t, Word dp, int ex)
+static bool
+get_dict_ex(DECL_LD term_t t, Word dp, bool ex)
 { Word p = valTermRef(t);
 
   deRef(p);
   if ( isTerm(*p) )
   { Functor f = valueTerm(*p);
-    FunctorDef fd = valueFunctor(f->definition);
 
-    if ( fd->name == ATOM_dict &&
-	 fd->arity%2 == 1 )		/* does *not* validate ordering */
+    if ( is_dict_functor(f->definition) )
     { *dp = *p;
-      return TRUE;
+      return true;
     }
   }
 
   if ( !ex )
-    return FALSE;
+    return false;
 
-  PL_type_error("dict", t);
-  return FALSE;
+  return PL_type_error("dict", t),false;
 }
 
 
@@ -129,18 +149,16 @@ get_create_dict_ex(DECL_LD term_t t, term_t dt)
   deRef(p);
   if ( isTerm(*p) )
   { Functor f = valueTerm(*p);
-    FunctorDef fd = valueFunctor(f->definition);
 
-    if ( fd->name == ATOM_dict &&
-	 fd->arity%2 == 1 )		/* does *not* validate ordering */
+    if ( is_dict_functor(f->definition) )
     { *valTermRef(dt) = *p;
-      return TRUE;
+      return true;
     }
   }
 
   if ( PL_get_dict_ex(t, 0, dt, DICT_GET_ALL) )
   { assert(isTerm(*valTermRef(dt)));
-    return TRUE;
+    return true;
   }
 
   return PL_type_error("dict", t);
@@ -152,23 +170,26 @@ dict_lookup_ptr() returns a pointer to the value for a given key
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 Word
-dict_lookup_ptr(DECL_LD word dict, word name)
+dict_lookup_ptr(DECL_LD word dict, word name, size_t *arg)
 { Functor data = valueTerm(dict);
-  int arity = arityFunctor(data->definition);
-  int l = 1, h = arity/2;
+  size_t arity = arityFunctor(data->definition);
+  size_t l = 1, h = arity/2;
 
   if ( arity == 1 )
     return NULL;			/* empty */
   assert(arity%2 == 1);
 
   for(;;)
-  { int m = (l+h)/2;
+  { size_t m = (l+h)/2;
     Word p;
 
     deRef2(&data->arguments[m*2], p);
 
     if ( *p == name )
+    { if ( arg )
+	*arg = m;
       return p-1;
+    }
 
     if ( l == h )
       return NULL;
@@ -185,8 +206,8 @@ dict_lookup_ptr(DECL_LD word dict, word name)
 
 /* True if the keys are proper keys and ordered.  Return values:
 
-   TRUE:  correctly ordered dict
-   FALSE: not ordered
+   true:  correctly ordered dict
+   false: not ordered
    -1:    not a key
    -2:    duplicate key
 */
@@ -194,7 +215,7 @@ dict_lookup_ptr(DECL_LD word dict, word name)
 #define dict_ordered(data, count, dupl) LDFUNC(dict_ordered, data, count, dupl)
 static int
 dict_ordered(DECL_LD Word data, int count, Word dupl)
-{ int ordered = TRUE;
+{ int ordered = true;
   Word n1, n2;
 
   if ( count > 0 )
@@ -210,7 +231,7 @@ dict_ordered(DECL_LD Word data, int count, Word dupl)
       if ( *n1 < *n2 )
 	continue;
       if ( *n1 > *n2 )
-	ordered = FALSE;
+	ordered = false;
       if ( *n1 == *n2 )
       { if ( dupl )
 	{ *dupl = *n1;
@@ -232,11 +253,11 @@ static int
 compare_dict_entry(const void *a, const void *b, void *arg)
 { Word p = (Word)a+1;
   Word q = (Word)b+1;
-  WITH_LD(arg)
-  { deRef(p);
-    deRef(q);
-  }
-  return (*p<*q ? -1 : *p>*q ? 1 : 0);
+
+  deRef(p);
+  deRef(q);
+
+  return SCALAR_TO_CMP(*p, *q);
 }
 
 
@@ -330,23 +351,25 @@ assign_in_dict(DECL_LD Word dp, Word val)
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 
-#define put_dict(dict, size, nv, new_dict) LDFUNC(put_dict, dict, size, nv, new_dict)
+#define put_dict(dict, size, nv, new_dict) \
+	LDFUNC(put_dict, dict, size, nv, new_dict)
+
 static int
 put_dict(DECL_LD word dict, int size, Word nv, word *new_dict)
 { Functor data = valueTerm(dict);
   int arity = arityFunctor(data->definition);
   Word new, out, in, in_end, nv_end;
-  int modified = FALSE;
+  int modified = false;
 
   assert(arity%2 == 1);
 
   if ( size == 0 )
   { *new_dict = dict;
-    return TRUE;
+    return true;
   }
 
   if ( gTop+1+arity+2*size > gMax )
@@ -366,11 +389,11 @@ put_dict(DECL_LD word dict, int size, Word nv, word *new_dict)
     deRef2(nv+1, n_name);
 
     if ( *i_name == *n_name )
-    { if ( (rc=assign_in_dict(out++, nv)) != TRUE )
+    { if ( (rc=assign_in_dict(out++, nv)) != true )
 	return rc;
       *out++ = *i_name;
-      if ( !modified && compareStandard(nv, in, TRUE) )
-	modified = TRUE;
+      if ( !modified && compareStandard(nv, in, true) )
+	modified = true;
       in += 2;
       nv += 2;
     } else if ( *i_name < *n_name )
@@ -378,18 +401,18 @@ put_dict(DECL_LD word dict, int size, Word nv, word *new_dict)
       *out++ = *i_name;
       in += 2;
     } else
-    { if ( (rc=assign_in_dict(out++, nv)) != TRUE )
+    { if ( (rc=assign_in_dict(out++, nv)) != true )
 	return rc;
       *out++ = *n_name;
       nv += 2;
-      modified = TRUE;
+      modified = true;
     }
   }
 
   if ( nv == nv_end )
   { if ( !modified )
     { *new_dict = dict;
-      return TRUE;
+      return true;
     }
     while(in < in_end)
     { Word i_name;
@@ -404,7 +427,7 @@ put_dict(DECL_LD word dict, int size, Word nv, word *new_dict)
       int rc;
 
       deRef2(nv+1, n_name);
-      if ( (rc=assign_in_dict(out++, nv)) != TRUE )
+      if ( (rc=assign_in_dict(out++, nv)) != true )
 	return rc;
       *out++ = *n_name;
       nv += 2;
@@ -417,7 +440,75 @@ put_dict(DECL_LD word dict, int size, Word nv, word *new_dict)
 
   *new_dict = consPtr(new, TAG_COMPOUND|STG_GLOBAL);
 
-  return TRUE;
+  return true;
+}
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Push a new dict to the global stack   that  has the same keys as `dict`,
+but whose tag and values are all set to variables.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+#define copy_keys_dict(dict, new_dict) \
+	LDFUNC(copy_keys_dict, dict, new_dict)
+
+static int
+copy_keys_dict(DECL_LD word dict, word *new_dict)
+{ Functor data = valueTerm(dict);
+  size_t arity = arityFunctor(data->definition);
+  Word new, out, in, in_end;
+
+  if ( gTop+1+arity > gMax )
+    return GLOBAL_OVERFLOW;
+
+  new    = gTop;
+  out    = new;
+  *out++ = data->definition;		/* copy C'dict functor */
+  setVar(*out++);			/* set tag to var */
+  in     = data->arguments+1;
+  in_end = in+arity-1;
+
+  while(in < in_end)
+  { Word i_name;
+
+    deRef2(in+1, i_name);
+    setVar(*out++);
+    *out++ = *i_name;
+    in += 2;
+  }
+
+  gTop = out;
+  *new_dict = consPtr(new, TAG_COMPOUND|STG_GLOBAL);
+
+  return true;
+}
+
+#define same_keys_dict(dict1, dict2) \
+	LDFUNC(same_keys_dict, dict1, dict2)
+
+static bool
+same_keys_dict(DECL_LD word dict1, word dict2)
+{ Functor data1 = valueTerm(dict1);
+  Functor data2 = valueTerm(dict2);
+  size_t arity = arityFunctor(data1->definition);
+
+  if ( data1->definition != data2->definition )
+    return false;
+
+  Word d1 = data1->arguments+1;
+  Word d2 = data2->arguments+1;
+  Word dend = d1+arity-1;
+
+  for(; d1 < dend; d1+=2, d2+=2)
+  { Word k1, k2;
+
+    deRef2(d1+1, k1);
+    deRef2(d2+1, k2);
+    if ( *k1 != *k2 )
+      return false;
+  }
+
+  return true;
 }
 
 
@@ -455,16 +546,32 @@ del_dict(DECL_LD word dict, word key, word *new_dict)
 
   *new_dict = consPtr(new, TAG_COMPOUND|STG_GLOBAL);
 
-  return TRUE;
+  return true;
 }
 
 
+#define unify_tags(t1, t2, flags)			\
+	LDFUNC(unify_tags, t1, t2, flags)
+
+static int
+unify_tags(DECL_LD Word t1, Word t2, int flags)
+{ deRef(t1);
+  deRef(t2);
+
+  if ( *t1 == ATOM_dyndict || *t2 == ATOM_dyndict )
+    return true;
+
+  return unify_ptrs(t1, t2, flags);
+}
+
 /* partial_unify_dict(dict1, dict2) unifies all common elements of two
-   dicts.  It returns TRUE on success, FALSE on a failed unification
+   dicts.  It returns true on success, false on a failed unification
    and *_OVERFLOW on some memory overflow
 */
 
-#define partial_unify_dict(dict1, dict2) LDFUNC(partial_unify_dict, dict1, dict2)
+#define partial_unify_dict(dict1, dict2) \
+	LDFUNC(partial_unify_dict, dict1, dict2)
+
 static int
 partial_unify_dict(DECL_LD word dict1, word dict2)
 { Functor d1 = valueTerm(dict1);
@@ -475,8 +582,8 @@ partial_unify_dict(DECL_LD word dict1, word dict2)
   Word end2 = in2+arityFunctor(d2->definition);
   int rc;
 
-  /* unify the tages */
-  if ( (rc=unify_ptrs(in1, in2, ALLOW_RETCODE)) != TRUE )
+  /* unify the tags */
+  if ( (rc=unify_tags(in1, in2, ALLOW_RETCODE)) != true )
     return rc;
 
   /* advance to first v+k entry */
@@ -489,7 +596,7 @@ partial_unify_dict(DECL_LD word dict1, word dict2)
     deRef2(in1+1, n1);
     deRef2(in2+1, n2);
     if ( *n1 == *n2 )
-    { if ( (rc = unify_ptrs(in1, in2, ALLOW_RETCODE)) != TRUE )
+    { if ( (rc = unify_ptrs(in1, in2, ALLOW_RETCODE)) != true )
 	return rc;
       in1 += 2;
       in2 += 2;
@@ -500,11 +607,10 @@ partial_unify_dict(DECL_LD word dict1, word dict2)
     }
   }
 
-  return TRUE;
+  return true;
 }
 
-
-/* select_dict() demands del to be a sub-dict of from and assigns
+/* unify_left_dict() demands del to be a sub-dict of from and assigns
    all remaining values in new.
 
    Note that unify_ptrs() can push data onto the global stack in
@@ -515,7 +621,7 @@ partial_unify_dict(DECL_LD word dict1, word dict2)
 #define unify_left_dict(del, from) \
 	LDFUNC(unify_left_dict, del, from)
 
-static int
+static int			/* bool or *_OVERFLOW */
 unify_left_dict(DECL_LD word del, word from)
 { Functor dd = valueTerm(del);
   Functor fd = valueTerm(from);
@@ -526,7 +632,7 @@ unify_left_dict(DECL_LD word del, word from)
   int rc;
 
   /* unify the tags */
-  if ( (rc=unify_ptrs(din, fin, ALLOW_RETCODE)) != TRUE )
+  if ( (rc=unify_tags(din, fin, ALLOW_RETCODE)) != true )
     return rc;
 
   /* advance to first v+k entry */
@@ -540,12 +646,12 @@ unify_left_dict(DECL_LD word del, word from)
     deRef2(fin+1, f);
 
     if ( *d == *f )		/* same keys */
-    { if ( (rc = unify_ptrs(din, fin, ALLOW_RETCODE)) != TRUE )
+    { if ( (rc = unify_ptrs(din, fin, ALLOW_RETCODE)) != true )
 	return rc;
       din += 2;
       fin += 2;
     } else if ( *d < *f )
-    { return FALSE;
+    { return false;
     } else
     { fin += 2;
     }
@@ -571,7 +677,7 @@ select_dict(DECL_LD word del, word from, word *new_dict)
   int rc;
 
   /* unify the tags */
-  if ( (rc=unify_ptrs(din, fin, ALLOW_RETCODE)) != TRUE )
+  if ( (rc=unify_tags(din, fin, ALLOW_RETCODE)) != true )
     return rc;
 
   /* advance to first v+k entry */
@@ -585,11 +691,11 @@ select_dict(DECL_LD word del, word from, word *new_dict)
     deRef2(fin+1, f);
 
     if ( *d == *f )		/* same keys */
-    { if ( (rc = unify_ptrs(din, fin, ALLOW_RETCODE)) != TRUE )
+    { if ( (rc = unify_ptrs(din, fin, ALLOW_RETCODE)) != true )
 	return rc;
       din += 2;
     } else if ( *d < *f )
-    { return FALSE;
+    { return false;
     } else
     { if ( !keep )
       { size_t entries = arityFunctor(fd->definition)/2;
@@ -613,7 +719,7 @@ select_dict(DECL_LD word del, word from, word *new_dict)
 
       *new_dict = consPtr(out, TAG_COMPOUND|STG_GLOBAL);
       *out++ = dict_functor(nsize);
-      setVar(*out++);
+      *out++ = ATOM_dyndict;
 
       Word fe = fin;
       fin  = fd->arguments+1;
@@ -627,12 +733,12 @@ select_dict(DECL_LD word del, word from, word *new_dict)
 	}
       }
       gTop = out;
-      rc = TRUE;
+      rc = true;
     } else
     { rc = GLOBAL_OVERFLOW;
     }
   } else
-  { rc = FALSE;
+  { rc = false;
   }
 
   if ( keep && keep != (bit_vector*)buf )
@@ -650,11 +756,11 @@ get_name_ex(DECL_LD term_t t, Word np)
   deRef(p);
   if ( is_dict_key(*p) )
   { *np = *p;
-    return TRUE;
+    return true;
   }
 
   PL_type_error("dict-key", t);
-  return FALSE;
+  return false;
 }
 
 
@@ -679,13 +785,13 @@ get_name_value(DECL_LD Word p, Word name, Word value, mark *m, int flags)
 	deRef2(&f->arguments[1], vp);
 	*value = linkValI(vp);
 
-	return TRUE;
+	return true;
       } else
       { Undo(*m);
 	PL_type_error("dict-key", pushWordAsTermRef(np));
 	popTermRef();
 
-	return FALSE;
+	return false;
       }
     } else if ( arityFunctor(f->definition) == 1 &&
 		(flags&DICT_GET_TERM) ) /* Name(Value) */
@@ -694,7 +800,7 @@ get_name_value(DECL_LD Word p, Word name, Word value, mark *m, int flags)
       *name = nameFunctor(f->definition);
       deRef2(&f->arguments[0], vp);
       *value = linkValI(vp);
-      return TRUE;
+      return true;
     }
   }
 
@@ -707,7 +813,7 @@ get_name_value(DECL_LD Word p, Word name, Word value, mark *m, int flags)
   PL_type_error(type, pushWordAsTermRef(p));
   popTermRef();
 
-  return FALSE;				/* type error */
+  return false;				/* type error */
 }
 
 
@@ -717,9 +823,8 @@ get_name_value(DECL_LD Word p, Word name, Word value, mark *m, int flags)
 		 *******************************/
 
 int
-PL_is_dict(term_t t)
-{ GET_LD
-  Word p = valTermRef(t);
+PL_is_dict(DECL_LD term_t t)
+{ Word p = valTermRef(t);
 
   deRef(p);
   if ( isTerm(*p) )
@@ -729,13 +834,22 @@ PL_is_dict(term_t t)
 
     if ( fd->name == ATOM_dict &&
 	 fd->arity%2 == 1 &&
-	 dict_ordered(f->arguments+1, fd->arity/2, &dupl) == TRUE )
-      return TRUE;
+	 dict_ordered(f->arguments+1, fd->arity/2, &dupl) == true )
+      return true;
   }
 
-  return FALSE;
+  return false;
 }
 
+API_STUB(bool)
+(PL_is_dict)(term_t t)
+( valid_term_t(t);
+  return PL_is_dict(t);
+)
+
+
+/* Turn data into a dict if it is not already a dict.
+ */
 
 static int
 PL_get_dict_ex(term_t data, term_t tag, term_t dict, int flags)
@@ -744,23 +858,23 @@ PL_get_dict_ex(term_t data, term_t tag, term_t dict, int flags)
 
   if ( PL_is_dict(data) )
   { PL_put_term(dict, data);
-    return TRUE;
+    return true;
   }
 
   if ( PL_is_list(data) )
-  { intptr_t len = lengthList(data, TRUE);
+  { intptr_t len = lengthList(data, true);
     Word ap, dp, tail;
     mark m;
     int rc;
 
     if ( len < 0 )
-      return FALSE;			/* not a proper list */
+      return false;			/* not a proper list */
 
     if ( unlikely(tTop+1 >= tMax) )
     { if ( !makeMoreStackSpace(TRAIL_OVERFLOW, ALLOW_GC|ALLOW_SHIFT) )
-	return FALSE;
+	return false;
     }
-    if ( (rc=ensureGlobalSpace(len*2+2, ALLOW_GC)) != TRUE )
+    if ( (rc=ensureGlobalSpace(len*2+2, ALLOW_GC)) != true )
       return raiseStackOverflow(rc);
     ap = gTop;
     Mark(m);
@@ -792,24 +906,24 @@ PL_get_dict_ex(term_t data, term_t tag, term_t dict, int flags)
     { Word head = HeadList(tail);
 
       if ( !get_name_value(head, ap+1, ap, &m, flags) )
-	return FALSE;
+	return false;
       ap += 2;
       tail = TailList(tail);
       deRef(tail);
     }
 
-    if ( (rc=dict_order(dp, &dupl)) == TRUE )
+    if ( (rc=dict_order(dp, &dupl)) == true )
     { gTop = ap;
       *valTermRef(dict) = consPtr(dp, TAG_COMPOUND|STG_GLOBAL);
       DEBUG(CHK_SECURE, checkStacks(NULL));
-      return TRUE;
+      return true;
     } else
     { term_t ex;
 
       assert(rc == -2);
       Undo(m);
       return ( (ex = PL_new_term_ref()) &&
-	       _PL_unify_atomic(ex, dupl) &&
+	       PL_unify_atomic(ex, dupl) &&
 	       PL_error(NULL, 0, NULL, ERR_DUPLICATE_KEY, ex) );
     }
   }					/* TBD: {name:value, ...} */
@@ -853,7 +967,7 @@ cmp_dict_index(DECL_LD const int *ip1, const int *ip2, cmp_dict_index_data *ctx)
   } else
   { if ( isAtom(*p) )
     { if ( isAtom(*q) )
-	rc = compareAtoms(*p, *q);
+	rc = compareAtoms(word2atom(*p), word2atom(*q));
       else
 	rc = CMP_GREATER;
     } else
@@ -1055,6 +1169,7 @@ resortDictsInCodes(Code PC, Code end)
 	  kv_code *kv_pos;
 	  Code c_tmp;
 	  Code fields_start, fs;
+	  int h_void = 0;
 
 	  if ( fields <= KV_PREALOCATED )
 	    kv_pos = kv_buf;
@@ -1067,14 +1182,14 @@ resortDictsInCodes(Code PC, Code end)
 	    PC[0] = encode(H_VOID);
 	    PC[1] = encode(H_VOID);
 	  }
-	  PC = skipArgs(PC, 1);		/* skip the type */
+	  PC = skipArgs(PC, 1, &h_void); /* skip the type */
 	  fields_start = PC;
 
 	  for(f = 0; f < fields; f++)
 	  { Code PCv = PC;
 
 	    kv_pos[f].start = PC-fields_start;
-	    PC = skipArgs(PC, 1);	/* skip value */
+	    PC = skipArgs(PC, 1, &h_void); /* skip value */
 
 	    code op = fetchop(PC);
 	    switch(op)
@@ -1088,14 +1203,14 @@ resortDictsInCodes(Code PC, Code end)
 	      default:
 	      { if ( kv_pos != kv_buf )
 		  free(kv_pos);
-		return TRUE;		/* not a dict */
+		return true;		/* not a dict */
 	      }
 	    }
 
 	    if ( !resortDictsInCodes(PCv, PC) )
 	    { if ( kv_pos != kv_buf )
 		free(kv_pos);
-	      return FALSE;
+	      return false;
 	    }
 
 	    PC = stepPC(PC);		/* skip key */
@@ -1139,7 +1254,7 @@ resortDictsInCodes(Code PC, Code end)
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 int
@@ -1170,8 +1285,8 @@ right_arg:
     Word ea;
     word dupl;
 
-    if ( fd->name == ATOM_dict && fd->arity%2 == 1 &&
-	 dict_ordered(&t->arguments[1], fd->arity/2, &dupl) == FALSE )
+    if ( fd->name == ATOM_dict && fd->arity > 1 && fd->arity%2 == 1 &&
+	 dict_ordered(&t->arguments[1], fd->arity/2, &dupl) == false )
     { DEBUG(MSG_DICT, Sdprintf("Re-ordering dict\n"));
       dict_order((Word)t, &dupl);
     }
@@ -1213,18 +1328,7 @@ PRED_IMPL("is_dict", 1, is_dict, 0)
   Word p = valTermRef(A1);
 
   deRef(p);
-  if ( isTerm(*p) )
-  { Functor f = valueTerm(*p);
-    FunctorDef fd = valueFunctor(f->definition);
-    //word dupl;
-
-    if ( fd->name == ATOM_dict &&
-	 fd->arity%2 == 1 /*&&
-	 dict_ordered(f->arguments+1, fd->arity/2, &dupl) == TRUE*/ )
-      return TRUE;
-  }
-
-  return FALSE;
+  return is_dict_term(*p);
 }
 
 
@@ -1236,17 +1340,13 @@ PRED_IMPL("is_dict", 2, is_dict, 0)
   deRef(p);
   if ( isTerm(*p) )
   { Functor f = valueTerm(*p);
-    FunctorDef fd = valueFunctor(f->definition);
-    //word dupl;
 
-    if ( fd->name == ATOM_dict &&
-	 fd->arity%2 == 1 /*&&
-	 dict_ordered(f->arguments+1, fd->arity/2,  &dupl) == TRUE*/ )
+    if ( is_dict_functor(f->definition) )
       return unify_ptrs(&f->arguments[0], valTermRef(A2),
 			ALLOW_GC|ALLOW_SHIFT);
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -1268,19 +1368,19 @@ pl_get_dict(term_t PL__t0, size_t PL__ac, int ex, control_t PL__ctx)
     { Word np = valTermRef(A1);
 
       if ( !get_dict_ex(A2, &dict, !ex) )
-	return FALSE;
+	return false;
 
       deRef(np);
       if ( is_dict_key(*np) )
       { Word vp;
 
-	if ( (vp=dict_lookup_ptr(dict, *np)) )
+	if ( (vp=dict_lookup_ptr(dict, *np, NULL)) )
 	  return unify_ptrs(vp, valTermRef(A3), ALLOW_GC|ALLOW_SHIFT);
 
 	if ( ex )
 	  return PL_error(NULL, 0, NULL, ERR_EXISTENCE3,
 			  ATOM_key, A1, A2);
-	return FALSE;
+	return false;
       }
       if ( canBind(*np) )
       { i = 1;
@@ -1288,7 +1388,7 @@ pl_get_dict(term_t PL__t0, size_t PL__ac, int ex, control_t PL__ctx)
       }
       if ( !ex )
 	return PL_type_error("dict-key", A1);
-      return FALSE;
+      return false;
     }
     case FRG_REDO:
     { Functor f;
@@ -1312,38 +1412,38 @@ pl_get_dict(term_t PL__t0, size_t PL__ac, int ex, control_t PL__ctx)
 	  deRef2(&f->arguments[i+1], np);	/* TBD: check type */
 	  if ( unify_ptrs(&f->arguments[i], valTermRef(A3),
 			  ALLOW_GC|ALLOW_SHIFT) &&
-	       _PL_unify_atomic(A1, *np) )
+	       PL_unify_atomic(A1, *np) )
 	  { PL_close_foreign_frame(fid);
 
 	    if ( i+2 < arity )
 	      ForeignRedoInt(i);
 	    else
-	      return TRUE;
+	      return true;
 	  } else if ( exception_term )
 	  { PL_close_foreign_frame(fid);
-	    return FALSE;
+	    return false;
 	  }
 	  PL_rewind_foreign_frame(fid);
 	}
 	PL_close_foreign_frame(fid);
       }
-      return FALSE;
+      return false;
     }
     default:
-      return TRUE;
+      return true;
   }
 }
 
 
 static
 PRED_IMPL("get_dict", 3, get_dict, PL_FA_NONDETERMINISTIC)
-{ return pl_get_dict(PL__t0, PL__ac, FALSE, PL__ctx);
+{ return pl_get_dict(PL__t0, PL__ac, false, PL__ctx);
 }
 
 
 static
 PRED_IMPL("get_dict_ex", 3, get_dict_ex, PL_FA_NONDETERMINISTIC)
-{ return pl_get_dict(PL__t0, PL__ac, TRUE, PL__ctx);
+{ return pl_get_dict(PL__t0, PL__ac, true, PL__ctx);
 }
 
 
@@ -1361,24 +1461,24 @@ PRED_IMPL("get_dict", 5, get_dict, 0)
   if ( !get_name_ex(A1, &key) ||
        !(*valTermRef(av+1) = key) ||
        !get_create_dict_ex(A2, dt) ||
-       !(vp=dict_lookup_ptr(*valTermRef(dt), key)) ||
+       !(vp=dict_lookup_ptr(*valTermRef(dt), key, NULL)) ||
        !unify_ptrs(vp, valTermRef(A3), ALLOW_GC|ALLOW_SHIFT) ||
        !PL_put_term(av+0, A5) )
-    return FALSE;
+    return false;
 
   for(;;)
   { word new;
     int rc;
 
     if ( (rc = put_dict(*valTermRef(dt),
-			1, valTermRef(av), &new)) == TRUE )
+			1, valTermRef(av), &new)) == true )
     { term_t t = dt+3;
 
       *valTermRef(t) = new;
       return PL_unify(A4, t);
     } else
     { if ( !makeMoreStackSpace(rc, ALLOW_GC|ALLOW_SHIFT) )
-	return FALSE;
+	return false;
     }
   }
 }
@@ -1405,7 +1505,7 @@ PRED_IMPL("dict_create", 3, dict_create, 0)
   if ( PL_get_dict_ex(A3, A2, m, DICT_GET_ALL) )
     return PL_unify(A1, m);
 
-  return FALSE;
+  return false;
 }
 
 
@@ -1455,7 +1555,7 @@ PRED_IMPL("dict_pairs", 3, dict_pairs, 0)
 	   _PL_for_dict(dict, put_pair, &ctx, PL_FOR_DICT_SORTED) == 0 )
 	return PL_unify_nil_ex(ctx.tail);
 
-      return FALSE;
+      return false;
     }
   } else
   { term_t m = PL_new_term_ref();
@@ -1464,8 +1564,62 @@ PRED_IMPL("dict_pairs", 3, dict_pairs, 0)
       return PL_unify(A1, m);
   }
 
-  return FALSE;
+  return false;
 }
+
+/** dict_same_keys(?Dict1, ?Dict2) is semidet.
+*/
+
+#define unify_dict_copy(t, dt, dict)		\
+	LDFUNC(unify_dict_copy, t, dt, dict)
+
+static bool
+unify_dict_copy(DECL_LD term_t t, term_t dt, word dict)
+{ term_t tmp = PL_new_term_ref(); /* safe, we can allocate 10 */
+  word copy;
+  int rc;
+
+  for(;;)
+  { if ( (rc=copy_keys_dict(dict, &copy)) == true )
+    { *valTermRef(tmp) = copy;
+      return PL_unify(tmp, t);
+    }
+
+    if ( !makeMoreStackSpace(rc, ALLOW_SHIFT|ALLOW_GC) )
+      return false;
+
+    Word p = valTermRef(dt);
+    deRef(p);
+    dict = *p;
+  }
+}
+
+static
+PRED_IMPL("dict_same_keys", 2, dict_same_keys, 0)
+{ PRED_LD
+  Word d1 = valTermRef(A1);
+  Word d2 = valTermRef(A2);
+
+  deRef(d1);
+  deRef(d2);
+
+  if ( is_dict_term(*d1) )
+  { if ( is_dict_term(*d2) )
+      return same_keys_dict(*d1, *d2);
+    else if ( canBind(*d2) )
+      return unify_dict_copy(A2, A1, *d1);
+    else
+      return PL_type_error("dict", A2);
+  } else if ( is_dict_term(*d2) )
+  { if ( canBind(*d1) )
+      return unify_dict_copy(A1, A2, *d2);
+    else
+      return PL_type_error("dict", A1);
+  }
+
+  return PL_type_error("dict", A1);
+}
+
 
 
 /** put_dict(+New, +DictIn, -DictOut)
@@ -1478,33 +1632,33 @@ static
 PRED_IMPL("put_dict", 3, put_dict, 0)
 { PRED_LD
   term_t dt;
-  fid_t fid = PL_open_foreign_frame();
 
-retry:
   if ( (dt = PL_new_term_refs(2)) &&
        get_create_dict_ex(A2, dt+0) &&
        get_create_dict_ex(A1, dt+1) )
-  { Functor f2 = valueTerm(*valTermRef(dt+1));
+  { retry:
+    Mark(fli_context->mark);
+    Functor f2 = valueTerm(*valTermRef(dt+1));
     int arity = arityFunctor(f2->definition);
     word new;
     int rc;
 
     if ( (rc = put_dict(*valTermRef(dt+0),
 			arity/2, &f2->arguments[1],
-			&new)) == TRUE )
+			&new)) == true )
     { term_t t = PL_new_term_ref();
 
       *valTermRef(t) = new;
       return PL_unify(A3, t);
     } else
     { assert(rc == GLOBAL_OVERFLOW);
-      PL_rewind_foreign_frame(fid);
+      Undo(fli_context->mark);
       if ( makeMoreStackSpace(rc, ALLOW_GC|ALLOW_SHIFT) )
 	goto retry;
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 /** put_dict(+Key, +Dict0, +Value, -Dict)
@@ -1512,35 +1666,37 @@ retry:
 True when Dict is a copy of Dict0 with Name Value added or replaced.
 */
 
-#define put_dict4(key, dict, value, newdict) LDFUNC(put_dict4, key, dict, value, newdict)
+#define put_dict4(key, dict, value, newdict) \
+	LDFUNC(put_dict4, key, dict, value, newdict)
+
 static foreign_t
 put_dict4(DECL_LD term_t key, term_t dict, term_t value, term_t newdict)
 { term_t dt = PL_new_term_refs(3);
   term_t av = dt+1;
-  fid_t fid = PL_open_foreign_frame();
 
-retry:
   if ( get_create_dict_ex(dict, dt) &&
        get_name_ex(key, valTermRef(av+1)) &&
        PL_put_term(av, value) )
-  { word new;
+  { retry:
+    Mark(fli_context->mark);
+    word new;
     int rc;
 
     if ( (rc = put_dict(*valTermRef(dt),
-			1, valTermRef(av), &new)) == TRUE )
+			1, valTermRef(av), &new)) == true )
     { term_t t = PL_new_term_ref();
 
       *valTermRef(t) = new;
       return PL_unify(newdict, t);
     } else
     { if ( makeMoreStackSpace(rc, ALLOW_GC|ALLOW_SHIFT) )
-      { PL_rewind_foreign_frame(fid);
+      { Undo(fli_context->mark);
 	goto retry;
       }
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -1561,55 +1717,26 @@ Backtrackable destructive assignment, similar to setarg/3.
 #define SETDICT_BACKTRACKABLE    0x1
 #define SETDICT_LINK		0x2
 
-#define setdict(key, dict, value, flags) LDFUNC(setdict, key, dict, value, flags)
-static int
-setdict(DECL_LD term_t key, term_t dict, term_t value, int flags)
+#define setdict(key, dict, value, flags) \
+	LDFUNC(setdict, key, dict, value, flags)
+
+static bool
+setdict(DECL_LD term_t key, term_t dict, term_t value, unsigned int flags)
 { word k, m;
-  Word val;
 
-retry:
-  val = valTermRef(value);
-  deRef(val);
-
-  if ( (flags&SETDICT_BACKTRACKABLE) )
-  { if ( !hasGlobalSpace(0) )
-    { int rc;
-
-      if ( (rc=ensureGlobalSpace(0, ALLOW_GC)) != TRUE )
-	return raiseStackOverflow(rc);
-      goto retry;
-    }
-  } else
-  { if ( storage(*val) == STG_GLOBAL )
-    { if ( !(flags & SETDICT_LINK) )
-      { term_t copy = PL_new_term_ref();
-
-	if ( !duplicate_term(value, copy) )
-	  return FALSE;
-	value = copy;
-	val = valTermRef(value);
-	deRef(val);
-      }
-      freezeGlobal();
-    }
-  }
-
-  if ( get_dict_ex(dict, &m, TRUE) &&
+  if ( get_dict_ex(dict, &m, true) &&
        get_name_ex(key, &k) )
   { Word vp;
+    size_t arg;
 
-    if ( (vp=dict_lookup_ptr(m, k)) )
-    { if ( (flags&SETDICT_BACKTRACKABLE) )
-	TrailAssignment(vp);
-      unify_vp(vp, val);
-      return TRUE;
-    }
+    if ( (vp=dict_lookup_ptr(m, k, &arg)) )
+      return setarg(arg*2, dict, value, flags);
 
     return PL_error(NULL, 0, NULL, ERR_EXISTENCE3,
 		    ATOM_key, key, dict);
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -1617,7 +1744,7 @@ static
 PRED_IMPL("b_set_dict", 3, b_set_dict, 0)
 { PRED_LD
 
-  return setdict(A1, A2, A3, SETDICT_BACKTRACKABLE);
+  return setdict(A1, A2, A3, SETARG_BACKTRACKABLE);
 }
 
 static
@@ -1631,7 +1758,7 @@ static
 PRED_IMPL("nb_link_dict", 3, nb_link_dict, 0)
 { PRED_LD
 
-  return setdict(A1, A2, A3, SETDICT_LINK);
+  return setdict(A1, A2, A3, SETARG_LINK);
 }
 
 
@@ -1653,12 +1780,12 @@ retry:
        get_name_ex(A1, &key) )
   { Word vp;
 
-    if ( (vp=dict_lookup_ptr(*valTermRef(mt), key)) &&
+    if ( (vp=dict_lookup_ptr(*valTermRef(mt), key, NULL)) &&
 	 unify_ptrs(vp, valTermRef(A3), ALLOW_GC|ALLOW_SHIFT) )
     { int rc;
       word new;
 
-      if ( (rc=del_dict(*valTermRef(mt), key, &new)) == TRUE )
+      if ( (rc=del_dict(*valTermRef(mt), key, &new)) == true )
       { term_t t = PL_new_term_ref();
 
 	*valTermRef(t) = new;
@@ -1673,7 +1800,7 @@ retry:
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -1694,25 +1821,25 @@ retry:
     int rc = select_dict(*valTermRef(dt+0), *valTermRef(dt+1), &r);
 
     switch(rc)
-    { case TRUE:
+    { case true:
       { term_t t = PL_new_term_ref();
 
 	*valTermRef(t) = r;
 	return PL_unify(A3, t);
       }
-      case FALSE:
+      case false:
 	return rc;
       case MEMORY_OVERFLOW:
 	return PL_no_memory();
       default:
 	Undo(fli_context->mark);
 	if ( !makeMoreStackSpace(rc, ALLOW_GC|ALLOW_SHIFT) )
-	  return FALSE;
+	  return false;
         goto retry;
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -1728,20 +1855,20 @@ retry:
     int rc = unify_left_dict(*valTermRef(dt+0), *valTermRef(dt+1));
 
     switch(rc)
-    { case TRUE:
-      case FALSE:
+    { case true:
+      case false:
 	return rc;
       case MEMORY_OVERFLOW:
 	return PL_no_memory();
       default:
 	Undo(fli_context->mark);
 	if ( !makeMoreStackSpace(rc, ALLOW_GC|ALLOW_SHIFT) )
-	  return FALSE;
+	  return false;
         goto retry;
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -1756,19 +1883,100 @@ retry:
   { int rc = partial_unify_dict(*valTermRef(dt+0), *valTermRef(dt+1));
 
     switch(rc)
-    { case TRUE:
-      case FALSE:
+    { case true:
+      case false:
 	return rc;
       case MEMORY_OVERFLOW:
 	return PL_no_memory();
       default:
 	if ( !makeMoreStackSpace(rc, ALLOW_GC|ALLOW_SHIFT) )
-	  return FALSE;
+	  return false;
         goto retry;
     }
   }
 
-  return FALSE;
+  return false;
+}
+
+/** '$get_dict_kv'(+Index, +Dict, -K, -V)
+    '$get_dict_kv'(+Index, +Dict1, +Dict2, -K, -V1, -V2)
+*/
+
+#define get_dict_kv(t0, arity)			\
+	LDFUNC(get_dict_kv, t0, arity)
+
+static bool
+get_dict_kv(DECL_LD term_t t0, int arity)
+{ size_t i;
+
+  if ( !PL_get_size_ex(t0, &i) || i == 0 )
+    return false;
+
+  Word p = valTermRef(t0+1);
+  deRef(p);
+  if ( isTerm(*p) )
+  { Functor f = valueTerm(*p);
+    size_t darity = arityFunctor(f->definition);
+
+    if ( !is_dict_functor(f->definition) )
+      return PL_type_error("dict", t0+1);
+
+    if ( i > darity/2 )
+      return false;
+    i--;
+
+    size_t dict_count = (arity-2)/2;
+    size_t key_arg = t0+1+dict_count;
+    term_t value = PL_new_term_ref();
+    term_t key = PL_new_term_ref();
+
+    for(size_t di=0; di < dict_count; di++)
+    { term_t dict = t0+1+di;
+
+      if ( di > 0 && !PL_is_functor(dict, f->definition) )
+      { if ( !PL_is_dict(dict) )
+	  return PL_type_error("dict", dict);
+	else
+	  return PL_domain_error("compatible_dict", dict);
+      }
+      _PL_get_arg(2+i*2, dict, value);
+      _PL_get_arg(3+i*2, dict, key);
+
+      if ( !PL_unify(key_arg, key) )
+      { if ( di == 0 )
+	  return false;
+	return PL_domain_error("compatible_dict", dict);
+      }
+
+      if ( !PL_unify(key_arg+1+di, value) )
+	return false;
+    }
+
+    return true;
+  }
+
+  return PL_type_error("dict", t0+1);
+}
+
+static
+PRED_IMPL("$get_dict_kv", 4, get_dict_kv, 0)
+{ PRED_LD
+
+  return get_dict_kv(A1, 4);
+}
+
+static
+PRED_IMPL("$get_dict_kv", 6, get_dict_kv, 0)
+{ PRED_LD
+
+  return get_dict_kv(A1, 6);
+}
+
+static
+PRED_IMPL("$get_dict_kv", 8, get_dict_kv, 0)
+{ PRED_LD
+
+  return get_dict_kv(A1, 8);
 }
 
 
@@ -1776,22 +1984,24 @@ retry:
 Part of FLI
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+bool
 PL_get_dict_key(atom_t key, term_t dict, term_t value)
 { GET_LD
   word d;
   Word vp;
 
-  if ( !is_dict_key(key) )
-    return -1;
-  if ( !get_dict_ex(dict, &d, FALSE) )
-    return FALSE;
-  if ( (vp=dict_lookup_ptr(d, key)) )
+  valid_dict_key(key);
+  valid_term_t(dict);
+  valid_term_t(value);
+
+  if ( !get_dict_ex(dict, &d, false) )
+    return false;
+  if ( (vp=dict_lookup_ptr(d, key, NULL)) )
   { *valTermRef(value) = linkValI(vp);
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -1800,20 +2010,24 @@ PL_get_dict_key(atom_t key, term_t dict, term_t value)
 		 *******************************/
 
 BeginPredDefs(dict)
-  PRED_DEF("is_dict",	   1, is_dict,	    0)
-  PRED_DEF("is_dict",	   2, is_dict,	    0)
-  PRED_DEF("dict_create",  3, dict_create,  0)
-  PRED_DEF("dict_pairs",   3, dict_pairs,   0)
-  PRED_DEF("put_dict",	   3, put_dict,	    0)
-  PRED_DEF("put_dict",	   4, put_dict,	    0)
-  PRED_DEF("b_set_dict",   3, b_set_dict,   0)
-  PRED_DEF("nb_set_dict",  3, nb_set_dict,  0)
-  PRED_DEF("nb_link_dict", 3, nb_link_dict, 0)
-  PRED_DEF("get_dict",	   3, get_dict,	    PL_FA_NONDETERMINISTIC)
-  PRED_DEF("$get_dict_ex", 3, get_dict_ex,  PL_FA_NONDETERMINISTIC)
-  PRED_DEF("del_dict",	   4, del_dict,	    0)
-  PRED_DEF("get_dict",     5, get_dict,     0)
-  PRED_DEF("select_dict",  3, select_dict,  0)
-  PRED_DEF(":<",	   2, unify_left_dict,  0)
-  PRED_DEF(">:<",	   2, punify_dict,  0)
+  PRED_DEF("is_dict",	     1, is_dict,	0)
+  PRED_DEF("is_dict",	     2, is_dict,	0)
+  PRED_DEF("dict_create",    3, dict_create,    0)
+  PRED_DEF("dict_pairs",     3, dict_pairs,     0)
+  PRED_DEF("dict_same_keys", 2, dict_same_keys, 0)
+  PRED_DEF("put_dict",	     3, put_dict,       0)
+  PRED_DEF("put_dict",	     4, put_dict,       0)
+  PRED_DEF("b_set_dict",     3, b_set_dict,     0)
+  PRED_DEF("nb_set_dict",    3, nb_set_dict,    0)
+  PRED_DEF("nb_link_dict",   3, nb_link_dict,   0)
+  PRED_DEF("get_dict",	     3, get_dict,	PL_FA_NONDETERMINISTIC)
+  PRED_DEF("$get_dict_ex",   3, get_dict_ex,    PL_FA_NONDETERMINISTIC)
+  PRED_DEF("del_dict",	     4, del_dict,	0)
+  PRED_DEF("get_dict",       5, get_dict,       0)
+  PRED_DEF("select_dict",    3, select_dict,    0)
+  PRED_DEF(":<",	     2, unify_left_dict,0)
+  PRED_DEF(">:<",	     2, punify_dict,    0)
+  PRED_DEF("$get_dict_kv",   4, get_dict_kv,    0)
+  PRED_DEF("$get_dict_kv",   6, get_dict_kv,    0)
+  PRED_DEF("$get_dict_kv",   8, get_dict_kv,    0)
 EndPredDefs

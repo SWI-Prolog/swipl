@@ -200,7 +200,7 @@ static void
 rehashFunctors(void)
 { FunctorTable newtab;
   size_t index;
-  int i, last = FALSE;
+  int i, last = false;
 
   if ( functorDefTable->buckets * 2 >= GD->statistics.functors )
     return;
@@ -215,7 +215,7 @@ rehashFunctors(void)
 	Sdprintf("Rehashing functor-table (%d --> %d)\n",
 		 functorDefTable->buckets, newtab->buckets));
 
-  GD->functors.rehashing = TRUE;
+  GD->functors.rehashing = true;
   for(index=1, i=0; !last; i++)
   { size_t upto = (size_t)2<<i;
     FunctorDef *b;
@@ -225,7 +225,7 @@ rehashFunctors(void)
 
       if ( upto >= high )
       { upto = high;
-	last = TRUE;
+	last = true;
       }
 
       for(; index<upto; index++)
@@ -242,7 +242,7 @@ rehashFunctors(void)
   }
 
   functorDefTable = newtab;
-  GD->functors.rehashing = FALSE;
+  GD->functors.rehashing = false;
   maybe_free_functor_tables();
 }
 
@@ -253,7 +253,10 @@ not known.
 
 functor_t
 isCurrentFunctor(atom_t atom, size_t arity)
-{ GET_LD
+{
+#ifdef O_PLMT
+  GET_LD
+#endif
   unsigned int v;
   int buckets;
   FunctorDef *table;
@@ -346,7 +349,7 @@ registerControlFunctors()
     FUNCTOR_colon2,			/* Module:Goal */
     FUNCTOR_dollar1,			/* $(Goal) */
 #ifdef O_CALL_AT_MODULE
-    FUNCTOR_xpceref2,			/* Goal@Module */
+    FUNCTOR_at_sign2,			/* Goal@Module */
 #endif
     (functor_t) 0
   };
@@ -460,12 +463,12 @@ checkFunctors()
 }
 #endif
 
-word
+foreign_t
 pl_current_functor(term_t name, term_t arity, control_t h)
 { GET_LD
   atom_t nm = 0;
   size_t index;
-  int i, last=FALSE;
+  int i, last=false;
   int  ar;
   fid_t fid;
 
@@ -473,7 +476,7 @@ pl_current_functor(term_t name, term_t arity, control_t h)
   { case FRG_FIRST_CALL:
       if ( PL_get_atom(name, &nm) &&
 	   PL_get_integer(arity, &ar) )
-	return isCurrentFunctor(nm, ar) ? TRUE : FALSE;
+	return isCurrentFunctor(nm, ar) ? true : false;
 
       if ( !(PL_is_integer(arity) || PL_is_variable(arity)) )
 	return PL_error("current_functor", 2, NULL, ERR_TYPE,
@@ -502,7 +505,7 @@ pl_current_functor(term_t name, term_t arity, control_t h)
 
     if ( upto >= high )
     { upto = high;
-      last = TRUE;
+      last = true;
     }
 
     for(; index<upto; index++)
@@ -522,7 +525,7 @@ pl_current_functor(term_t name, term_t arity, control_t h)
   }
 
   PL_UNLOCK(L_FUNCTOR);
-  return FALSE;
+  return false;
 }
 
 

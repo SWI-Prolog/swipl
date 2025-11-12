@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2022, University of Amsterdam
+    Copyright (c)  1985-2025, University of Amsterdam
 			      VU University Amsterdam
 			      CWI, Amsterdam
 			      SWI-Prolog Solutions b.v.
@@ -39,6 +39,7 @@
 #include "pl-read.h"
 #include "pl-arith.h"
 #include <math.h>
+#include <float.h>
 #include "os/pl-ctype.h"
 #include "os/pl-utf8.h"
 #include "os/pl-dtoa.h"
@@ -55,6 +56,7 @@
 #include "pl-op.h"
 #include "pl-modul.h"
 #include "pl-setup.h"
+#include "pl-attvar.h"
 #include <errno.h>
 
 typedef const unsigned char * cucharp;
@@ -87,6 +89,11 @@ static void	  addUTF8Buffer(Buffer b, int c);
 #define PlPunctW(c)	CharTypeW(c, == PU, 0)
 #define PlSoloW(c)	CharTypeW(c, == SO, U_OTHER)
 #define PlInvalidW(c)   (uflagsW(c) == 0)
+
+/* these functions  must be of type  int (*)(int) as they  are used by
+ * os/pl-ctype.c for function pointers  of this type.  Other functions
+ * in this class return -1 for false and a code point otherwise.
+ */
 
 int
 f_is_prolog_var_start(int c)
@@ -125,7 +132,7 @@ unicode_quoted_escape(int c)
 
     return !uflags || (uflags&(U_SEPARATOR|U_CONTROL));
   } else
-  { return FALSE;
+  { return false;
   }
 }
 
@@ -157,12 +164,10 @@ decimal_weight(int code)
 }
 
 
-
-
-/* unquoted_atomW() returns TRUE if text can be written to s as unquoted atom
+/* unquoted_atomW() returns true if text can be written to s as unquoted atom
 */
 
-static int
+static bool
 truePrologFlagNoLD(unsigned int flag)
 { GET_LD
 
@@ -170,20 +175,20 @@ truePrologFlagNoLD(unsigned int flag)
 }
 
 
-int
+bool
 atom_varnameW(const pl_wchar_t *s, size_t len)
 { if ( f_is_prolog_var_start(*s) )
   { for(s++; --len > 0; s++)
     { int c = *s;
 
       if ( !PlIdContW(c) )
-	return FALSE;
+	return false;
     }
 
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -225,7 +230,7 @@ PRED_IMPL("$is_named_var", 1, is_named_var, 0)
   if ( PL_get_atom_ex(A1, &name) )
     return atom_is_named_var(name) == 1;
 
-  return FALSE;
+  return false;
 }
 
 
@@ -250,8 +255,8 @@ foreign_t
 pl_char_conversion(term_t in, term_t out)
 { int cin, cout;
 
-  if ( !PL_get_char(in, &cin, FALSE) ||
-       !PL_get_char(out, &cout, FALSE) )
+  if ( !PL_get_char(in, &cin, false) ||
+       !PL_get_char(out, &cout, false) )
     fail;
 
   char_conversion_table[cin] = cout;
@@ -271,7 +276,7 @@ pl_current_char_conversion(term_t in, term_t out, control_t h)
     { int cin;
 
       if ( !PL_is_variable(in) )
-      { if ( PL_get_char(in, &cin, FALSE) )
+      { if ( PL_get_char(in, &cin, false) )
 	  return PL_unify_char(out, char_conversion_table[cin], PL_CHAR);
 	fail;
       }
@@ -288,7 +293,7 @@ pl_current_char_conversion(term_t in, term_t out, control_t h)
   }
 
   if ( !(fid = PL_open_foreign_frame()) )
-    return FALSE;
+    return false;
 
   for( ; ctx < 256; ctx++)
   { if ( PL_unify_char(in, ctx, PL_CHAR) &&
@@ -323,9 +328,6 @@ another read.  Notable raw reading needs to be studied studied once more
 as it  takes  about  30%  of  the  entire  compilation  time  and  looks
 promissing  for  optimisations.   It  also  could  be  made  a  bit more
 readable.
-
-This module is considerably faster when compiled  with  GCC,  using  the
--finline-functions option.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 typedef struct variable
@@ -335,12 +337,13 @@ typedef struct variable
   unsigned int	times;		/* Number of occurences */
   unsigned int	hash_next;	/* Offset for next with same hash */
   word		signature;	/* Pseudo atom */
+  bool		labeled;        /* Used in X{= : Value} */
 } *Variable;
 
 typedef struct token
 { int type;			/* type of token */
-  intptr_t start;		/* start-position */
-  intptr_t end;			/* end-position */
+  int64_t start;		/* start-position */
+  int64_t end;			/* end-position */
   union
   { number	number;		/* int or float */
     atom_t	atom;		/* atom value */
@@ -386,7 +389,8 @@ typedef struct
   } op;				/* Name of the operator */
   unsigned isblock : 1;		/* [...] or {...} operator */
   unsigned isterm : 1;		/* Union is a term */
-  char	kind;			/* kind (prefix/postfix/infix) */
+  char	kind;			/* kind (OP_PREFIX, ...) */
+  unsigned char type;		/* OP_FX, ... */
   short	left_pri;		/* priority at left-hand */
   short	right_pri;		/* priority at right hand */
   short	op_pri;			/* priority of operator */
@@ -670,7 +674,7 @@ ptr_to_location(const unsigned char *here, source_location *pos, ReadData _PL_rd
 static int
 unify_location(term_t loc, const source_location *pos, ReadData _PL_rd)
 { GET_LD
-  int rc = TRUE;
+  int rc = true;
 
   if ( pos->file )				/* reading a file */
   { rc = PL_unify_term(loc,
@@ -680,14 +684,14 @@ unify_location(term_t loc, const source_location *pos, ReadData _PL_rd)
 			 PL_INT,   pos->position.linepos,
 			 PL_INT64, pos->position.charno);
   } else if ( isStringStream(rb.stream) )
-  { intptr_t charno;
+  { int64_t charno;
 
     charno = pos->position.charno - _PL_rd->start_of_term.position.charno;
 
     rc = PL_unify_term(loc,
 		       PL_FUNCTOR, FUNCTOR_string2,
 			 PL_UTF8_STRING, rdbase,
-			 PL_INTPTR,      charno);
+			 PL_INT64,       charno);
   } else				/* any stream */
   { term_t stream;
 
@@ -699,7 +703,7 @@ unify_location(term_t loc, const source_location *pos, ReadData _PL_rd)
 			  PL_INT,   pos->position.lineno,
 			  PL_INT,   pos->position.linepos,
 			  PL_INT64, pos->position.charno) )
-      rc = FALSE;
+      rc = false;
   }
 
   return rc;
@@ -721,11 +725,11 @@ makeErrorTerm(const char *id_str, const char *id_arg,
 	      term_t id_term, ReadData _PL_rd)
 { GET_LD
   term_t ex, loc=0;			/* keep compiler happy */
-  int rc = TRUE;
+  int rc = true;
 
   if ( !(ex = PL_new_term_ref()) ||
        !(loc = PL_new_term_ref()) )
-    rc = FALSE;
+    rc = false;
 
   if ( rc && !id_term )
   { if ( (id_term=PL_new_term_ref()) )
@@ -737,7 +741,7 @@ makeErrorTerm(const char *id_str, const char *id_arg,
       { rc = PL_put_atom_chars(id_term, id_str);
       }
     } else
-    { rc = FALSE;
+    { rc = false;
     }
   }
 
@@ -762,12 +766,12 @@ errorWarningA1(const char *id_str, const char *id_arg,
   if ( Sferror(rb.stream) )		/* Stream error; will be reported */
     fail;				/* elsewhere */
 
-  LD->exception.processing = TRUE;	/* allow using spare stack */
+  LD->exception.processing = true;	/* allow using spare stack */
 
   ex = makeErrorTerm(id_str, id_arg, id_term, _PL_rd);
 
   if ( _PL_rd )
-  { _PL_rd->has_exception = TRUE;
+  { _PL_rd->has_exception = true;
     if ( ex )
       PL_put_term(_PL_rd->exception, ex);
     else
@@ -802,7 +806,7 @@ singletonWarning(term_t term, const char *which, const char **vars, int nvars)
   { term_t l = PL_new_term_ref();
     term_t a = PL_copy_term_ref(l);
     term_t h = PL_new_term_ref();
-    int n, rc = TRUE;
+    int n, rc = true;
 
     for(n=0; n<nvars; n++)
     { if ( !(rc=PL_unify_list(a, h, a)) ||
@@ -821,13 +825,13 @@ singletonWarning(term_t term, const char *which, const char **vars, int nvars)
     return rc;
   }
 
-  return FALSE;
+  return false;
 }
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-	FALSE	return false
-	TRUE	redo
+	false	return false
+	true	redo
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static int
@@ -842,9 +846,9 @@ reportReadError(ReadData rd)
   PL_clear_exception();
 
   if ( rd->on_error == ATOM_dec10 )
-    return TRUE;
+    return true;
 
-  return FALSE;
+  return false;
 }
 
 
@@ -919,7 +923,7 @@ growToBuffer(int c, ReadData _PL_rd)
   rb.end  = rb.base + rb.size;
   _PL_rd->posi = 0;
 
-  *rb.here++ = c;
+  *rb.here++ = (char)c;
 }
 
 
@@ -930,7 +934,7 @@ addByteToBuffer(int c, ReadData _PL_rd)
   if ( rb.here >= rb.end )
     growToBuffer(c, _PL_rd);
   else
-    *rb.here++ = c;
+    *rb.here++ = (char)c;
 }
 
 
@@ -999,7 +1003,7 @@ getchr__(ReadData _PL_rd)
 			}
 #define set_start_line { if ( !something_read ) \
 			 { setCurrentSourceLocation(_PL_rd); \
-			   something_read++; \
+			   something_read = true; \
 			 } \
 		       }
 
@@ -1038,7 +1042,7 @@ raw_read_quoted(int q, ReadData _PL_rd)
   while((c=getchrq()) != EOF && c != q)
   {
   next:
-    if ( c == '\\' && true(_PL_rd, M_CHARESCAPE) )
+    if ( c == '\\' && ison(_PL_rd, M_CHARESCAPE) )
     { int base;
 
       addToBuffer(c, _PL_rd);
@@ -1070,7 +1074,7 @@ raw_read_quoted(int q, ReadData _PL_rd)
 	    goto eofinstr;
 	  addToBuffer(c, _PL_rd);
 	  if ( c == q )
-	    return TRUE;
+	    return true;
 	  continue;
 	case 'c':			/* \c<whitespace>* */
 	  addToBuffer(c, _PL_rd);	/* 'c' */
@@ -1093,7 +1097,7 @@ raw_read_quoted(int q, ReadData _PL_rd)
 	      goto eofinstr;
 	    addToBuffer(c, _PL_rd);
 	    if ( c == q )
-	      return TRUE;
+	      return true;
 	  }
 	  continue;			/* \symbolic-control-char */
       }
@@ -1106,15 +1110,15 @@ out:
   { char what[2];
   eofinstr:
     if ( Sferror(rb.stream) )
-      return FALSE;
+      return false;
     setErrorLocation(pos, _PL_rd);
-    what[0] = q;
+    what[0] = (char)q;
     what[1] = EOS;
     rawSyntaxError1("end_of_file_in_quoted", what);
   }
   addToBuffer(c, _PL_rd);
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1127,7 +1131,7 @@ raw_read_quasi_quotation(int c, ReadData _PL_rd)
   { addToBuffer(c, _PL_rd);
     if ( c == '}' &&
 	 rb.here[-2] == '|' )
-      return TRUE;
+      return true;
   }
 
   rawSyntaxError("end_of_file_in_quasi_quotation");
@@ -1156,11 +1160,11 @@ add_comment(DECL_LD Buffer b, IOPOS *pos, ReadData _PL_rd)
        !PL_unify_chars(str, PL_STRING|REP_UTF8,
 		       entriesBuffer(b, char),
 		       baseBuffer(b, char)) )
-    return FALSE;
+    return false;
 
   assert(_PL_rd->comments);
   if ( !PL_unify_list(_PL_rd->comments, head, _PL_rd->comments) )
-    return FALSE;
+    return false;
   if ( pos )
   { if ( !PL_unify_term(head,
 			PL_FUNCTOR, FUNCTOR_minus2,
@@ -1170,17 +1174,17 @@ add_comment(DECL_LD Buffer b, IOPOS *pos, ReadData _PL_rd)
 			    PL_INT, pos->linepos,
 			    PL_INT, 0,
 			  PL_TERM, str) )
-      return FALSE;
+      return false;
   } else
   { if ( !PL_unify_term(head,
 			PL_FUNCTOR, FUNCTOR_minus2,
 			  PL_ATOM, ATOM_minus,
 			PL_TERM, str) )
-      return FALSE;
+      return false;
   }
 
   PL_reset_term_refs(head);
-  return TRUE;
+  return true;
 }
 
 
@@ -1188,7 +1192,7 @@ add_comment(DECL_LD Buffer b, IOPOS *pos, ReadData _PL_rd)
 static int
 raw_read2(DECL_LD ReadData _PL_rd)
 { int c;
-  bool something_read = FALSE;
+  bool something_read = false;
   IOPOS pbuf;					/* comment start */
   IOPOS *pos;
 
@@ -1203,16 +1207,16 @@ raw_read2(DECL_LD ReadData _PL_rd)
     switch(c)
     { case EOF:
 		if ( Sferror(rb.stream) )
-		  return FALSE;
+		  return false;
 		if ( Sfpasteof(rb.stream) )
 		{ term_t stream;
 
-		  LD->exception.processing = TRUE;
+		  LD->exception.processing = true;
 		  stream = PL_new_term_ref();
 		  PL_unify_stream_or_alias(stream, rb.stream);
 		  PL_error(NULL, 0, NULL, ERR_PERMISSION,
 			   ATOM_input, ATOM_past_end_of_stream, stream);
-		  return FALSE;
+		  return false;
 		}
 		if ( something_read )
 		{ if ( isStringStream(rb.stream) )
@@ -1220,14 +1224,17 @@ raw_read2(DECL_LD ReadData _PL_rd)
 		    addToBuffer('.', _PL_rd);
 		    ensure_space(' ');
 		    addToBuffer(EOS, _PL_rd);
-		    return TRUE;
+		    return true;
 		  }
 		  rawSyntaxError("end_of_file");
+		} else if ( ison(_PL_rd, M_RDSTRING_TERM) )
+		{ rawSyntaxError("end_of_string");
+		} else
+		{ set_start_line;
+		  strcpy((char *)rb.base, "end_of_file. ");
+		  rb.here = rb.base + 14;
+		  return true;
 		}
-		set_start_line;
-		strcpy((char *)rb.base, "end_of_file. ");
-		rb.here = rb.base + 14;
-		return TRUE;
       case '/': if ( rb.stream->position )
 		{ pbuf = *rb.stream->position;
 		  pbuf.charno--;
@@ -1257,7 +1264,7 @@ raw_read2(DECL_LD ReadData _PL_rd)
 		      discardBuffer(cbuf);
 		    setErrorLocation(pos, _PL_rd);
 		    if ( Sferror(rb.stream) )
-		      return FALSE;
+		      return false;
 		    rawSyntaxError("end_of_file_in_block_comment");
 		  }
 		  if ( cbuf )
@@ -1281,7 +1288,7 @@ raw_read2(DECL_LD ReadData _PL_rd)
 			  discardBuffer(cbuf);
 			setErrorLocation(pos, _PL_rd);
 			if ( Sferror(rb.stream) )
-			  return FALSE;
+			  return false;
 			rawSyntaxError("end_of_file_in_block_comment");
 		      case '*':
 			if ( last == '/' )
@@ -1293,7 +1300,7 @@ raw_read2(DECL_LD ReadData _PL_rd)
 			{ if ( cbuf )
 			  { if ( !add_comment(cbuf, pos, _PL_rd) )
 			    { discardBuffer(cbuf);
-			      return FALSE;
+			      return false;
 			    }
 			    discardBuffer(cbuf);
 			  }
@@ -1311,7 +1318,7 @@ raw_read2(DECL_LD ReadData _PL_rd)
 		  addToBuffer('/', _PL_rd);
 		  if ( isSymbolW(c) )
 		  { while( c != EOF && isSymbolW(c) &&
-			   !(c == '`' && true(_PL_rd, BQ_MASK)) )
+			   !(c == '`' && ison(_PL_rd, BQ_MASK)) )
 		    { addToBuffer(c, _PL_rd);
 		      c = getchr();
 		    }
@@ -1361,7 +1368,7 @@ raw_read2(DECL_LD ReadData _PL_rd)
 		  }
 		  if ( !add_comment(cbuf, pos, _PL_rd) )
 		  { discardBuffer(cbuf);
-		    return FALSE;
+		    return false;
 		  }
 		  discardBuffer(cbuf);
 		} else
@@ -1447,18 +1454,18 @@ raw_read2(DECL_LD ReadData _PL_rd)
 		    rawSyntaxError("end_of_clause");
 		  addToBuffer(' ', _PL_rd);
 		  addToBuffer(EOS, _PL_rd);
-		  return TRUE;
+		  return true;
 		}
 		c = getchr();
 		if ( PlSymbolW(c) )
 		{ while( c != EOF && PlSymbolW(c) &&
-			 !(c == '`' && true(_PL_rd, BQ_MASK)) )
+			 !(c == '`' && ison(_PL_rd, BQ_MASK)) )
 		  { addToBuffer(c, _PL_rd);
 		    c = getchr();
 		  }
 		}
 		goto handle_c;
-      case '`': if ( true(_PL_rd, BQ_MASK) )
+      case '`': if ( ison(_PL_rd, BQ_MASK) )
 		{ set_start_line;
 		  if ( !raw_read_quoted(c, _PL_rd) )
 		    fail;
@@ -1483,7 +1490,7 @@ raw_read2(DECL_LD ReadData _PL_rd)
 		      do
 		      { addToBuffer(c, _PL_rd);
 			c = getchr();
-			if ( c == '`' && true(_PL_rd, BQ_MASK) )
+			if ( c == '`' && ison(_PL_rd, BQ_MASK) )
 			  break;
 		      } while( c != EOF && PlSymbolW(c) );
 		      goto handle_c;
@@ -1499,7 +1506,7 @@ raw_read2(DECL_LD ReadData _PL_rd)
 			   rb.here[-1] == '|' &&
 			   truePrologFlag(PLFLAG_QUASI_QUOTES) )
 		      { if ( !raw_read_quasi_quotation(c, _PL_rd) )
-			  return FALSE;
+			  return false;
 			break;
 		      }
 #endif
@@ -1541,9 +1548,9 @@ raw_read(DECL_LD ReadData _PL_rd, unsigned char **endp)
   { ttybuf tab;
 
     PushTty(rb.stream, &tab, TTY_SAVE);		/* make sure tty is sane */
-    PopTty(rb.stream, &ttytab, FALSE);
+    PopTty(rb.stream, &ttytab, false);
     rc = raw_read2(_PL_rd);
-    PopTty(rb.stream, &tab, TRUE);
+    PopTty(rb.stream, &tab, true);
   } else
   { rc = raw_read2(_PL_rd);
   }
@@ -1575,6 +1582,11 @@ Note that the variables are kept  in   a  simple  array. This means that
 reading terms with many named variables   result in quadratic behaviour.
 Not sure whether it is worth the trouble to use a hash-table here.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+#define isVarInfo(w)	(tagex(w) == (TAG_VAR|STG_RESERVED))
+#define consVarInfo(i)	((word)(nv)<<LMASK_BITS)|TAG_VAR|STG_RESERVED
+#define valVarInfo(w)   ((size_t)((word)(w)>>LMASK_BITS))
+#define VAR_INDEX_HASH_OFFSET 1
 
 #define MAX_SINGLETONS 256		/* max singletons _reported_ */
 
@@ -1615,7 +1627,7 @@ linkVariable(Variable var, ReadData _PL_rd)
 { unsigned int key = variableHash(var) % var_hash_size;
 
   var->hash_next = var_buckets[key];
-  var_buckets[key] = (var->signature>>LMASK_BITS)+1;
+  var_buckets[key] = valVarInfo(var->signature)+VAR_INDEX_HASH_OFFSET;
 }
 
 
@@ -1640,7 +1652,7 @@ rehashVariables(ReadData _PL_rd)
 
 static int
 hashVariable(Variable var, ReadData _PL_rd)
-{ unsigned int i = var->signature>>LMASK_BITS;
+{ size_t i = valVarInfo(var->signature);
 
   if ( i > var_hash_size )
     return rehashVariables(_PL_rd);
@@ -1650,26 +1662,23 @@ hashVariable(Variable var, ReadData _PL_rd)
   }
 }
 
-					/* use hash-key? */
+static inline Variable
+var_from_index(size_t i, ReadData _PL_rd)
+{ return &baseBuffer(&var_buffer, struct variable)[i];
+}
 
-static Variable
+static inline Variable
 varInfo(word w, ReadData _PL_rd)
-{ if ( tagex(w) == (TAG_VAR|STG_RESERVED) )
-    return &baseBuffer(&var_buffer, struct variable)[w>>LMASK_BITS];
+{ if ( isVarInfo(w) )
+    return var_from_index(valVarInfo(w), _PL_rd);
 
   return NULL;
 }
 
 
 static Variable
-var_from_index(unsigned int i, ReadData _PL_rd)
-{ return &baseBuffer(&var_buffer, struct variable)[i-1];
-}
-
-static Variable
 lookupVariable(const char *name, size_t len, ReadData _PL_rd)
-{ struct variable next;
-  Variable var;
+{ Variable var;
   size_t nv;
 
   if ( !isAnonVarNameN(name, len) )		/* always add _ */
@@ -1678,7 +1687,7 @@ lookupVariable(const char *name, size_t len, ReadData _PL_rd)
       unsigned int vi;
 
       for(vi = var_buckets[key]; vi; vi=var->hash_next)
-      { var = var_from_index(vi, _PL_rd);
+      { var = var_from_index(vi-VAR_INDEX_HASH_OFFSET, _PL_rd);
 
 	if ( len == var->namelen && strncmp(name, var->name, len) == 0 )
 	{ var->times++;
@@ -1695,14 +1704,15 @@ lookupVariable(const char *name, size_t len, ReadData _PL_rd)
     }
   }
 
+  char *sname = save_var_name(name, len, _PL_rd);
   nv = entriesBuffer(&var_buffer, struct variable);
-  next.name      = save_var_name(name, len, _PL_rd);
-  next.namelen   = len;
-  next.times     = 1;
-  next.variable  = 0;
-  next.signature = (nv<<LMASK_BITS)|TAG_VAR|STG_RESERVED;
-  addBuffer(&var_buffer, next, struct variable);
-  var = topBuffer(&var_buffer, struct variable) - 1;
+  var = allocFromBuffer(&var_buffer, sizeof(*var));
+  var->name      = sname;
+  var->namelen   = len;
+  var->times     = 1;
+  var->variable  = 0;
+  var->signature = consVarInfo(nv);
+  var->labeled   = false;
   if ( nv >= 16 )
     hashVariable(var, _PL_rd);
 
@@ -1710,26 +1720,26 @@ lookupVariable(const char *name, size_t len, ReadData _PL_rd)
 }
 
 
-static int
+static bool
 warn_singleton(const char *name)	/* Name in UTF-8 */
 { if ( name[0] != '_' )			/* not _*: always warn */
-    return TRUE;
+    return true;
   if ( name[1] == '_' )			/* __*: never warn */
-    return FALSE;
+    return false;
   if ( name[1] )			/* _a: warn */
   { int c;
 
     utf8_get_char(&name[1], &c);
     if ( isDigitW(c) )
-      return FALSE;
+      return false;
     if ( !PlUpperW(c) )
-      return TRUE;
+      return true;
   }
-  return FALSE;
+  return false;
 }
 
 
-static int
+static bool
 warn_multiton(const char *name)
 { if ( !warn_singleton(name) )
   { if ( name[0] == '_' && name[1] )
@@ -1737,15 +1747,15 @@ warn_multiton(const char *name)
 
       utf8_get_char(&name[1], &c);
       if ( isDigitW(c) )			/* _<digit>: never warn */
-	return FALSE;
+	return false;
       if ( !PlUpperW(c) )			/* _<lower>: never warn */
-	return FALSE;
+	return false;
     }
 
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -1761,7 +1771,7 @@ warn_multiton(const char *name)
 #define IS_MULTITON     2
 
 #define is_singleton(var, type, _PL_rd) LDFUNC(is_singleton, var, type, _PL_rd)
-static int
+static bool
 is_singleton(DECL_LD Variable var, int type, ReadData _PL_rd)
 { if ( var->times == 1 )
   { if ( (type == IS_SINGLETON    && warn_singleton(var->name)) ||
@@ -1798,7 +1808,7 @@ is_singleton(DECL_LD Variable var, int type, ReadData _PL_rd)
 #define check_singletons(term, _PL_rd) LDFUNC(check_singletons, term, _PL_rd)
 static bool				/* TBD: new schema */
 check_singletons(DECL_LD term_t term, ReadData _PL_rd)
-{ if ( _PL_rd->singles != TRUE )	/* returns <name> = var bindings */
+{ if ( _PL_rd->singles != true )	/* returns <name> = var bindings */
   { term_t list = PL_copy_term_ref(_PL_rd->singles);
     term_t head = PL_new_term_ref();
 
@@ -1809,7 +1819,7 @@ check_singletons(DECL_LD term_t term, ReadData _PL_rd)
 			    PL_FUNCTOR,    FUNCTOR_equals2,
 			    PL_UTF8_CHARS, var->name,
 			    PL_TERM,       var->variable) )
-	  return FALSE;
+	  return false;
       }
     }
 
@@ -1828,7 +1838,7 @@ check_singletons(DECL_LD term_t term, ReadData _PL_rd)
 
     if ( i > 0 )
     { if ( !singletonWarning(term, "singletons", singletons, i) )
-	return FALSE;
+	return false;
     }
 
     if ( (_PL_rd->styleCheck&MULTITON_CHECK) )
@@ -1842,11 +1852,11 @@ check_singletons(DECL_LD term_t term, ReadData _PL_rd)
 
       if ( i > 0 )
       { if ( !singletonWarning(term, "multitons", singletons, i) )
-	  return FALSE;
+	  return false;
       }
     }
 
-    succeed;
+    return true;
   }
 }
 
@@ -1867,7 +1877,7 @@ bind_variable_names(DECL_LD ReadData _PL_rd)
       txt.length    = strlen(var->name);
       txt.storage   = PL_CHARS_HEAP;
       txt.encoding  = ENC_UTF8;
-      txt.canonical = FALSE;
+      txt.canonical = false;
 
       rc = ( PL_unify_list(list, head, list) &&
 	     PL_unify_functor(head, FUNCTOR_equals2) &&
@@ -1879,7 +1889,7 @@ bind_variable_names(DECL_LD ReadData _PL_rd)
       PL_free_text(&txt);
 
       if ( !rc )
-	return FALSE;
+	return false;
     }
   }
 
@@ -1896,7 +1906,7 @@ bind_variables(DECL_LD ReadData _PL_rd)
   FOR_VARS(var)
   { if ( !PL_unify_list(list, head, list) ||
 	 !PL_unify(head, var->variable) )
-      return FALSE;
+      return false;
   }
 
   return PL_unify_nil(list);
@@ -1951,19 +1961,19 @@ PRED_IMPL("$qq_open", 2, qq_open, 0)
   } else
     PL_type_error("read_context", A1);
 
-  return FALSE;
+  return false;
 }
 
 
 #define parse_quasi_quotations(_PL_rd) LDFUNC(parse_quasi_quotations, _PL_rd)
-static int
+static bool
 parse_quasi_quotations(DECL_LD ReadData _PL_rd)
 { if ( _PL_rd->qq_tail )
   { term_t av;
     int rc;
 
     if ( !PL_unify_nil(_PL_rd->qq_tail) )
-      return FALSE;
+      return false;
 
     if ( !_PL_rd->quasi_quotations )
     { if ( (av = PL_new_term_refs(2)) &&
@@ -1974,19 +1984,19 @@ parse_quasi_quotations(DECL_LD ReadData _PL_rd)
 
 	rc = callProlog(MODULE_system, av+0, PL_Q_CATCH_EXCEPTION, &ex);
 	if ( rc )
-	  return TRUE;
+	  return true;
 	if ( ex )
 	{ PL_put_term(_PL_rd->exception, ex);
-	  _PL_rd->has_exception = TRUE;
+	  _PL_rd->has_exception = true;
 	}
       }
-      return FALSE;
+      return false;
     } else
-      return TRUE;
+      return true;
   } else if ( _PL_rd->quasi_quotations )	/* user option, but no quotes */
   { return PL_unify_nil(_PL_rd->quasi_quotations);
   } else
-    return TRUE;
+    return true;
 }
 
 
@@ -2000,17 +2010,17 @@ is_quasi_quotation_syntax(term_t type, ReadData _PL_rd)
   size_t arity;
 
   if ( !PL_strip_module(type, &m, plain) )
-    return FALSE;
+    return false;
 
   if ( PL_get_name_arity(plain, &name, &arity) )
   { if ( _PL_rd->quasi_quotations )
-    { return TRUE;
+    { return true;
     } else
     { Procedure proc;
 
       if ( (proc=resolveProcedure(PL_new_functor(name, 4), m)) &&
-	   true(proc->definition, P_QUASI_QUOTATION_SYNTAX) )
-	return TRUE;
+	   ison(proc->definition, P_QUASI_QUOTATION_SYNTAX) )
+	return true;
 
       if ( (ex = PL_new_term_ref()) &&
 	   PL_unify_term(ex,
@@ -2026,7 +2036,7 @@ is_quasi_quotation_syntax(term_t type, ReadData _PL_rd)
       return errorWarning(NULL, ex, _PL_rd);
   }
 
-  return FALSE;
+  return false;
 }
 
 #endif /*O_QUASIQUOTATIONS*/
@@ -2105,7 +2115,7 @@ SkipSymbol(unsigned char *in, ReadData _PL_rd)
   for( ; *in; in=s)
   { s = (unsigned char*)utf8_get_char((char*)in, &chr);
 
-    if ( chr == '`' && false(_PL_rd, BQ_MASK) )
+    if ( chr == '`' && isoff(_PL_rd, BQ_MASK) )
       continue;				/* ` is a symbol char */
     if ( !PlSymbolW(chr) )
       return in;
@@ -2115,7 +2125,7 @@ SkipSymbol(unsigned char *in, ReadData _PL_rd)
 }
 
 
-#define unget_token()	{ unget = TRUE; }
+#define unget_token()	{ unget = true; }
 
 
 /* skip_digit_separator() skips a digit separator as defined by Ulrich
@@ -2136,11 +2146,11 @@ skip_digit_separator(cucharp *sp, int base, int *grouped)
   if ( digitValue(base, *s) >= 0 )
   { *sp = s;
     if ( grouped )
-      *grouped = TRUE;
-    return TRUE;
+      *grouped = true;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -2158,11 +2168,11 @@ skip_decimal_separator(cucharp *sp, int zero, int *grouped)
   if ( isDecimal(zero, c) )
   { *sp = s;
     if ( grouped )
-      *grouped = TRUE;
-    return TRUE;
+      *grouped = true;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -2180,7 +2190,7 @@ scan_decimal(cucharp *sp, int zero, int negative, Number n, int *grouped)
   if ( !isDecimal(zero, c) )
     return NUM_ERROR;
 
-  *grouped = FALSE;
+  *grouped = false;
 
   do
   { for(sn = utf8_get_uchar(s, &c); isDecimal(zero, c); sn = utf8_get_uchar(s, &c))
@@ -2207,8 +2217,8 @@ scan_decimal(cucharp *sp, int zero, int negative, Number n, int *grouped)
 
 	return NUM_OK;
 #else
-	double maxf =  MAXREAL / 10.0 - 10.0;
-	double minf = -MAXREAL / 10.0 + 10.0;
+	double maxf =  DBL_MAX / 10.0 - 10.0;
+	double minf = -DBL_MAX / 10.0 + 10.0;
 	double tf = (double)t;
 	do
 	{ for(sn = utf8_get_uchar(s, &c); isDecimal(zero, c); sn = utf8_get_uchar(s, &c))
@@ -2252,9 +2262,9 @@ static strnumstat
 scan_number(cucharp *s, int negative, int b, Number n)
 { int d;
   int64_t maxi = PLMAXINT/b;		/* cache? */
-  int maxlastdigit = PLMAXINT % b;
+  int maxlastdigit = (int)(PLMAXINT % b);
   int64_t mini = PLMININT/b;
-  int minlastdigit = PLMININT % b;
+  int minlastdigit = (int)(PLMININT % b);
   int64_t t = 0;
   cucharp q = *s;
 
@@ -2287,8 +2297,8 @@ scan_number(cucharp *s, int negative, int b, Number n)
 	return NUM_OK;
 #else
 
-	double maxf =  MAXREAL / (double) b - (double) b;
-	double minf = -MAXREAL / (double) b + (double) b;
+	double maxf =  DBL_MAX / (double) b - (double) b;
+	double minf = -DBL_MAX / (double) b + (double) b;
 	double tf = (double)t;
 	do
 	{ while((d = digitValue(b, *q)) >= 0)
@@ -2493,7 +2503,7 @@ again:
 	if ( _PL_rd )
 	{ char tmp[2];
 
-	  tmp[0] = c;
+	  tmp[0] = (char)c;
 	  tmp[1] = EOS;
 	  last_token_start = (unsigned char*)(in-1);
 	  errorWarningA1("undefined_char_escape", tmp, 0, _PL_rd);
@@ -2524,10 +2534,10 @@ addUTF8Buffer(Buffer b, int c)
 
     end = utf8_put_char(buf, c);
     for(p=buf; p<end; p++)
-    { addBuffer(b, *p&0xff, char);
+    { addBuffer(b, *p, char);
     }
   } else
-  { addBuffer(b, c, char);
+  { addBuffer(b, (char)c, char);
   }
 }
 
@@ -2549,36 +2559,36 @@ get_string(unsigned char *in, unsigned char *ein, unsigned char **end, Buffer bu
       { in++;
       } else
 	break;
-    } else if ( c == '\\' && true(_PL_rd, M_CHARESCAPE) )
+    } else if ( c == '\\' && ison(_PL_rd, M_CHARESCAPE) )
     { c = escape_char(in, &in, quote, _PL_rd);
       if ( c >= 0 )
       { addUTF8Buffer(buf, c);
 
 	continue;
       } else if ( c == ESC_ERROR )
-      { return FALSE;
+      { return false;
       } else
       { break;
       }
     } else if ( c >= 0x80 )		/* copy UTF-8 sequence */
     { do
-      { addBuffer(buf, c, char);
+      { addBuffer(buf, (char)c, char);
 	c = *in++;
       } while( c > 0x80 );
 
       goto next;
     } else if ( in > ein )
     { errorWarning("end_of_file_in_string", 0, _PL_rd);
-      return FALSE;
+      return false;
     }
 
-    addBuffer(buf, c, char);
+    addBuffer(buf, (char)c, char);
   }
 
   if ( end )
     *end = in;
 
-  return TRUE;
+  return true;
 }
 
 
@@ -2602,7 +2612,7 @@ get_quasi_quotation(term_t t, unsigned char **here, unsigned char *ein,
 	txt.length    = in-start;
 	txt.storage   = PL_CHARS_HEAP;
 	txt.encoding  = ENC_UTF8;
-	txt.canonical = FALSE;
+	txt.canonical = false;
 
 	rc = PL_unify_text(t, 0, &txt, PL_CODE_LIST);
 	PL_free_text(&txt);
@@ -2744,10 +2754,10 @@ to_double(cucharp s, cucharp e, int zero, double *dp)
       s = utf8_get_uchar(s, &c);
       if ( c >= zero )
       { assert(c <= zero+9);
-	addBuffer(&b, c-zero+'0', char);
+	addBuffer(&b, (char)(c-zero+'0'), char);
       } else
       { assert(c <= 127);
-	addBuffer(&b, c, char);
+	addBuffer(&b, (char)c, char);
       }
     }
     addBuffer(&b, 0, char);
@@ -2763,13 +2773,13 @@ to_double(cucharp s, cucharp e, int zero, double *dp)
 
 strnumstat
 str_number(cucharp in, ucharp *end, Number value, int flags)
-{ int negative = FALSE;
+{ int negative = false;
   cucharp start = in;
   strnumstat rc;
   int grouped;
 
   if ( *in == '-' )			/* skip optional sign */
-  { negative = TRUE;
+  { negative = true;
     in++;
   } else if ( *in == '+' )
     in++;
@@ -2836,7 +2846,7 @@ str_number(cucharp in, ucharp *end, Number value, int flags)
   { number num, den;
 
     in++;
-    if ( (rc=scan_decimal(&in, zero, FALSE, &den, &grouped)) != NUM_OK )
+    if ( (rc=scan_decimal(&in, zero, false, &den, &grouped)) != NUM_OK )
     { clearNumber(value);
       return rc;			/* too large? */
     }
@@ -2864,20 +2874,25 @@ str_number(cucharp in, ucharp *end, Number value, int flags)
 					/* base'value number */
   if ( *in == '\'' &&
        zero == '0' &&
-       value->type == V_INTEGER &&
-       value->value.i <= 36 &&
-       value->value.i > 1 &&
-       digitValue((int)value->value.i, in[1]) >= 0 )
-  { in++;
+       value->type == V_INTEGER )
+  { int64_t base = value->value.i;
 
-    if ( !(rc=scan_number(&in, negative, (int)value->value.i, value)) )
-      return rc;			/* number too large */
+    if ( base < 0 )
+      base = -base;
 
-    *end = (ucharp)in;
+    if ( base <= 36 &&
+	 base > 1 &&
+	 digitValue(base, in[1]) >= 0 )
+    { in++;
 
-    return NUM_OK;
+      if ( !(rc=scan_number(&in, negative, (int)base, value)) )
+	return rc;			/* number too large */
+
+      *end = (ucharp)in;
+
+      return NUM_OK;
+    }
   }
-
 					/* floating point numbers */
   if ( *in == '.' && points_at_decimal(in+1, zero) )
   { clearNumber(value);
@@ -2931,7 +2946,7 @@ checkASCII(unsigned char *name, size_t len, const char *type)
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -2965,7 +2980,7 @@ get_token(DECL_LD bool must_be_op, ReadData _PL_rd)
   unsigned char *start;
 
   if ( unget )
-  { unget = FALSE;
+  { unget = false;
     return &cur_token;
   }
 
@@ -2999,7 +3014,7 @@ get_token(DECL_LD bool must_be_op, ReadData _PL_rd)
 		symbol:
 		  if ( _PL_rd->styleCheck & CHARSET_CHECK )
 		  { if ( !checkASCII(start, rdhere-start, "atom") )
-		      return FALSE;
+		      return false;
 		  }
 
 		functor:
@@ -3007,7 +3022,7 @@ get_token(DECL_LD bool must_be_op, ReadData _PL_rd)
 		  txt.length    = rdhere-start;
 		  txt.storage   = PL_CHARS_HEAP;
 		  txt.encoding  = ENC_UTF8;
-		  txt.canonical = FALSE;
+		  txt.canonical = false;
 		  cur_token.value.atom = textToAtom(&txt);
 		  NeedUnlock(cur_token.value.atom);
 		  PL_free_text(&txt);
@@ -3029,13 +3044,13 @@ get_token(DECL_LD bool must_be_op, ReadData _PL_rd)
 		}
     case UC:
     upper:
-		if ( c != '_' && true(_PL_rd, M_VARPREFIX) )
+		if ( c != '_' && ison(_PL_rd, M_VARPREFIX) )
 		  goto lower;
 
 		{ rdhere = SkipVarIdCont(rdhere);
 		  if ( _PL_rd->styleCheck & CHARSET_CHECK )
 		  { if ( !checkASCII(start, rdhere-start, "variable") )
-		      return FALSE;
+		      return false;
 		  }
 		  if ( *rdhere == '(' && truePrologFlag(ALLOW_VARNAME_FUNCTOR) )
 		    goto functor;
@@ -3087,7 +3102,7 @@ get_token(DECL_LD bool must_be_op, ReadData _PL_rd)
 		  break;
 		}
     case_symbol:
-    case SY:	if ( c == '`' && true(_PL_rd, BQ_MASK) )
+    case SY:	if ( c == '`' && ison(_PL_rd, BQ_MASK) )
 		  goto case_bq;
 
 		rdhere = SkipSymbol(rdhere, _PL_rd);
@@ -3161,7 +3176,7 @@ get_token(DECL_LD bool must_be_op, ReadData _PL_rd)
 		  txt.length    = entriesBuffer(&b, char);
 		  txt.storage   = PL_CHARS_HEAP;
 		  txt.encoding  = ENC_UTF8;
-		  txt.canonical = FALSE;
+		  txt.canonical = false;
 		  cur_token.value.atom = textToAtom(&txt);
 		  NeedUnlock(cur_token.value.atom);
 		  PL_free_text(&txt);
@@ -3186,22 +3201,22 @@ get_token(DECL_LD bool must_be_op, ReadData _PL_rd)
 		  txt.length    = entriesBuffer(&b, char);
 		  txt.storage   = PL_CHARS_HEAP;
 		  txt.encoding  = ENC_UTF8;
-		  txt.canonical = FALSE;
+		  txt.canonical = false;
 #if O_STRING
-		  if ( true(_PL_rd, DBLQ_STRING) )
+		  if ( ison(_PL_rd, DBLQ_STRING) )
 		    type = PL_STRING;
 		  else
 #endif
-		  if ( true(_PL_rd, DBLQ_ATOM) )
+		  if ( ison(_PL_rd, DBLQ_ATOM) )
 		    type = PL_ATOM;
-		  else if ( true(_PL_rd, DBLQ_CHARS) )
+		  else if ( ison(_PL_rd, DBLQ_CHARS) )
 		    type = PL_CHAR_LIST;
 		  else
 		    type = PL_CODE_LIST;
 
 		  if ( !PL_unify_text(t, 0, &txt, type) )
 		  { PL_free_text(&txt);
-		    return FALSE;
+		    return false;
 		  }
 		  PL_free_text(&txt);
 		  cur_token.value.term = t;
@@ -3210,14 +3225,14 @@ get_token(DECL_LD bool must_be_op, ReadData _PL_rd)
 		  break;
 		}
     case BQ:
-    case_bq:    if ( true(_PL_rd, BQ_MASK) )
+    case_bq:    if ( ison(_PL_rd, BQ_MASK) )
 		{ tmp_buffer b;
 		  term_t t = PL_new_term_ref();
 		  PL_chars_t txt;
 		  int type;
 
-		  type = ( true(_PL_rd, BQ_STRING) ? PL_STRING :
-			   true(_PL_rd, BQ_CODES)  ? PL_CODE_LIST :
+		  type = ( ison(_PL_rd, BQ_STRING) ? PL_STRING :
+			   ison(_PL_rd, BQ_CODES)  ? PL_CODE_LIST :
 			   PL_CHAR_LIST
 			 );
 
@@ -3228,10 +3243,10 @@ get_token(DECL_LD bool must_be_op, ReadData _PL_rd)
 		  txt.length    = entriesBuffer(&b, char);
 		  txt.storage   = PL_CHARS_HEAP;
 		  txt.encoding  = ENC_UTF8;
-		  txt.canonical = FALSE;
+		  txt.canonical = false;
 		  if ( !PL_unify_text(t, 0, &txt, type) )
 		  { PL_free_text(&txt);
-		    return FALSE;
+		    return false;
 		  }
 		  PL_free_text(&txt);
 		  cur_token.value.term = t;
@@ -3332,8 +3347,10 @@ statically allocated and thus unique.
 
 #define setHandle(h, w)		(*valTermRef(h) = (w))
 
-#define readValHandle(term, argp, _PL_rd) LDFUNC(readValHandle, term, argp, _PL_rd)
-static inline void
+#define readValHandle(term, argp, _PL_rd) \
+	LDFUNC(readValHandle, term, argp, _PL_rd)
+
+static void
 readValHandle(DECL_LD term_t term, Word argp, ReadData _PL_rd)
 { word w = *valTermRef(term);
   Variable var;
@@ -3356,9 +3373,20 @@ readValHandle(DECL_LD term_t term, Word argp, ReadData _PL_rd)
   setVar(*valTermRef(term));
 }
 
+#define readValHandleConst(term, argp, _PL_rd) \
+	LDFUNC(readValHandleConst, term, argp, _PL_rd)
+
+static void
+readValHandleConst(DECL_LD term_t term, Word argp, ReadData _PL_rd)
+{ word w = *valTermRef(term);
+
+  assert(isConst(w));
+  *argp = w;
+  setVar(*valTermRef(term));
+}
 
 #define ensureSpaceForTermRefs(n) LDFUNC(ensureSpaceForTermRefs, n)
-static inline int
+static inline bool
 ensureSpaceForTermRefs(DECL_LD size_t n)
 { return ensureLocalSpace(n*sizeof(word));
 }
@@ -3369,18 +3397,15 @@ ensureSpaceForTermRefs(DECL_LD size_t n)
 */
 
 #define build_term(atom, arity, _PL_rd) LDFUNC(build_term, atom, arity, _PL_rd)
-static int
+static bool
 build_term(DECL_LD atom_t atom, int arity, ReadData _PL_rd)
 { functor_t functor = lookupFunctorDef(atom, arity);
   word w;
   Word argp;
-  int rc;
 
-  if ( !hasGlobalSpace(arity+1) &&
-       (rc=ensureGlobalSpace(arity+1, ALLOW_GC|ALLOW_SHIFT)) != TRUE )
-    return raiseStackOverflow(rc);
-  if ( (rc=ensureSpaceForTermRefs(arity)) != TRUE )
-    return rc;
+  if ( !ensureGlobalSpace(arity+1, ALLOW_GC|ALLOW_SHIFT) ||
+       !ensureSpaceForTermRefs(arity) )
+    return false;
 
   DEBUG(8, Sdprintf("Building term %s/%d ... ", stringAtom(atom), arity));
   argp = gTop;
@@ -3406,7 +3431,145 @@ build_term(DECL_LD atom_t atom, int arity, ReadData _PL_rd)
 	     PL_write_term(Serror, t, 1200, PL_WRT_QUOTED|PL_WRT_NEWLINE));
   }
 
-  return TRUE;
+  return true;
+}
+
+/** Build a term from X{= : Value}.
+ */
+
+#define build_labeled_subterm(pairs, _PL_rd) \
+	LDFUNC(build_labeled_subterm, pairs, _PL_rd)
+
+static int
+build_labeled_subterm(DECL_LD int pairs, ReadData _PL_rd)
+{ if ( pairs == 1 )
+  { term_t *argv = term_av(-3, _PL_rd);
+
+    if ( *valTermRef(argv[1]) == ATOM_equals )
+    { word w = *valTermRef(argv[0]);
+      Variable var = varInfo(w, _PL_rd);
+
+      if ( !ensureGlobalSpace(1, ALLOW_GC|ALLOW_SHIFT) ||
+	   !ensureSpaceForTermRefs(1) )
+	return false;
+
+      if ( !var )		/* `_` */
+      { readValHandle(argv[2], valTermRef(argv[0]), _PL_rd);
+      } else
+      { if ( var->variable )
+	{ if ( PL_is_attvar(var->variable) )
+	  { term_t ex;
+	    return ( (ex=makeErrorTerm("label_on_attvar", NULL, 0, _PL_rd)) &&
+		     PL_raise_exception(ex) );
+	  }
+	  if ( var->labeled )
+	  { term_t ex;
+	    return ( (ex=makeErrorTerm("duplicate_label_value", NULL, 0, _PL_rd)) &&
+		     PL_raise_exception(ex) );
+	  }
+	  if ( !PL_unify(var->variable, argv[2]) )
+	    return false;
+	} else
+	{ var->variable = PL_new_term_ref_noshift();
+	  Word gvar = allocGlobalNoShift(1);
+	  readValHandle(argv[2], gvar, _PL_rd);
+	  setHandle(var->variable, makeRefG(gvar));
+	}
+	var->labeled = true;
+	setHandle(argv[0], *valTermRef(var->variable));
+      }
+
+      truncate_term_stack(&argv[1], _PL_rd);
+      return true;
+    }
+  }
+
+  return -1;
+}
+
+/**
+ * Build an attributed variable from data collected for a dict.  We
+ * know the "tag" is a variable.
+ */
+
+#define build_attvar(pairs, _PL_rd) LDFUNC(build_attvar, pairs, _PL_rd)
+static bool
+build_attvar(DECL_LD int pairs, ReadData _PL_rd)
+{ int rc = build_labeled_subterm(pairs, _PL_rd);
+  if ( rc >= 0 )
+    return rc;			/* X{= : Value} or error */
+
+  if ( pairs == 0 )		/* X{}: The variable is already at argv[0] */
+    return true;
+
+  int arity = pairs*2+1;
+  term_t *argv = term_av(-arity, _PL_rd);
+  word w = *valTermRef(argv[0]);
+  Variable var = varInfo(w, _PL_rd);
+
+  /* put_attr() needs max 5 cells global and 2 trail */
+  /* First needs 2 more */
+  /* We also need the variable itself and a cell for the value */
+  if ( !ensureStackSpace(1+2+pairs*6, pairs*2) ||
+       !ensureSpaceForTermRefs(2+arity) )
+    return false;
+
+  /* Begin no GC/shift */
+  term_t attvar_term;
+  if ( var )
+  { if ( var->variable )
+    { if ( var->labeled )
+      { term_t ex;
+	return ( (ex=makeErrorTerm("attvar_on_label", NULL, 0, _PL_rd)) &&
+		 PL_raise_exception(ex) );
+      }
+      attvar_term = var->variable;
+    } else
+    { attvar_term = PL_new_term_ref();
+      Word attvar = alloc_attvar();
+      setHandle(attvar_term, makeRefG(attvar));
+      var->variable = attvar_term;
+    }
+  } else			/* `_` */
+  { attvar_term = PL_new_term_ref();
+    Word attvar = alloc_attvar();
+    setHandle(attvar_term, makeRefG(attvar));
+  }
+
+  for(int i=0; i<pairs; i++)
+  { word name;
+    Word value = allocGlobalNoShift(1);
+
+    readValHandleConst(argv[i*2+1], &name, _PL_rd);
+    readValHandle(argv[i*2+2],      value, _PL_rd);
+
+    if ( name == ATOM_equals )
+    { term_t ex;
+      return ( (ex=makeErrorTerm("label_on_attvar", NULL, 0, _PL_rd)) &&
+	       PL_raise_exception(ex) );
+    } else
+    { Word vp;
+
+      if ( find_attr(valTermRef(attvar_term), name, &vp) )
+      { if ( compareStandard(value, vp, true) != CMP_EQUAL )
+	{ if ( exception_term )
+	    return false;
+	  term_t ex;
+	  return ( (ex=makeErrorTerm("duplicate_attribute", NULL, 0, _PL_rd)) &&
+		   PL_raise_exception(ex) );
+	}
+      }
+
+      bool rc = put_attr(valTermRef(attvar_term), name, value);
+      assert(rc);
+      (void)rc;
+    }
+  }
+
+  setHandle(argv[0], *valTermRef(attvar_term));
+  truncate_term_stack(&argv[1], _PL_rd);
+
+  return true;
 }
 
 
@@ -3414,33 +3577,65 @@ build_term(DECL_LD atom_t atom, int arity, ReadData _PL_rd)
    and pushes the result back to the term-stack. The stack first
    contains:
 
-	class, key1, value1, key2, value2, ...
+	tag, key1, value1, key2, value2, ...
 */
 
 #define build_dict(pairs, _PL_rd) LDFUNC(build_dict, pairs, _PL_rd)
-static int
+static bool
 build_dict(DECL_LD int pairs, ReadData _PL_rd)
 { int arity = pairs*2+1;
   term_t *argv = term_av(-arity, _PL_rd);
   word w;
   Word argp;
-  int i, rc;
+  bool rc;
   int index_buf[64];
   int *indexes = index_buf;
+  word tag = 0;
+
+  if ( (_PL_rd->flags&VARTAG_MASK) )
+  { word w = *valTermRef(argv[0]);
+    Variable var;
+
+    if ( isVar(w) ||		/* anonymous (_) */
+	 (var = varInfo(w, _PL_rd)) )
+    { switch( (_PL_rd->flags&VARTAG_MASK) )
+      { case VARTAG_ERROR:
+	{ term_t ex = makeErrorTerm("var_tag", NULL, 0, _PL_rd);
+	  if ( ex )
+	    PL_raise_exception(ex);
+	  return false;
+	}
+	case VARTAG_WARNING:
+	{ term_t ex = makeErrorTerm("warning_var_tag", NULL, 0, _PL_rd);
+	  if ( !ex || !printMessage(ATOM_warning, PL_TERM, ex) )
+	    return false;
+	}
+	/*FALLTHROUGH*/
+	case VARTAG_DYNDICT:
+	  tag = ATOM_dyndict;
+	  break;
+	case VARTAG_ATTVAR:
+	  return build_attvar(pairs, _PL_rd);
+	default:
+	  assert(0);
+      }
+    }
+  }
 
   if ( pairs > 64 )
   { if ( !(indexes = malloc(sizeof(int)*pairs)) )
       return PL_no_memory();
   }
-  for(i=0; i<pairs; i++)
+  for(int i=0; i<pairs; i++)
     indexes[i] = i;
 
-  if ( (i=dict_order_term_refs(argv+1, indexes, pairs)) )
+  int dupl;
+  if ( (dupl=dict_order_term_refs(argv+1, indexes, pairs)) )
   { term_t ex = PL_new_term_ref();
 
     rc = ( PL_unify_term(ex,
 			 PL_FUNCTOR, FUNCTOR_duplicate_key1,
-			   PL_TERM, argv[indexes[i]*2+1]) &&
+			   PL_TERM, argv[indexes[dupl]*2+1]) &&
 	   errorWarningA1("duplicate_key", NULL, ex, _PL_rd)
 	 );
 
@@ -3450,20 +3645,21 @@ build_dict(DECL_LD int pairs, ReadData _PL_rd)
     return rc;
   }
 
-  if ( !hasGlobalSpace(pairs*2+2) &&
-       (rc=ensureGlobalSpace(pairs*2+2, ALLOW_GC|ALLOW_SHIFT)) != TRUE )
-    return rc;
-  if ( (rc=ensureSpaceForTermRefs(arity)) != TRUE )
-    return rc;
+  if ( !ensureGlobalSpace(pairs*2+2, ALLOW_GC|ALLOW_SHIFT) ||
+       !ensureSpaceForTermRefs(arity) )
+    return false;
 
   DEBUG(9, Sdprintf("Building dict with %d pairs ... ", pairs));
   argp = gTop;
   w = consPtr(argp, TAG_COMPOUND|STG_GLOBAL);
   gTop += pairs*2+2;
   *argp++ = dict_functor(pairs);
-  readValHandle(argv[0], argp++, _PL_rd); /* the class */
+  if ( tag )
+    *argp++ = tag;
+  else
+    readValHandle(argv[0], argp++, _PL_rd); /* the tag */
 
-  for(i=0; i<pairs; i++)
+  for(int i=0; i<pairs; i++)
   { readValHandle(argv[indexes[i]*2+2], argp++, _PL_rd); /* value */
     readValHandle(argv[indexes[i]*2+1], argp++, _PL_rd); /* key */
   }
@@ -3474,7 +3670,7 @@ build_dict(DECL_LD int pairs, ReadData _PL_rd)
   if ( indexes != index_buf )
     free(indexes);
 
-  return TRUE;
+  return true;
 }
 
 
@@ -3536,7 +3732,7 @@ pop_out_op(ReadData _PL_rd)
 	cstate.out_n--;
 
 #define get_int_arg(t, n) LDFUNC(get_int_arg, t, n)
-static intptr_t
+static sword
 get_int_arg(DECL_LD term_t t, int n)
 { Word p = valTermRef(t);
 
@@ -3550,32 +3746,32 @@ get_int_arg(DECL_LD term_t t, int n)
 static term_t
 opPos(DECL_LD op_entry *op, out_entry *args)
 { if ( op->tpos )
-  { intptr_t fs = get_int_arg(op->tpos, 1);
-    intptr_t fe = get_int_arg(op->tpos, 2);
+  { sword fs = get_int_arg(op->tpos, 1);
+    sword fe = get_int_arg(op->tpos, 2);
     term_t r;
 
     if ( !(r=PL_new_term_ref()) )
       return 0;
 
     if ( op->kind == OP_INFIX )
-    { intptr_t s = get_int_arg(args[0].tpos, 1);
-      intptr_t e = get_int_arg(args[1].tpos, 2);
+    { sword s = get_int_arg(args[0].tpos, 1);
+      sword e = get_int_arg(args[1].tpos, 2);
 
       if ( !op->isblock )
       { if ( !PL_unify_term(r,
 			    PL_FUNCTOR,	FUNCTOR_term_position5,
-			    PL_INTPTR, s,
-			    PL_INTPTR, e,
-			    PL_INTPTR, fs,
-			    PL_INTPTR, fe,
+			    PL_SWORD, s,
+			    PL_SWORD, e,
+			    PL_SWORD, fs,
+			    PL_SWORD, fe,
 			    PL_LIST, 2, PL_TERM, args[0].tpos,
 					PL_TERM, args[1].tpos) )
 	  return (term_t)0;
       } else
       { if ( !PL_unify_term(r,
 			    PL_FUNCTOR,	FUNCTOR_term_position5,
-			    PL_INTPTR, s,
-			    PL_INTPTR, e,
+			    PL_SWORD, s,
+			    PL_SWORD, e,
 			    PL_INT, 0,
 			    PL_INT, 0,
 			    PL_LIST, 3, PL_TERM, op->tpos,
@@ -3584,7 +3780,7 @@ opPos(DECL_LD op_entry *op, out_entry *args)
 	  return (term_t)0;
       }
     } else
-    { intptr_t s, e;
+    { sword s, e;
 
       if ( op->kind == OP_PREFIX )
       { s = fs;
@@ -3597,17 +3793,17 @@ opPos(DECL_LD op_entry *op, out_entry *args)
       if ( !op->isblock )
       { if ( !PL_unify_term(r,
 			    PL_FUNCTOR,	FUNCTOR_term_position5,
-			    PL_INTPTR, s,
-			    PL_INTPTR, e,
-			    PL_INTPTR, fs,
-			    PL_INTPTR, fe,
+			    PL_SWORD, s,
+			    PL_SWORD, e,
+			    PL_SWORD, fs,
+			    PL_SWORD, fe,
 			      PL_LIST, 1, PL_TERM, args[0].tpos) )
 	  return (term_t)0;
       } else
       { if ( !PL_unify_term(r,
 			    PL_FUNCTOR,	FUNCTOR_term_position5,
-			    PL_INTPTR, s,
-			    PL_INTPTR, e,
+			    PL_SWORD, s,
+			    PL_SWORD, e,
 			    PL_INT, 0,
 			    PL_INT, 0,
 			      PL_LIST, 2, PL_TERM, op->tpos,
@@ -3652,12 +3848,12 @@ build_op_term(DECL_LD op_entry *op, ReadData _PL_rd)
   int arity = (op->kind == OP_INFIX ? 2 : 1);
 
   if ( !(tmp = PL_new_term_ref()) )
-    return FALSE;
+    return false;
 
   e = out_op(-arity, _PL_rd);
   if ( !op->isblock )
   { if ( !build_term(op->op.atom, arity, _PL_rd) )
-      return FALSE;
+      return false;
   } else
   { term_t term = alloc_term(_PL_rd);
     term_t *av = term_av(-(arity+1), _PL_rd);
@@ -3669,16 +3865,16 @@ build_op_term(DECL_LD op_entry *op, ReadData _PL_rd)
     PL_put_term(term, op->op.block);
 
     if ( !build_term(op_name(op), arity+1, _PL_rd) )
-      return FALSE;
+      return false;
   }
 
   e->pri = op->op_pri;
   if ( op->tpos && !(e->tpos = opPos(op, e)) )
-    return FALSE;
+    return false;
 
   _PL_rd->op.out_queue.top = (char*)(e+1);
 
-  return TRUE;
+  return true;
 }
 
 
@@ -3709,12 +3905,13 @@ typedef struct cterm_state
 
 #define isOp(e, kind, _PL_rd) LDFUNC(isOp, e, kind, _PL_rd)
 static bool
-isOp(DECL_LD op_entry *e, int kind, ReadData _PL_rd)
-{ int pri;
-  int type;
+isOp(DECL_LD op_entry *e, unsigned char kind, ReadData _PL_rd)
+{ short pri;
+  unsigned char type;
 
   if ( !currentOperator(_PL_rd->module, op_name(e), kind, &type, &pri) )
     fail;
+  e->type   = type;
   e->kind   = kind;
   e->op_pri = pri;
 
@@ -3757,7 +3954,7 @@ modify_op(DECL_LD cterm_state *cstate, int cpri)
       DEBUG(MSG_READ_OP, Sdprintf("Prefix %s to atom", stringOp(op)));
       cstate->rmo++;
       if ( !(tmp = alloc_term(_PL_rd)) )
-	return FALSE;
+	return false;
       if ( op->isblock )
 	PL_put_term(tmp, op->op.block);
       else
@@ -3771,12 +3968,12 @@ modify_op(DECL_LD cterm_state *cstate, int cpri)
 				  stringOp(op)));
       cstate->rmo++;
       if ( !build_op_term(op, _PL_rd) )
-	return FALSE;
+	return false;
       PopOp(cstate);
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -3818,8 +4015,8 @@ bad_operator(out_entry *out, op_entry *op, ReadData _PL_rd)
 
 /* can_reduce() returns
 
-	TRUE  if operator can be reduced;
-	FALSE if operator can not be reduced;
+	true  if operator can be reduced;
+	false if operator can not be reduced;
 	-1    if attempting is a syntax error
 */
 
@@ -3843,12 +4040,12 @@ can_reduce(op_entry *op, short cpri, int out_n, ReadData _PL_rd)
 	break;
       default:
 	assert(0);
-	rc = FALSE;
+	rc = false;
     }
   } else
-    return FALSE;
+    return false;
 
-  if ( rc == FALSE && (cpri) == (OP_MAXPRIORITY+1) )
+  if ( rc == false && (cpri) == (OP_MAXPRIORITY+1) )
   { bad_operator(e, op, _PL_rd);
     return -1;
   }
@@ -3863,53 +4060,80 @@ can_reduce(op_entry *op, short cpri, int out_n, ReadData _PL_rd)
 }
 
 
-#define reduce_one_op(cstate, cpri) \
-	LDFUNC(reduce_one_op, cstate, cpri)
+#define reduce_one_op(cstate, op, side)		\
+  LDFUNC(reduce_one_op, cstate, op, side)
 
-static int
-reduce_one_op(DECL_LD cterm_state *cstate, int cpri)
-{ ReadData _PL_rd = cstate->rd;
+typedef enum
+{ REDUCE_LEFT,
+  REDUCE_RIGHT
+} reduce_side;
 
-  if ( cstate->out_n > 0 && cstate->side_n > 0 &&
-	 cpri >= SideOp(cstate->side_p)->op_pri )
-  { int rc;
+static bool
+must_reduce(const op_entry *sop, const op_entry *fop, reduce_side side)
+{ int cpri = side == REDUCE_LEFT ? fop->left_pri : fop->right_pri;
 
-    rc = can_reduce(SideOp(cstate->side_p), cpri, cstate->out_n, cstate->rd);
-    if ( rc > 0 )
-    { if ( !build_op_term(SideOp(cstate->side_p), cstate->rd) )
-	return -1;
-      if ( SideOp(cstate->side_p)->kind == OP_INFIX )
-	cstate->out_n--;
-      PopOp(cstate);
-    }
+  if ( cpri == sop->op_pri )
+  { /* Deal with `fy 2 yf`, `1 xfy 2 yfx 3`, etc.  */
 
-    return rc;
+    if ( ((sop->kind == OP_PREFIX || sop->kind == OP_INFIX) &&
+	  sop->op_pri == sop->right_pri) &&
+	 ((fop->kind == OP_POSTFIX || fop->kind == OP_INFIX) &&
+	  fop->op_pri == fop->left_pri) )
+      return false;
   }
 
-  return FALSE;
+  return cpri >= sop->op_pri;
+}
+
+static int
+reduce_one_op(DECL_LD cterm_state *cstate,
+	      const op_entry *op, reduce_side side)
+{ ReadData _PL_rd = cstate->rd;
+  int cpri = side == REDUCE_LEFT ? op->left_pri : op->right_pri;
+
+  if ( cstate->out_n > 0 && cstate->side_n > 0 )
+  { op_entry *sop = SideOp(cstate->side_p);
+
+    if ( must_reduce(sop, op, side) )
+    { int rc;
+
+      rc = can_reduce(sop, cpri, cstate->out_n, cstate->rd);
+      if ( rc > 0 )
+      { if ( !build_op_term(sop, cstate->rd) )
+	  return -1;
+	if ( sop->kind == OP_INFIX )
+	  cstate->out_n--;
+	PopOp(cstate);
+      }
+
+      return rc;
+    }
+  }
+
+  return false;
 }
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-Combine operators from the side queue and out queue as long as there are
-sufficient operators and operands and the   priority  of the operator is
-lower or equal to the context.
+Combine operators from  the side queue and out queue  as long as there
+are sufficient operators and operands as requested by the left side of
+the given operator.
 
-Returns: TRUE:   Ok
-	 FALSE:  Error
+Returns: true:   Ok
+	 false:  Error
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-#define reduce_op(cstate, cpri) \
-	LDFUNC(reduce_op, cstate, cpri)
+#define reduce_op(cstate, op) \
+	LDFUNC(reduce_op, cstate, op)
 
-static int
-reduce_op(DECL_LD cterm_state *cstate, int cpri)
+static bool
+reduce_op(DECL_LD cterm_state *cstate, const op_entry *op)
 { int rc;
 
-  while((rc=reduce_one_op(cstate, cpri)) == TRUE)
+  while((rc=reduce_one_op(cstate, op, REDUCE_LEFT)) == true)
     ;
 
-  return !rc;		/* FALSE --> TRUE, -1 --> FALSE */
+  return !rc;		/* false --> true, -1 --> false */
 }
 
 
@@ -3917,7 +4141,7 @@ static int
 is_name_token(Token token, int must_be_op, ReadData _PL_rd)
 { switch(token->type)
   { case T_NAME:
-      return TRUE;
+      return true;
     case T_QNAME:
       return GD->options.traditional || !unquoted_atom(token->value.atom);
     case T_FUNCTOR:
@@ -3927,9 +4151,9 @@ is_name_token(Token token, int must_be_op, ReadData _PL_rd)
     { switch(token->value.character)
       { case '[':
 	case '{':
-	  return TRUE;
+	  return true;
 	case '(':
-	  return FALSE;
+	  return false;
 	case ')':
 	case '}':
 	case ']':
@@ -3940,13 +4164,13 @@ is_name_token(Token token, int must_be_op, ReadData _PL_rd)
 	  { errorWarning("quoted_punctuation", 0, _PL_rd);
 	    return -1;
 	  }
-	  return TRUE;
+	  return true;
 	default:
-	  return TRUE;
+	  return true;
       }
     }
     default:
-      return FALSE;
+      return false;
   }
 }
 
@@ -3959,11 +4183,11 @@ name_token(Token token, op_entry *e, ReadData _PL_rd)
       switch(token->value.character)
       { case '[':
 	  if ( e )
-	    e->isblock = TRUE;
+	    e->isblock = true;
 	  return ATOM_nil;
 	case '{':
 	  if ( e )
-	    e->isblock = TRUE;
+	    e->isblock = true;
 	  return ATOM_curl;
 	default:
 	  return codeToAtom(token->value.character);
@@ -3985,10 +4209,10 @@ unify_atomic_position(DECL_LD term_t positions, Token token)
 { if ( positions )
   { return PL_unify_term(positions,
 			 PL_FUNCTOR, FUNCTOR_minus2,
-			   PL_INTPTR, token->start,
-			   PL_INTPTR, token->end);
+			   PL_INT64, token->start,
+			   PL_INT64, token->end);
   } else
-    return TRUE;
+    return true;
 }
 
 
@@ -4000,10 +4224,10 @@ unify_string_position(DECL_LD term_t positions, Token token)
 { if ( positions )
   { return PL_unify_term(positions,
 			 PL_FUNCTOR, FUNCTOR_string_position2,
-			   PL_INTPTR, token->start,
-			   PL_INTPTR, token->end);
+			   PL_INT64, token->start,
+			   PL_INT64, token->end);
   } else
-    return TRUE;
+    return true;
 }
 
 
@@ -4012,23 +4236,23 @@ unify_string_position(DECL_LD term_t positions, Token token)
 
 static int
 prepare_op(DECL_LD op_entry *in_op, Token token, term_t pin, ReadData _PL_rd)
-{ int rc = TRUE;
+{ int rc = true;
 
   Unlock(in_op->op.atom);		/* ok; part of an operator */
 
   if ( in_op->isblock )
   { term_t *top;
 
-    if ( (rc = simple_term(token, pin, _PL_rd)) != TRUE )
+    if ( (rc = simple_term(token, pin, _PL_rd)) != true )
       return rc;			/* TBD: need cleanup? */
     top = term_av(-1, _PL_rd);
     in_op->op.block = PL_new_term_ref();
-    in_op->isterm = TRUE;
+    in_op->isterm = true;
     PL_put_term(in_op->op.block, *top);
     truncate_term_stack(top, _PL_rd);
   } else
   { if ( !unify_atomic_position(pin, token) )
-      return FALSE;
+      return false;
   }
 
   return rc;
@@ -4071,6 +4295,7 @@ static int
 complex_term(DECL_LD const char *stop, short maxpri, term_t positions,
 	     ReadData _PL_rd)
 { op_entry in_op;
+  op_entry end_op;
   term_t pin;
   Token token;
   cterm_state cstate =
@@ -4082,6 +4307,7 @@ complex_term(DECL_LD const char *stop, short maxpri, term_t positions,
 
   if ( _PL_rd->strictness == 0 )
     maxpri = OP_MAXPRIORITY+1;
+  end_op.left_pri = maxpri;
 
   in_op.left_pri = 0;
   in_op.right_pri = 0;
@@ -4095,7 +4321,7 @@ complex_term(DECL_LD const char *stop, short maxpri, term_t positions,
       pin = 0;
 
     if ( !(token = get_token(cstate.rmo == 1, _PL_rd)) )
-      return FALSE;
+      return false;
 
     if ( cstate.out_n != 0 || cstate.side_n != 0 ) /* Check for end of term */
     { switch(token->type)
@@ -4116,9 +4342,9 @@ complex_term(DECL_LD const char *stop, short maxpri, term_t positions,
       }
     }
 
-    if ( (rc=is_name_token(token, cstate.rmo == 1, _PL_rd)) == TRUE )
-    { in_op.isblock     = FALSE;
-      in_op.isterm      = FALSE;
+    if ( (rc=is_name_token(token, cstate.rmo == 1, _PL_rd)) == true )
+    { in_op.isblock     = false;
+      in_op.isterm      = false;
       in_op.op.atom     = name_token(token, &in_op, _PL_rd);
       in_op.tpos        = pin;
       in_op.token_start = last_token_start;
@@ -4130,7 +4356,7 @@ complex_term(DECL_LD const char *stop, short maxpri, term_t positions,
       { DEBUG(MSG_READ_OP, Sdprintf("Prefix op: %s\n", stringOp(&in_op)));
 
 	if ( !prepare_op(&in_op, token, pin, _PL_rd) )
-	  return FALSE;
+	  return false;
 	PushOp();
 
 	continue;
@@ -4139,13 +4365,13 @@ complex_term(DECL_LD const char *stop, short maxpri, term_t positions,
       { DEBUG(MSG_READ_OP, Sdprintf("Infix op: %s\n", stringOp(&in_op)));
 
 	if ( !modify_op(&cstate, in_op.left_pri) )
-	  return FALSE;
+	  return false;
 	if ( cstate.rmo == 1 )
-	{ if ( !reduce_op(&cstate, in_op.left_pri) )
-	    return FALSE;
+	{ if ( !reduce_op(&cstate, &in_op) )
+	    return false;
 	  cstate.rmo--;
 	  if ( !prepare_op(&in_op, token, pin, _PL_rd) )
-	    return FALSE;
+	    return false;
 	  PushOp();
 	  continue;
 	}
@@ -4154,36 +4380,39 @@ complex_term(DECL_LD const char *stop, short maxpri, term_t positions,
       { DEBUG(MSG_READ_OP, Sdprintf("Postfix op: %s\n", stringOp(&in_op)));
 
 	if ( !modify_op(&cstate, in_op.left_pri) )
-	  return FALSE;
+	  return false;
 	if ( cstate.rmo == 1 )
-	{ short cpri = maxpri;
+	{ op_entry *red_op = &end_op;
+	  reduce_side side = REDUCE_LEFT;
 
-	  if ( !reduce_op(&cstate, in_op.left_pri) )
-	    return FALSE;
+	  if ( !reduce_op(&cstate, &in_op) )
+	    return false;
 
 	  if ( cstate.side_n > 0 )
 	  { op_entry *prev = SideOp(cstate.side_p);
 	    if ( prev->kind == OP_PREFIX || prev->kind == OP_INFIX )
-	      cpri = prev->right_pri;
+	    { red_op = prev;
+	      side = REDUCE_RIGHT;
+	    }
 	  }
 
 	  if ( !prepare_op(&in_op, token, pin, _PL_rd) )
-	    return FALSE;
+	    return false;
 	  PushOp();
-	  if ( reduce_one_op(&cstate, cpri) == -1 )
-	    return FALSE;
+	  if ( reduce_one_op(&cstate, red_op, side) == -1 )
+	    return false;
 	  continue;
 	}
       }
     } else if ( rc < 0 )
-      return FALSE;
+      return false;
 
     if ( cstate.rmo == 1 )
       syntaxError("operator_expected", _PL_rd);
 
 					/* Read `simple' term */
     rc = simple_term(token, pin, _PL_rd);
-    if ( rc != TRUE )
+    if ( rc != true )
       return rc;
 
     if ( cstate.rmo != 0 )
@@ -4196,19 +4425,19 @@ complex_term(DECL_LD const char *stop, short maxpri, term_t positions,
 exit:
   unget_token();			/* the full-stop or punctuation */
   if ( !modify_op(&cstate, maxpri) )
-    return FALSE;
-  if ( !reduce_op(&cstate, maxpri) )
-    return FALSE;
+    return false;
+  if ( !reduce_op(&cstate, &end_op) )
+    return false;
 
   if ( cstate.out_n == 1 && cstate.side_n == 0 ) /* simple term */
   { out_entry *e = out_op(-1, _PL_rd);
     int rc;
 
-    if ( positions && (rc=PL_unify(positions, e->tpos)) != TRUE )
+    if ( positions && (rc=PL_unify(positions, e->tpos)) != true )
       return rc;
     PopOut();
 
-    return TRUE;
+    return true;
   }
 
   if ( cstate.out_n == 0 && cstate.side_n == 1 ) /* single operator */
@@ -4221,12 +4450,12 @@ exit:
     else
       PL_put_term(term, op->op.block);
 
-    if ( positions && (rc=PL_unify(positions, op->tpos)) != TRUE )
+    if ( positions && (rc=PL_unify(positions, op->tpos)) != true )
       return rc;
 
     PopOp(&cstate);
 
-    return TRUE;
+    return true;
   }
 
   if ( cstate.side_n == 1 && !SideOp(0)->isblock &&
@@ -4235,7 +4464,7 @@ exit:
        ))
   { term_t ex;
 
-    LD->exception.processing = TRUE;
+    LD->exception.processing = true;
 
     if ( (ex = PL_new_term_ref()) &&
 	 PL_unify_term(ex,
@@ -4244,7 +4473,7 @@ exit:
 			 PL_ATOM, name_token(token, NULL, _PL_rd)) )
       return errorWarning(NULL, ex, _PL_rd);
 
-    return FALSE;
+    return false;
   }
 
   syntaxError("operator_balance", _PL_rd);
@@ -4253,7 +4482,7 @@ exit:
 
 #define set_range_position(positions, start, end) LDFUNC(set_range_position, positions, start, end)
 static void
-set_range_position(DECL_LD term_t positions, intptr_t start, intptr_t end)
+set_range_position(DECL_LD term_t positions, int64_t start, int64_t end)
 { Word p = valTermRef(positions);
 
   deRef(p);
@@ -4264,7 +4493,7 @@ set_range_position(DECL_LD term_t positions, intptr_t start, intptr_t end)
 
 
 #define end_range(positions) LDFUNC(end_range, positions)
-static intptr_t
+static sword
 end_range(DECL_LD term_t positions)
 { Word p = valTermRef(positions);
 
@@ -4293,17 +4522,17 @@ read_list(DECL_LD Token token, term_t positions, ReadData _PL_rd)
 #define P_TAIL (pv+2)			/* position of tail */
 
   if ( !(tail = PL_new_term_ref()) )
-    return FALSE;
+    return false;
 
   if ( positions )
   { if ( !(pv = PL_new_term_refs(3)) ||
 	 !PL_unify_term(positions,
 			PL_FUNCTOR, FUNCTOR_list_position4,
-			PL_INTPTR, token->start,
+			PL_INT64, token->start,
 			PL_VARIABLE,
 			PL_TERM, P_LIST,
 			PL_TERM, P_TAIL) )
-      return FALSE;
+      return false;
   } else
     pv = 0;
 
@@ -4315,7 +4544,7 @@ term is to be written.
 
   term = alloc_term(_PL_rd);
   if ( !PL_put_term(tail, term) )
-    return FALSE;
+    return false;
 
   for(;;)
   { int rc;
@@ -4323,16 +4552,16 @@ term is to be written.
 
     if ( positions )
     { if ( !PL_unify_list(P_LIST, P_ELEM, P_LIST) )
-	return FALSE;
+	return false;
     }
 
     rc = complex_term(",|]", 999, P_ELEM, _PL_rd);
-    if ( rc != TRUE )
+    if ( rc != true )
       return rc;
-    if ( (rc=ensureSpaceForTermRefs(2)) != TRUE )
+    if ( (rc=ensureSpaceForTermRefs(2)) != true )
       return rc;
     if ( !hasGlobalSpace(3) &&
-	 (rc=ensureGlobalSpace(3, ALLOW_GC)) != TRUE )
+	 (rc=ensureGlobalSpace(3, ALLOW_GC)) != true )
       return rc;
     argp = gTop;
     gTop += 3;
@@ -4346,7 +4575,7 @@ term is to be written.
     truncate_term_stack(tmp, _PL_rd);
     setHandle(tail, makeRefG(argp));
 
-    token = get_token(FALSE, _PL_rd);
+    token = get_token(false, _PL_rd);
 
     switch(token->value.character)
     { case ']':
@@ -4354,7 +4583,7 @@ term is to be written.
 	  { set_range_position(positions, -1, token->end);
 	    if ( !PL_unify_nil(P_LIST) ||
 		 !PL_unify_atom(P_TAIL, ATOM_none) )
-	      return FALSE;
+	      return false;
 	  }
 	  return PL_unify_nil(tail);
 	}
@@ -4362,13 +4591,13 @@ term is to be written.
 	{ int rc;
 	  term_t pt = (pv ? P_TAIL : 0);
 
-	  if ( (rc=complex_term(",|]", 999, pt, _PL_rd)) != TRUE )
+	  if ( (rc=complex_term(",|]", 999, pt, _PL_rd)) != true )
 	    return rc;
 	  argp = unRef(*valTermRef(tail));
 	  tmp = term_av(-1, _PL_rd);
 	  readValHandle(tmp[0], argp, _PL_rd);
 	  truncate_term_stack(tmp, _PL_rd);
-	  token = get_token(FALSE, _PL_rd); /* discard ']' */
+	  token = get_token(false, _PL_rd); /* discard ']' */
 	  switch(token->value.character)
 	  { case ',':
 	    case '|':
@@ -4377,7 +4606,7 @@ term is to be written.
 	  if ( positions )
 	  { set_range_position(positions, -1, token->end);
 	    if ( !PL_unify_nil(P_LIST) )
-	      return FALSE;
+	      return false;
 	  }
 	  succeed;
 	}
@@ -4401,16 +4630,16 @@ read_brace_term(DECL_LD Token token, term_t positions, ReadData _PL_rd)
   { if ( !(pa = PL_new_term_ref()) ||
 	 !PL_unify_term(positions,
 			PL_FUNCTOR, FUNCTOR_brace_term_position3,
-			PL_INTPTR, token->start,
+			PL_INT64, token->start,
 			PL_VARIABLE,
 			PL_TERM, pa) )
-      return FALSE;
+      return false;
   } else
     pa = 0;
 
-  if ( (rc=complex_term("}", OP_MAXPRIORITY+1, pa, _PL_rd)) != TRUE )
+  if ( (rc=complex_term("}", OP_MAXPRIORITY+1, pa, _PL_rd)) != true )
     return rc;
-  token = get_token(FALSE, _PL_rd);
+  token = get_token(false, _PL_rd);
   if ( positions )
     set_range_position(positions, -1, token->end);
 
@@ -4428,16 +4657,16 @@ read_parentheses_term(DECL_LD Token token, term_t positions, ReadData _PL_rd)
   { if ( !(pa = PL_new_term_ref()) ||
 	 !PL_unify_term(positions,
 			PL_FUNCTOR, FUNCTOR_parentheses_term_position3,
-			PL_INTPTR, token->start,
+			PL_INT64, token->start,
 			PL_VARIABLE,
 			PL_TERM, pa) )
-      return FALSE;
+      return false;
   } else
     pa = 0;
 
-  if ( (rc=complex_term(")", OP_MAXPRIORITY+1, pa, _PL_rd)) != TRUE )
+  if ( (rc=complex_term(")", OP_MAXPRIORITY+1, pa, _PL_rd)) != true )
     return rc;
-  token = get_token(FALSE, _PL_rd);	/* skip ')' */
+  token = get_token(false, _PL_rd);	/* skip ')' */
   if ( positions )
     set_range_position(positions, -1, token->end);
 
@@ -4461,12 +4690,12 @@ read_compound(DECL_LD Token token, term_t positions, ReadData _PL_rd)
   { if ( !(pv = PL_new_term_refs(2)) ||
 	 !PL_unify_term(positions,
 			PL_FUNCTOR, FUNCTOR_term_position5,
-			PL_INTPTR, token->start,
+			PL_INT64, token->start,
 			PL_VARIABLE,
-			PL_INTPTR, token->start,
-			PL_INTPTR, token->end,
+			PL_INT64, token->start,
+			PL_INT64, token->end,
 			PL_TERM, P_ARG) )
-      return FALSE;
+      return false;
   } else
     pv = 0;
 
@@ -4474,10 +4703,10 @@ read_compound(DECL_LD Token token, term_t positions, ReadData _PL_rd)
   unlock = (_PL_rd->locked == functor);
   _PL_rd->locked = 0;
 
-  if ( !(token=get_token(FALSE, _PL_rd)) ) /* gets '(' */
-    return FALSE;
-  if ( !(token=get_token(FALSE, _PL_rd)) ) /* first token */
-    return FALSE;
+  if ( !(token=get_token(false, _PL_rd)) ) /* gets '(' */
+    return false;
+  if ( !(token=get_token(false, _PL_rd)) ) /* first token */
+    return false;
 
   if ( !(token->type == T_PUNCTUATION && token->value.character == ')') )
   { unget_token();
@@ -4485,22 +4714,22 @@ read_compound(DECL_LD Token token, term_t positions, ReadData _PL_rd)
     do
     { if ( positions )
       { if ( !PL_unify_list(P_ARG, P_HEAD, P_ARG) )
-	  return FALSE;
+	  return false;
       }
-      if ( (rc=complex_term(",)", 999, P_HEAD, _PL_rd)) != TRUE )
+      if ( (rc=complex_term(",)", 999, P_HEAD, _PL_rd)) != true )
       { if ( unlock )
 	  PL_unregister_atom(functor);
 	return rc;
       }
       arity++;
-      token = get_token(FALSE, _PL_rd);	/* `,' or `)' */
+      token = get_token(false, _PL_rd);	/* `,' or `)' */
     } while( token->value.character != ')' );
   }
 
   if ( positions )
   { set_range_position(positions, -1, token->end);
     if ( !PL_unify_nil(P_ARG) )
-      return FALSE;
+      return false;
   }
 
 #undef P_HEAD
@@ -4529,7 +4758,7 @@ is_key_token(Token token, ReadData _PL_rd)
     case T_QNAME:
     case T_FUNCTOR:
     case T_DICT:
-      return TRUE;
+      return true;
     case T_PUNCTUATION:
     { switch(token->value.character)
       { case '[':
@@ -4540,13 +4769,13 @@ is_key_token(Token token, ReadData _PL_rd)
 	case ']':
 	case '|':
 	case ',':
-	  return FALSE;
+	  return false;
 	default:
-	  return TRUE;
+	  return true;
       }
     }
     default:
-      return FALSE;
+      return false;
   }
 }
 
@@ -4571,12 +4800,12 @@ read_dict(DECL_LD Token token, term_t positions, ReadData _PL_rd)
   { if ( !(pv = PL_new_term_refs(3)) ||
 	 !PL_unify_term(positions,
 			PL_FUNCTOR, FUNCTOR_dict_position5,
-			PL_INTPTR, token->start, /* whole term */
+			PL_INT64, token->start, /* whole term */
 			PL_VARIABLE,
-			PL_INTPTR, token->start, /* class position */
-			PL_INTPTR, token->end,   /* key-value pairs */
+			PL_INT64, token->start, /* class position */
+			PL_INT64, token->end,   /* key-value pairs */
 			PL_TERM, P_ARG) )
-      return FALSE;
+      return false;
   } else
     pv = 0;
 
@@ -4598,22 +4827,22 @@ read_dict(DECL_LD Token token, term_t positions, ReadData _PL_rd)
     }
   }
 
-  tstart = get_token(FALSE, _PL_rd);	/* Skip '{' */
+  tstart = get_token(false, _PL_rd);	/* Skip '{' */
 
 					/* process the key-values */
   if ( !(tstart->type == T_NAME && tstart->value.atom == ATOM_curl) )
   { do
     { Token key, sep;
-      intptr_t kstart, kend;
+      int64_t kstart, kend;
       term_t key_term;
 
       if ( positions )
       { if ( !PL_unify_list(P_ARG, P_HEAD, P_ARG) )
-	  return FALSE;
+	  return false;
       }
 
-      if ( !(key = get_token(FALSE, _PL_rd)) )
-	return FALSE;
+      if ( !(key = get_token(false, _PL_rd)) )
+	return false;
 
       if ( is_key_token(key, _PL_rd) )
       { key_term = alloc_term(_PL_rd);
@@ -4624,7 +4853,7 @@ read_dict(DECL_LD Token token, term_t positions, ReadData _PL_rd)
 
 	if ( n->type == V_INTEGER && valInt(consInt(n->value.i)) == n->value.i )
 	{ key_term = alloc_term(_PL_rd);
-	  PL_put_integer(key_term, n->value.i);
+	  PL_put_int64(key_term, n->value.i);
 	} else
 	  syntaxError("key_domain", _PL_rd); /* representation error? */
       } else
@@ -4632,8 +4861,8 @@ read_dict(DECL_LD Token token, term_t positions, ReadData _PL_rd)
 
       kstart = token->start;
       kend   = token->end;
-      if ( !(sep = get_token(FALSE, _PL_rd)) )
-	return FALSE;
+      if ( !(sep = get_token(false, _PL_rd)) )
+	return false;
 
       if ( !is_key_token(sep, _PL_rd) ||
 	   key->value.atom != ATOM_colon )
@@ -4646,38 +4875,38 @@ read_dict(DECL_LD Token token, term_t positions, ReadData _PL_rd)
 
 	if ( !PL_unify_term(P_HEAD,
 			    PL_FUNCTOR, FUNCTOR_key_value_position7,
-			    PL_INTPTR, kstart,		/* whole term */
+			    PL_INT64, kstart,		/* whole term */
 			    PL_VARIABLE,
-			    PL_INTPTR, sep->start, /* : start */
-			    PL_INTPTR, sep->end,   /* : end */
+			    PL_INT64, sep->start, /* : start */
+			    PL_INT64, sep->end,   /* : end */
 			    PL_TERM,   key_term,
 			    PL_FUNCTOR, FUNCTOR_minus2,
-			      PL_INTPTR, kstart,
-			      PL_INTPTR, kend,
+			      PL_INT64, kstart,
+			      PL_INT64, kend,
 			    PL_TERM, P_VALUE) )
-	  return FALSE;
+	  return false;
       }
 
       if ( (rc=complex_term(",}", 999,
 			    positions ? P_VALUE : 0,
-			    _PL_rd)) != TRUE )
+			    _PL_rd)) != true )
 	return rc;
 
       if ( positions )
-      { intptr_t vend = end_range(P_VALUE);
+      { sword vend = end_range(P_VALUE);
 
 	set_range_position(P_HEAD, -1, vend);
       }
 
       pairs++;
-      token = get_token(FALSE, _PL_rd);	/* `,' or `}' */
+      token = get_token(false, _PL_rd);	/* `,' or `}' */
     } while(token->value.character == ',');
   }
 
   if ( positions )
   { set_range_position(positions, -1, token->end);
     if ( !PL_unify_nil(P_ARG) )
-      return FALSE;
+      return false;
   }
 
 #undef P_HEAD
@@ -4718,7 +4947,7 @@ simple_term(DECL_LD Token token, term_t positions, ReadData _PL_rd)
     case T_NUMBER:
     { term_t term = alloc_term(_PL_rd);
       if ( !_PL_put_number(term, &token->value.number) )
-	return FALSE;
+	return false;
       clearNumber(&token->value.number);
       return unify_atomic_position(positions, token);
     }
@@ -4768,36 +4997,36 @@ subterm_positions = quasi_quotation_position(From, To, TypePos, ContentPos)
 	{ _PL_rd->qq = _PL_rd->quasi_quotations;
 	} else
 	{ if ( !(_PL_rd->qq = PL_new_term_ref()) )
-	    return FALSE;
+	    return false;
 	}
 
 	if ( !(_PL_rd->qq_tail = PL_copy_term_ref(_PL_rd->qq)) )
-	  return FALSE;
+	  return false;
       }
 
 					/* allocate for quasi_quotation/4 */
       if ( !(av=PL_new_term_refs(4)) )
-	return FALSE;
+	return false;
 
       if ( positions )
       { if ( !(pv = PL_new_term_refs(3)) ||
 	     !PL_unify_term(positions,
 			    PL_FUNCTOR, FUNCTOR_quasi_quotation_position5,
-			      PL_INTPTR, token->start,
+			      PL_INT64, token->start,
 			      PL_VARIABLE,
 			      PL_TERM, pv+0,
 			      PL_TERM, pv+1,
 			      PL_TERM, pv+2) )
-	  return FALSE;
+	  return false;
       } else
 	pv = 0;
 						/* push type */
       rc = complex_term("|", OP_MAXPRIORITY+1,
 			positions ? pv+1 : 0,
 			_PL_rd);
-      if ( rc != TRUE )
+      if ( rc != true )
 	return rc;
-      token = get_token(FALSE, _PL_rd);		/* get the '|' */
+      token = get_token(false, _PL_rd);		/* get the '|' */
       if ( token->type != T_QQ_BAR )
 	syntaxError("double_bar_expected", _PL_rd);
 
@@ -4805,37 +5034,37 @@ subterm_positions = quasi_quotation_position(From, To, TypePos, ContentPos)
       PL_put_term(av+0, argv[0]);		/* Arg 0: the type */
       truncate_term_stack(argv, _PL_rd);
       if ( !is_quasi_quotation_syntax(av, _PL_rd) )
-	return FALSE;
+	return false;
 						/* Arg 1: the content */
       if ( !get_quasi_quotation(av+1, &rdhere, rdend, _PL_rd) )
-	return FALSE;
+	return false;
 
       if ( positions )
-      { intptr_t qqend = source_char_no + ptr_to_pos(rdhere, _PL_rd);
+      { int64_t qqend = source_char_no + ptr_to_pos(rdhere, _PL_rd);
 
 	if ( !PL_unify(pv+0, av+0) )
-	  return FALSE;
+	  return false;
 	set_range_position(positions, -1, qqend);
 	if ( !PL_unify_term(pv+2,
 			    PL_FUNCTOR, FUNCTOR_minus2,
-			      PL_INTPTR, token->end,	/* end of | token */
-			      PL_INTPTR, qqend-2) )     /* end minus "|}" */
-	  return FALSE;
+			      PL_INT64, token->end,	/* end of | token */
+			      PL_INT64, qqend-2) )     /* end minus "|}" */
+	  return false;
       }
 
       PL_put_term(av+2, _PL_rd->varnames);	/* Arg 2: the var dictionary */
       if ( !PL_unify(av+3, result) )		/* Arg 3: the result */
-	return FALSE;
+	return false;
 
       if ( !PL_cons_functor_v(av+0, FUNCTOR_quasi_quotation4, av) )
-	return FALSE;
+	return false;
 
       if ( !(t = PL_new_term_ref()) ||
 	   !PL_unify_list(_PL_rd->qq_tail, t, _PL_rd->qq_tail) ||
 	   !PL_unify(t, av+0) )
-	return FALSE;
+	return false;
 
-      return TRUE;
+      return true;
     }
     case T_QQ_BAR:
       syntaxError("double_bar_outside_quasiquotation", _PL_rd);
@@ -4862,12 +5091,12 @@ instantiate_template(DECL_LD term_t term, term_t at_term)
        !(head = PL_new_term_ref()) ||
        !(var = PL_new_term_ref()) ||
        !(value = PL_new_term_ref()) )
-    return FALSE;
+    return false;
 
   _PL_get_arg(1, at_term, template);
   _PL_get_arg(2, at_term, substitutions);
   if ( !PL_unify(term, template) )
-    return FALSE;
+    return false;
   if ( !PL_is_list(substitutions) )
     return PL_error(NULL, 0, "invalid template",
 		    ERR_TYPE, ATOM_list, substitutions);
@@ -4876,14 +5105,14 @@ instantiate_template(DECL_LD term_t term, term_t at_term)
     { _PL_get_arg(1, head, var);
       _PL_get_arg(2, head, value);
       if ( !PL_unify(var, value) )
-	return FALSE;
+	return false;
     } else
     { return PL_error(NULL, 0, "invalid template",
 		      ERR_TYPE, ATOM_equal, head);
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -4895,7 +5124,7 @@ read_term(?term, ReadData rd)
 #define read_term(term, rd) LDFUNC(read_term, term, rd)
 static bool
 read_term(DECL_LD term_t term, ReadData rd)
-{ int rc2, rc = FALSE;
+{ int rc2, rc = false;
   term_t *result;
   Token token;
   Word p;
@@ -4905,7 +5134,7 @@ read_term(DECL_LD term_t term, ReadData rd)
     fail;
 
   if ( !(fid=PL_open_foreign_frame()) )
-    return FALSE;
+    return false;
 
   rd->here = rd->base;
   rd->strictness = truePrologFlag(PLFLAG_ISO);
@@ -4914,7 +5143,7 @@ read_term(DECL_LD term_t term, ReadData rd)
       rc2,
       complex_term(NULL, OP_MAXPRIORITY+1, rd->subtpos, rd),
       (void)0);
-  if ( rc2 != TRUE )
+  if ( rc2 != true )
   { rc = raiseStackOverflow(rc2);
     goto out;
   }
@@ -4928,7 +5157,7 @@ read_term(DECL_LD term_t term, ReadData rd)
     if ( !v )
       goto out;
     setVar(*v);
-    if ( (rc2=ensureSpaceForTermRefs(1)) != TRUE )
+    if ( (rc2=ensureSpaceForTermRefs(1)) != true )
     { rc = raiseStackOverflow(rc2);
       goto out;
     }
@@ -4937,14 +5166,14 @@ read_term(DECL_LD term_t term, ReadData rd)
     *p = makeRefG(v);
   }
 
-  if ( !(token = get_token(FALSE, rd)) )
+  if ( !(token = get_token(false, rd)) )
     goto out;
   if ( token->type != T_FULLSTOP )
   { errorWarning("end_of_clause_expected", 0, rd);
     goto out;
   }
 
-  if ( rd->cycles && PL_is_functor(result[0], FUNCTOR_xpceref2) )
+  if ( rd->cycles && PL_is_functor(result[0], FUNCTOR_at_sign2) )
     rc = instantiate_template(term, result[0]);
   else
     rc = PL_unify(term, result[0]);
@@ -4963,7 +5192,7 @@ read_term(DECL_LD term_t term, ReadData rd)
   if ( rd->singles && !(rc=check_singletons(term, rd)) )
     goto out;
 
-  rc = TRUE;
+  rc = true;
 
 out:
   PL_close_foreign_frame(fid);
@@ -4996,12 +5225,12 @@ backSkipBlanks(const unsigned char *start, const unsigned char *end)
 }
 
 
-word
+foreign_t
 pl_raw_read2(term_t from, term_t term)
 { GET_LD
   unsigned char *s, *e, *t2, *top;
   read_data rd;
-  word rval;
+  foreign_t rval;
   IOSTREAM *in;
   int chr;
   PL_chars_t txt;
@@ -5041,7 +5270,7 @@ pl_raw_read2(term_t from, term_t term)
   txt.length    = top-s;
   txt.storage   = PL_CHARS_HEAP;
   txt.encoding  = ENC_UTF8;
-  txt.canonical = FALSE;
+  txt.canonical = false;
 
   rval = PL_unify_text(term, 0, &txt, PL_ATOM);
   PL_free_text(&txt);
@@ -5051,13 +5280,13 @@ pl_raw_read2(term_t from, term_t term)
 }
 
 
-word
+foreign_t
 pl_raw_read(term_t term)
 { return pl_raw_read2(0, term);
 }
 
 
-word
+foreign_t
 pl_read2(term_t from, term_t term)
 { GET_LD
   read_data rd;
@@ -5082,7 +5311,7 @@ pl_read2(term_t from, term_t term)
 }
 
 
-word
+foreign_t
 pl_read(term_t term)
 { return pl_read2(0, term);
 }
@@ -5099,7 +5328,7 @@ unify_read_term_position(DECL_LD term_t tpos)
 			   PL_INT, source_line_pos,
 			   PL_INT64, source_byte_no);
   } else
-  { return TRUE;
+  { return true;
   }
 }
 
@@ -5132,7 +5361,7 @@ callCommentHook(predicate_t comment_hook,
 { GET_LD
   fid_t fid;
   term_t av;
-  int rc = TRUE;
+  int rc = true;
 
   if ( (fid = PL_open_foreign_frame()) &&
        (av = PL_new_term_refs(3)) )
@@ -5147,20 +5376,20 @@ callCommentHook(predicate_t comment_hook,
     { term_t ex;
 
       if ( !PL_next_solution(qid) && (ex=PL_exception(qid)) )
-	rc = FALSE;
+	rc = false;
 
       PL_close_query(qid);
     }
 
     PL_discard_foreign_frame(fid);
   } else
-    rc = FALSE;
+    rc = false;
 
   return rc;
 }
 
 
-int
+bool
 read_clause(DECL_LD IOSTREAM *s, term_t term, term_t options)
 { read_data rd;
   int rval;
@@ -5177,21 +5406,21 @@ read_clause(DECL_LD IOSTREAM *s, term_t term, term_t options)
   process_comment = (comment_hook->definition->impl.any.defined != NULL);
 
   if ( !(fid=PL_open_foreign_frame()) )
-    return FALSE;
+    return false;
 
 retry:
   init_read_data(&rd, s);
 
   if ( options &&
        !PL_scan_options(options, 0, "read_option", read_clause_options,
-		     &rd.varnames,
-		     &tpos,
-		     &rd.subtpos,
-		     &process_comment,
-		     &opt_comments,
-		     &syntax_errors) )
+			&rd.varnames,
+			&tpos,
+			&rd.subtpos,
+			&process_comment,
+			&opt_comments,
+			&syntax_errors) )
   { PL_close_foreign_frame(fid);
-    return FALSE;
+    return false;
   }
 
   if ( opt_comments )
@@ -5206,7 +5435,7 @@ retry:
   if ( comments )
     rd.comments = PL_copy_term_ref(comments);
   rd.on_error = syntax_errors;
-  rd.singles = rd.styleCheck & SINGLETON_CHECK ? TRUE : FALSE;
+  rd.singles = rd.styleCheck & SINGLETON_CHECK ? true : false;
   if ( (rval=read_term(term, &rd)) &&
        (!tpos || (rval=unify_read_term_position(tpos))) )
   { if ( rd.comments &&
@@ -5218,7 +5447,7 @@ retry:
     }
   } else
   { if ( rd.has_exception && reportReadError(&rd) )
-    { LD->exception.processing = FALSE;
+    { LD->exception.processing = false;
       PL_rewind_foreign_frame(fid);
       free_read_data(&rd);
       goto retry;
@@ -5237,7 +5466,7 @@ PRED_IMPL("read_clause", 3, read_clause, 0)
   IOSTREAM *s;
 
   if ( !getTextInputStream(A1, &s) )
-    return FALSE;
+    return false;
   rc = read_clause(s, A2, A3);
   if ( Sferror(s) )
     return streamStatus(s);
@@ -5270,7 +5499,9 @@ static const PL_option_t read_term_options[] =
 };
 
 
-#define read_term_from_stream(s, term, options) LDFUNC(read_term_from_stream, s, term, options)
+#define read_term_from_stream(s, term, options) \
+	LDFUNC(read_term_from_stream, s, term, options)
+
 static foreign_t
 read_term_from_stream(DECL_LD IOSTREAM *s, term_t term, term_t options)
 { term_t tpos = 0;
@@ -5278,8 +5509,8 @@ read_term_from_stream(DECL_LD IOSTREAM *s, term_t term, term_t options)
   int rval;
   atom_t w;
   read_data rd;
-  bool charescapes = -1;
-  bool varprefix = -1;
+  int charescapes = -1;
+  int varprefix = -1;
   atom_t dq = NULL_ATOM;
   atom_t bq = NULL_ATOM;
   atom_t mname = NULL_ATOM;
@@ -5310,7 +5541,7 @@ retry:
 			QQ_ARG
 			&rd.cycles,
 			&rd.dotlists) )
-    return FALSE;
+    return false;
 
   if ( mname )
   { rd.module = isCurrentModule(mname);
@@ -5333,14 +5564,14 @@ retry:
   }
   if ( dq )
   { if ( !setDoubleQuotes(dq, &rd.flags) )
-      return FALSE;
+      return false;
   }
   if ( bq )
   { if ( !setBackQuotes(bq, &rd.flags) )
-      return FALSE;
+      return false;
   }
   if ( rd.singles && PL_get_atom(rd.singles, &w) && w == ATOM_warning )
-    rd.singles = TRUE;
+    rd.singles = true;
   if ( tcomments )
     rd.comments = PL_copy_term_ref(tcomments);
   if ( rd.subtpos )
@@ -5348,14 +5579,14 @@ retry:
 
   rval = read_term(term, &rd);
   if ( Sferror(s) )
-    return FALSE;
+    return false;
 
   if ( rval )
   { if ( tpos )
       rval = unify_read_term_position(tpos);
     if ( rval && tcomments )
     { if ( !PL_unify_nil(rd.comments) )
-	rval = FALSE;
+	rval = false;
     }
   } else
   { if ( rd.has_exception && reportReadError(&rd) )
@@ -5385,10 +5616,10 @@ PRED_IMPL("read_term", 3, read_term, PL_FA_ISO)
     if ( Sferror(s) )
       return streamStatus(s);
     PL_release_stream(s);
-    return FALSE;
+    return false;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -5406,10 +5637,10 @@ PRED_IMPL("read_term", 2, read_term, PL_FA_ISO)
     if ( Sferror(s) )
       return streamStatus(s);
     PL_release_stream(s);
-    return FALSE;
+    return false;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -5437,18 +5668,20 @@ PRED_IMPL("read_term_from_atom", 3, read_term_from_atom, 0)
     { rc = read_term_from_stream(stream, A2, A3);
       Sclose(stream);
     } else
-      rc = FALSE;
+      rc = false;
 
     LD->read_source = oldsrc;
 
     return rc;
   }
 
-  return FALSE;
+  return false;
 }
 
 
-#define atom_to_term(atom, term, bindings, text_type) LDFUNC(atom_to_term, atom, term, bindings, text_type)
+#define atom_to_term(atom, term, bindings, text_type) \
+	LDFUNC(atom_to_term, atom, term, bindings, text_type)
+
 static int
 atom_to_term(DECL_LD term_t atom, term_t term, term_t bindings, int text_type)
 { PL_chars_t txt;
@@ -5471,7 +5704,7 @@ atom_to_term(DECL_LD term_t atom, term_t term, term_t bindings, int text_type)
       txt.length = bufsize;
       txt.storage = PL_CHARS_HEAP;
       txt.encoding = ENC_UTF8;
-      txt.canonical = FALSE;
+      txt.canonical = false;
       rval = PL_unify_text(atom, 0, &txt, text_type);
     }
 
@@ -5496,6 +5729,7 @@ atom_to_term(DECL_LD term_t atom, term_t term, term_t bindings, int text_type)
       rd.varnames = bindings;
     else if ( bindings )
       return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_list, bindings);
+    set(&rd, M_RDSTRING_TERM);
 
     if ( !(rval = read_term(term, &rd)) && rd.has_exception )
       rval = PL_raise_exception(rd.exception);
@@ -5531,7 +5765,7 @@ PRED_IMPL("term_string", 2, term_string, 0)
 }
 
 
-int
+bool
 PL_put_term_from_chars(term_t t, int flags, size_t len, const char *s)
 { GET_LD
   read_data rd;
@@ -5595,13 +5829,13 @@ PL_put_term_from_chars(term_t t, int flags, size_t len, const char *s)
 }
 
 
-int
+bool
 PL_chars_to_term(const char *s, term_t t)
 { return PL_put_term_from_chars(t, REP_ISO_LATIN_1, (size_t)-1, s);
 }
 
 
-int
+bool
 PL_wchars_to_term(const wchar_t *s, term_t t)
 { GET_LD
   int rc;
@@ -5612,7 +5846,7 @@ PL_wchars_to_term(const wchar_t *s, term_t t)
   text.encoding  = ENC_WCHAR;
   text.storage   = PL_CHARS_HEAP;
   text.length    = wcslen(s);
-  text.canonical = FALSE;
+  text.canonical = false;
 
   if ( (stream = Sopen_text(&text, "r")) )
   { read_data rd;
@@ -5626,7 +5860,7 @@ PL_wchars_to_term(const wchar_t *s, term_t t)
     Sclose(stream);
     LD->read_source = oldsrc;
   } else
-    rc = FALSE;
+    rc = false;
 
   PL_free_text(&text);
 
@@ -5668,9 +5902,9 @@ PRED_IMPL("$code_class", 2, code_class, 0)
   atom_t class;
   const char *c;
 
-  if ( !PL_get_char_ex(A1, &code, FALSE) ||
+  if ( !PL_get_char_ex(A1, &code, false) ||
        !PL_get_atom_ex(A2, &class) )
-    return FALSE;
+    return false;
 
   if ( !VALID_CODE_POINT(code) )
     PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_character, A1);
@@ -5695,7 +5929,7 @@ PRED_IMPL("$code_class", 2, code_class, 0)
   else
     return PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_category, A2);
 
-  return rc ? TRUE : FALSE;
+  return rc ? true : false;
 }
 
 

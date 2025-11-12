@@ -3,8 +3,9 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2017, University of Amsterdam
+    Copyright (c)  1985-2024, University of Amsterdam
                               VU University Amsterdam
+                              SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -54,14 +55,12 @@ typedef struct flag
 
 static void	freeFlagValue(Flag f);
 
-#define flagTable (GD->flags.table)
-
 #undef LD
 #define LD LOCAL_LD
 
 static void
-freeFlagSymbol(void *name, void *value)
-{ Flag f = value;
+freeFlagSymbol(table_key_t name, table_value_t value)
+{ Flag f = val2ptr(value);
 
   freeFlagValue(f);
   freeHeap(f, sizeof(*f));
@@ -70,18 +69,18 @@ freeFlagSymbol(void *name, void *value)
 
 void
 initFlags(void)
-{ flagTable = newHTable(FLAGHASHSIZE);
-  flagTable->free_symbol = freeFlagSymbol;
+{ GD->flags.table = newHTableWP(FLAGHASHSIZE);
+  GD->flags.table->free_symbol = freeFlagSymbol;
 }
 
 
 void
 cleanupFlags(void)
-{ Table t;
+{ TableWP t;
 
-  if ( (t=flagTable) )
-  { flagTable = NULL;
-    destroyHTable(t);
+  if ( (t=GD->flags.table) )
+  { GD->flags.table = NULL;
+    destroyHTableWP(t);
   }
 }
 
@@ -91,16 +90,16 @@ lookupFlag(word key)
 { GET_LD
   Flag f, of;
 
-  if ( (f = lookupHTable(flagTable, (void *)key)) )
+  if ( (f = lookupHTableWP(GD->flags.table, key)) )
     return f;
 
   f = (Flag) allocHeapOrHalt(sizeof(struct flag));
   f->key = key;
   if ( isAtom(key) )
-    PL_register_atom(key);
+    PL_register_atom(word2atom(key));
   f->type = FLG_INTEGER;
   f->value.i = 0;
-  if ( (of=addHTable(flagTable, (void *)key, f)) != f )
+  if ( (of=addHTableWP(GD->flags.table, key, f)) != f )
   { freeHeap(f, sizeof(*f));
     f = of;
   }
@@ -127,7 +126,7 @@ PRED_IMPL("get_flag", 2, get_flag, 0)
   term_t value = A2;
 
   if ( !getKeyEx(name, &key) )
-    return FALSE;
+    return false;
 
   f = lookupFlag(key);
   PL_LOCK(L_FLAG);
@@ -142,7 +141,7 @@ PRED_IMPL("get_flag", 2, get_flag, 0)
       rc = PL_unify_float(value, f->value.f);
       break;
     default:
-      rc = FALSE;
+      rc = false;
       assert(0);
   }
   PL_UNLOCK(L_FLAG);
@@ -163,7 +162,7 @@ PRED_IMPL("set_flag", 2, set_flag, 0)
   term_t value = A2;
 
   if ( !getKeyEx(name, &key) )
-    return FALSE;
+    return false;
   f = lookupFlag(key);
 
   if ( PL_get_atom(value, &a) )
@@ -173,7 +172,7 @@ PRED_IMPL("set_flag", 2, set_flag, 0)
     f->value.a = a;
     PL_register_atom(a);
     PL_UNLOCK(L_FLAG);
-    return TRUE;
+    return true;
   } else if ( PL_get_number(value, &n) )
   { switch(n.type)
     { case V_INTEGER:
@@ -182,7 +181,7 @@ PRED_IMPL("set_flag", 2, set_flag, 0)
 	f->type = FLG_INTEGER;
 	f->value.i = n.value.i;
 	PL_UNLOCK(L_FLAG);
-	return TRUE;
+	return true;
       }
 #ifdef O_GMP
       case V_MPZ:
@@ -196,7 +195,7 @@ PRED_IMPL("set_flag", 2, set_flag, 0)
 	f->type = FLG_FLOAT;
         f->value.f = n.value.f;
 	PL_UNLOCK(L_FLAG);
-	return TRUE;
+	return true;
       }
       default:
 	goto type_error;
@@ -209,10 +208,10 @@ PRED_IMPL("set_flag", 2, set_flag, 0)
 }
 
 
-word
+foreign_t
 pl_current_flag(term_t k, control_t h)
 { GET_LD
-  Flag f;
+  table_value_t v;
   TableEnum e;
 
   switch( ForeignControl(h) )
@@ -220,11 +219,11 @@ pl_current_flag(term_t k, control_t h)
     { word key;
 
       if ( PL_is_variable(k) )
-      {	e = newTableEnum(flagTable);
+      {	e = newTableEnumWP(GD->flags.table);
 	break;
       }
       if ( getKeyEx(k, &key) &&
-	   lookupHTable(flagTable, (void *)key) )
+	   lookupHTableWP(GD->flags.table, key) )
 	succeed;
       fail;
     }
@@ -235,18 +234,20 @@ pl_current_flag(term_t k, control_t h)
       e = ForeignContextPtr(h);
       freeTableEnum(e);
     default:
-      succeed;
+      return true;
   }
 
-  while( advanceTableEnum(e, NULL, (void**)&f) )
-  { if ( !unifyKey(k, f->key) )
+  while( advanceTableEnum(e, NULL, &v) )
+  { Flag f = val2ptr(v);
+
+    if ( !unifyKey(k, f->key) )
       continue;
 
     ForeignRedoPtr(e);
   }
 
   freeTableEnum(e);
-  fail;
+  return false;
 }
 
 

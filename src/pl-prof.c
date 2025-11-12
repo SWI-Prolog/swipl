@@ -62,8 +62,8 @@
 
 #define LDFUNC_DECLARATIONS
 
-static int  identify_def(term_t t, void *handle);
-static int  get_def(term_t t, void **handle);
+static bool identify_def(term_t t, void *handle);
+static bool get_def(term_t t, void **handle);
 static void prof_release_def(void *handle);
 static void profile(intptr_t count);
 static int  thread_prof_ticks(void);
@@ -154,9 +154,9 @@ activateProfiler(DECL_LD prof_status active)
 
   updateAlerted(LD);
 
-  LD->profile.sum_ok = FALSE;
+  LD->profile.sum_ok = false;
 
-  return TRUE;
+  return true;
 }
 
 
@@ -337,7 +337,7 @@ stopProfiler(void)
 #endif
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -355,21 +355,21 @@ get_prof_status(term_t t, prof_status *s)
   { switch(a)
     { case ATOM_false:
 	*s = PROF_INACTIVE;
-        return TRUE;
+        return true;
       case ATOM_true:
       case ATOM_cputime:
 	*s = PROF_CPU;
-        return TRUE;
+        return true;
       case ATOM_walltime:
 	*s = PROF_WALL;
-        return TRUE;
+        return true;
       default:
 	PL_domain_error("profile_status", t);
-        return FALSE;
+        return false;
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -382,11 +382,11 @@ PRED_IMPL("profiler", 2, profiler, 0)
 		      LD->profile.active == PROF_INACTIVE ? ATOM_false :
 		      LD->profile.active == PROF_CPU ? ATOM_cputime :
 		      ATOM_walltime) )
-    return FALSE;
+    return false;
   if ( PL_compare(A1, A2) == 0 )
-    return TRUE;
+    return true;
   if ( !get_prof_status(A2, &val) )
-    return FALSE;
+    return false;
   if ( val == LD->profile.active )
     succeed;
 
@@ -485,7 +485,7 @@ PRED_IMPL("$prof_sibling_of", 2, prof_sibling_of, PL_FA_NONDETERMINISTIC)
 }
 
 
-static int
+static bool
 identify_def(term_t t, void *handle)
 { return unify_definition(MODULE_user, t, handle, 0, GP_QUALIFY|GP_NAMEARITY);
 }
@@ -509,7 +509,7 @@ PRED_IMPL("$prof_node", 8, prof_node, 0)
   call_node *n = NULL;
 
   if ( !get_node(A1, &n) )
-    return FALSE;
+    return false;
 
   collectSiblingsTime();
 
@@ -740,37 +740,28 @@ unify_relatives(DECL_LD term_t list, prof_ref *r)
 }
 
 
-static int
+static bool
 get_def(term_t t, void **handle)
 { Procedure proc;
 
   if ( get_procedure(t, &proc, 0, GP_FIND|GP_NAMEARITY) )
   { *handle = proc->definition;
-    succeed;
+    return true;
   }
 
-  fail;
+  return false;
 }
 
 
-static int
+static bool
 get_handle(term_t t, void **handle)
-{ int i;
-
-  for(i=0; i<MAX_PROF_TYPES; i++)
-  { if ( types[i] && types[i]->get )
-    { switch( (*types[i]->get)(t, handle) )
-      { case TRUE:
-	  succeed;
-	case FALSE:
-	  break;
-	default:
-	  assert(0);
-      }
-    }
+{ for(int i=0; i<MAX_PROF_TYPES; i++)
+  { if ( types[i] && types[i]->get &&
+	 (*types[i]->get)(t, handle) )
+      return true;
   }
 
-  fail;
+  return false;
 }
 
 static void
@@ -821,7 +812,7 @@ PRED_IMPL("$prof_procedure_data", 8, prof_procedure_data, PL_FA_TRANSPARENT)
   free_relatives(sum.callers);
   free_relatives(sum.callees);
 
-  return rc ? TRUE : FALSE;
+  return rc ? true : false;
 }
 
 
@@ -871,7 +862,7 @@ prof_clear_environments(DECL_LD LocalFrame fr)
     return NULL;
 
   for(;;)
-  { if ( true(fr, FR_MARKED) )
+  { if ( ison(fr, FR_MARKED) )
       return NULL;
     set(fr, FR_MARKED);
     LD->gc._local_frames++;
@@ -933,7 +924,7 @@ resetProfiler(DECL_LD)
   LD->profile.ticks            = 0;
   LD->profile.accounting_ticks = 0;
   LD->profile.time             = 0.0;
-  LD->profile.accounting       = FALSE;
+  LD->profile.accounting       = false;
 
   succeed;
 }
@@ -957,11 +948,11 @@ PRED_IMPL("$profile", 4, profile, PL_FA_TRANSPARENT)
   prof_status val;
 
   if ( !get_prof_status(A2, &val) )
-    return FALSE;
+    return false;
 
   atom_t ports_opt;
   if ( !PL_get_atom_ex(A3, &ports_opt) )
-    return FALSE;
+    return false;
   switch (ports_opt)
   { case ATOM_false: LD->profile.ports_control = PROFC_FALSE;   break;
     case ATOM_true:  LD->profile.ports_control = PROFC_TRUE;    break;
@@ -973,7 +964,7 @@ PRED_IMPL("$profile", 4, profile, PL_FA_TRANSPARENT)
   if ( PL_get_float_ex(A4, &rate) )
     LD->profile.sample_period = (unsigned int)(1000000/rate);
   else
-    return FALSE;
+    return false;
 
   resetProfiler();
   startProfiler(val);
@@ -1057,7 +1048,7 @@ static call_node *
 prof_call(DECL_LD void *handle, PL_prof_type_t *type)
 { call_node *node = LD->profile.current;
 
-  LD->profile.accounting = TRUE;
+  LD->profile.accounting = true;
 
   if ( !node )				/* root-node of the profile */
   { for(node = LD->profile.roots; node; node=node->next)
@@ -1067,7 +1058,7 @@ prof_call(DECL_LD void *handle, PL_prof_type_t *type)
 	DEBUG(MSG_PROF_CALLTREE,
 	      Sdprintf("Call: existing root %s\n", node_name(node)));
 
-	LD->profile.accounting = FALSE;
+	LD->profile.accounting = false;
 	return node;
       }
     }
@@ -1083,7 +1074,7 @@ prof_call(DECL_LD void *handle, PL_prof_type_t *type)
     node->next = LD->profile.roots;
     LD->profile.roots = node;
     LD->profile.current = node;
-    LD->profile.accounting = FALSE;
+    LD->profile.accounting = false;
     DEBUG(MSG_PROF_CALLTREE,
 	  Sdprintf("Call: new root %s\n", node_name(node)));
 
@@ -1095,7 +1086,7 @@ prof_call(DECL_LD void *handle, PL_prof_type_t *type)
   { node->recur++;
     DEBUG(MSG_PROF_CALLTREE,
 	  Sdprintf("Call: direct recursion on %s\n", node_name(node)));
-    LD->profile.accounting = FALSE;
+    LD->profile.accounting = false;
     return node;
   } else if ( LD->profile.ports_control != PROFC_TRUE )
   { void *parent = node->handle;
@@ -1109,7 +1100,7 @@ prof_call(DECL_LD void *handle, PL_prof_type_t *type)
 	LD->profile.current = node;
 	DEBUG(MSG_PROF_CALLTREE,
 	      Sdprintf("Call: indirect recursion on %s\n", node_name(node)));
-	LD->profile.accounting = FALSE;
+	LD->profile.accounting = false;
 	return node;
       }
     }
@@ -1121,7 +1112,7 @@ prof_call(DECL_LD void *handle, PL_prof_type_t *type)
       node->calls++;
       DEBUG(MSG_PROF_CALLTREE,
 	    Sdprintf("Call: existing child %s\n", node_name(node)));
-      LD->profile.accounting = FALSE;
+      LD->profile.accounting = false;
       return node;
     }
   }
@@ -1139,7 +1130,7 @@ prof_call(DECL_LD void *handle, PL_prof_type_t *type)
   LD->profile.current = node;
   DEBUG(MSG_PROF_CALLTREE,
 	Sdprintf("Call: new child %s\n", node_name(node)));
-  LD->profile.accounting = FALSE;
+  LD->profile.accounting = false;
 
   return node;
 }
@@ -1147,7 +1138,7 @@ prof_call(DECL_LD void *handle, PL_prof_type_t *type)
 
 call_node *
 profCall(DECL_LD Definition def)
-{ if ( true(def, P_NOPROFILE) )
+{ if ( ison(def, P_NOPROFILE) )
     return LD->profile.current;
 
   acquireModulePtr(def->module);
@@ -1173,7 +1164,7 @@ profResumeParent(DECL_LD struct call_node *node)
   if ( node && node->magic != PROFNODE_MAGIC )
     return;
 
-  LD->profile.accounting = TRUE;
+  LD->profile.accounting = true;
 
   if ( LD->profile.ports_control  != PROFC_FALSE )
   { for(n=LD->profile.current; n && n != node; n=n->parent)
@@ -1184,7 +1175,7 @@ profResumeParent(DECL_LD struct call_node *node)
   }
   LD->profile.current = node;
 
-  LD->profile.accounting = FALSE;
+  LD->profile.accounting = false;
 
 }
 
@@ -1223,12 +1214,12 @@ lookback(call_node *from_node, call_node *to_node)
 
   while( node )
   { if ( node == to_node )
-      return TRUE;
+      return true;
     else
       node = node->parent;
   }
 
-  return FALSE;
+  return false;
 }
 
 static void
@@ -1246,13 +1237,13 @@ profFailToCP(struct call_node *current, struct call_node *cp_node)
 
 void
 profFail(DECL_LD struct call_node *cp_node)
-{ LD->profile.accounting = TRUE;
+{ LD->profile.accounting = true;
 
   if ( LD->profile.ports_control != PROFC_FALSE )
     profFailToCP(LD->profile.current, cp_node);
   LD->profile.current = cp_node;
 
-  LD->profile.accounting = FALSE;
+  LD->profile.accounting = false;
 }
 
 void
@@ -1265,24 +1256,24 @@ profSetHandle(struct call_node *node, void *handle)
 		 *	 FOREIGN ACCESS		*
 		 *******************************/
 
-int
+bool
 PL_register_profile_type(PL_prof_type_t *type)
 { int i;
 
   for(i=0; i<MAX_PROF_TYPES; i++)
   { if ( types[i] == type )
-      return TRUE;
+      return true;
   }
   for(i=0; i<MAX_PROF_TYPES; i++)
   { if ( !types[i] )
     { types[i] = type;
       type->magic = PROFTYPE_MAGIC;
-      return TRUE;
+      return true;
     }
   }
 
   assert(0);
-  return FALSE;
+  return false;
 }
 
 
@@ -1329,7 +1320,7 @@ collectSiblingsTime(DECL_LD)
     for(n=LD->profile.roots; n; n=n->next)
       collectSiblingsNode(n);
 
-    LD->profile.sum_ok = TRUE;
+    LD->profile.sum_ok = true;
   }
 }
 
@@ -1375,9 +1366,9 @@ freeProfileData(void)
 
 #else /* !O_PROFILE */
 
-int
+bool
 PL_register_profile_type(PL_prof_type_t *type)
-{ return FALSE;
+{ return false;
 }
 
 void *

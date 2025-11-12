@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2021, University of Amsterdam
+    Copyright (c)  1985-2025, University of Amsterdam
                               VU University Amsterdam
 			      CWI, Amsterdam
 			      SWI-Prolog Solutions b.v.
@@ -52,6 +52,9 @@
 #define	PL_next_solution(qid)		LDFUNC(PL_next_solution, qid)
 #define	foreignWakeup(ex)		LDFUNC(foreignWakeup, ex)
 #define	existingChoice(ch)		LDFUNC(existingChoice, ch)
+#define	existingFrame(fr)		LDFUNC(existingFrame, fr)
+#define grow_trail_ptr(p)		LDFUNC(grow_trail_ptr, p)
+#define handles_unwind(qid, flags)	LDFUNC(handles_unwind, qid, flags)
 #endif /*USE_LD_MACROS*/
 
 #define LDFUNC_DECLARATIONS
@@ -67,20 +70,35 @@ fid_t		PL_open_foreign_frame(void);
 void		PL_close_foreign_frame(fid_t id);
 fid_t		PL_open_signal_foreign_frame(int sync);
 int		PL_next_solution(qid_t qid);
-int		foreignWakeup(term_t ex);
+bool		foreignWakeup(term_t ex);
 void		resumeAfterException(int clear, Stack outofstack);
 void		updateAlerted(PL_local_data_t *ld);
-int		raiseSignal(PL_local_data_t *ld, int sig);
+bool		raiseSignal(PL_local_data_t *ld, int sig);
 int		pendingSignal(PL_local_data_t *ld, int sig);
 Module		contextModule(LocalFrame fr);
 void		setContextModule(LocalFrame fr, Module context);
-int		existingChoice(Choice ch);
+bool		existingChoice(Choice ch);
+bool		existingFrame(LocalFrame fr);
+bool		grow_trail_ptr(Word p);
+bool		handles_unwind(qid_t qid, unsigned int flags);
 #ifdef O_DEBUG
 char *		chp_chars(Choice ch);
 #endif
+void		initVM(void);
 
 #undef LDFUNC_DECLARATIONS
 
 #define getProcDefinition(proc)	getLocalProcDefinition(proc->definition)
+
+#define trail_ptr(p) LDFUNC(trail_ptr, p)
+static inline bool
+trail_ptr(DECL_LD Word p)
+{ if ( hasTrailSpace(1) )
+  { (tTop++)->address = p;
+    return true;
+  }
+
+  return grow_trail_ptr(p);
+}
 
 #endif /*_PL_WAM_H*/

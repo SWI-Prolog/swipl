@@ -55,8 +55,8 @@ suggest predicates from a keyword.
 \predicatesummary{abolish_all_tables}{0}{Abolish computed tables}
 \predicatesummary{abolish_module_tables}{1}{Abolish all tables in a module}
 \predicatesummary{abolish_monotonic_tables}{0}{Abolish all monotonic tables}
-\predicatesummary{abolish_nonincremental_tables}{0}{Abolish non-auttomatic tables}
-\predicatesummary{abolish_nonincremental_tables}{1}{Abolish non-auttomatic tables}
+\predicatesummary{abolish_nonincremental_tables}{0}{Abolish non-automatic tables}
+\predicatesummary{abolish_nonincremental_tables}{1}{Abolish non-automatic tables}
 \predicatesummary{abolish_private_tables}{0}{Abolish tables of this thread}
 \predicatesummary{abolish_shared_tables}{0}{Abolish tables shared between threads}
 \predicatesummary{abolish_table_subgoals}{1}{Abolish tables for a goal}
@@ -96,7 +96,7 @@ suggest predicates from a keyword.
 \predicatesummary{atom}{1}{Type check for an atom}
 \predicatesummary{atom_chars}{2}{Convert between atom and list of characters}
 \predicatesummary{atom_codes}{2}{Convert between atom and list of characters codes}
-\predicatesummary{atom_concat}{3}{Contatenate two atoms}
+\predicatesummary{atom_concat}{3}{Concatenate two atoms}
 \predicatesummary{atom_length}{2}{Determine length of an atom}
 \predicatesummary{atom_number}{2}{Convert between atom and number}
 \predicatesummary{atom_prefix}{2}{Test for start of atom}
@@ -111,6 +111,7 @@ suggest predicates from a keyword.
 \predicatesummary{autoload}{1}{Declare a file for autoloading}
 \predicatesummary{autoload}{2}{Declare a file for autoloading specific predicates}
 \predicatesummary{autoload_all}{0}{Autoload all predicates now}
+\predicatesummary{autoload_call}{1}{Call after autoloading}
 \predicatesummary{autoload_path}{1}{Add directories for autoloading}
 \predicatesummary{await}{2}{WASM: Wait for a Promise}
 \predicatesummary{b_getval}{2}{Fetch backtrackable global variable}
@@ -125,7 +126,7 @@ suggest predicates from a keyword.
 \predicatesummary{byte_count}{2}{Byte-position in a stream}
 \predicatesummary{call}{1}{Call a goal}
 \predicatesummary{call}{[2..]}{Call with additional arguments}
-\predicatesummary{call_cleanup}{2}{Guard a goal with a cleaup-handler}
+\predicatesummary{call_cleanup}{2}{Guard a goal with a cleanup-handler}
 \predicatesummary{call_dcg}{3}{As phrase/3 without type checking}
 \predicatesummary{call_delays}{2}{Get the condition associated with an answer}
 \predicatesummary{call_residue_vars}{2}{Find residual attributed variables}
@@ -228,7 +229,10 @@ suggest predicates from a keyword.
 \predicatesummary{delete_file}{1}{Remove a file from the file system}
 \predicatesummary{delete_import_module}{2}{Remove module from import list}
 \predicatesummary{det}{1}{Declare predicates as deterministic}
-\predicatesummary{deterministic}{1}{Test deterministicy of current clause}
+\predicatesummary{deterministic}{1}{Test determinicity of current clause}
+\predicatesummary{dict_create}{3}{Create a dict from data}
+\predicatesummary{dict_pairs}{3}{Convert between dict and list of pairs}
+\predicatesummary{dict_same_keys}{2}{True when dicts have the same keys}
 \predicatesummary{dif}{2}{Constrain two terms to be different}
 \predicatesummary{directory_files}{2}{Get entries of a directory/folder}
 \oppredsummary{discontiguous}{1}{fx}{1150}{Indicate distributed definition of a predicate}
@@ -259,6 +263,8 @@ suggest predicates from a keyword.
 \predicatesummary{engine_self}{1}{Get handle to running interactor}
 \predicatesummary{engine_yield}{1}{Make term available to caller}
 \predicatesummary{ensure_loaded}{1}{Consult a file if that has not yet been done}
+\predicatesummary{epilog}{0}{Create a Prolog console}
+\predicatesummary{epilog}{1}{Create a Prolog console}
 \predicatesummary{erase}{1}{Erase a database record or clause}
 \predicatesummary{exception}{3}{\hook{user} Handle runtime exceptions}
 \predicatesummary{exists_directory}{1}{Check existence of directory}
@@ -416,10 +422,9 @@ suggest predicates from a keyword.
 \predicatesummary{make_library_index}{2}{Create selective autoload file INDEX.pl}
 \predicatesummary{map_assoc}{2}{Map association tree}
 \predicatesummary{map_assoc}{3}{Map association tree}
-\predicatesummary{dict_create}{3}{Create a dict from data}
-\predicatesummary{dict_pairs}{3}{Convert between dict and list of pairs}
 \predicatesummary{max_assoc}{3}{Highest key in association tree}
 \predicatesummary{memberchk}{2}{Deterministic member/2}
+\predicatesummary{message_action}{2}{\hook{prolog} Associate actions with messages}
 \predicatesummary{message_hook}{3}{Intercept print_message/2}
 \predicatesummary{message_line_element}{2}{\hook{prolog} Intercept print_message_lines/3}
 \predicatesummary{message_property}{2}{\hook{user} Define display of a message}
@@ -431,6 +436,7 @@ suggest predicates from a keyword.
 \predicatesummary{message_to_string}{2}{Translate message-term to string}
 \predicatesummary{meta_predicate}{1}{Declare access to other predicates}
 \predicatesummary{min_assoc}{3}{Lowest key in association tree}
+\oppredsummary{mode}{1}{Define the mode for predicates}
 \predicatesummary{module}{1}{Query/set current type-in module}
 \predicatesummary{module}{2}{Declare a module}
 \predicatesummary{module}{3}{Declare a module with language options}
@@ -534,7 +540,7 @@ suggest predicates from a keyword.
 \predicatesummary{prolog_edit:edit_source}{1}{Call editor for edit/1}
 \predicatesummary{prolog_edit:edit_command}{2}{Specify editor activation}
 \predicatesummary{prolog_edit:load}{0}{Load edit/1 extensions}
-\predicatesummary{prolog_exception_hook}{4}{Rewrite exceptions}
+\predicatesummary{prolog_exception_hook}{5}{Rewrite exceptions}
 \predicatesummary{prolog_file_type}{2}{Define meaning of file extension}
 \predicatesummary{prolog_frame_attribute}{3}{Obtain information on a goal environment}
 \predicatesummary{prolog_ide}{1}{Program access to the development environment}
@@ -545,7 +551,6 @@ suggest predicates from a keyword.
 \predicatesummary{prolog_load_context}{2}{Context information for directives}
 \predicatesummary{prolog_load_file}{2}{\hook{user} Program load_files/2}
 \predicatesummary{prolog_skip_level}{2}{Indicate deepest recursion to trace}
-\predicatesummary{prolog_skip_frame}{1}{Perform `skip' on a frame}
 \predicatesummary{prolog_stack_property}{2}{Query properties of the stacks}
 \predicatesummary{prolog_to_os_filename}{2}{Convert between Prolog and OS filenames}
 \predicatesummary{prolog_trace_interception}{4}{\pllib{user} Intercept the Prolog tracer}
@@ -576,7 +581,7 @@ suggest predicates from a keyword.
 \predicatesummary{qsave_program}{2}{Create runtime application}
 \predicatesummary{quasi_quotation_syntax}{1}{Declare quasi quotation syntax}
 \predicatesummary{quasi_quotation_syntax_error}{1}{Raise syntax error}
-\predicatesummary{radial_restraint}{0}{Tabbling radial restraint was violated}
+\predicatesummary{radial_restraint}{0}{Tabling radial restraint was violated}
 \predicatesummary{random_property}{1}{Query properties of random generation}
 \predicatesummary{rational}{1}{Type check for a rational number}
 \predicatesummary{rational}{3}{Decompose a rational}
@@ -587,7 +592,7 @@ suggest predicates from a keyword.
 \predicatesummary{read_pending_codes}{3}{Fetch buffered input from a stream}
 \predicatesummary{read_pending_chars}{3}{Fetch buffered input from a stream}
 \predicatesummary{read_string}{3}{Read a number of characters into a string}
-\predicatesummary{read_string}{5}{Read string upto a delimiter}
+\predicatesummary{read_string}{5}{Read string up to a delimiter}
 \predicatesummary{read_term}{2}{Read term with options}
 \predicatesummary{read_term}{3}{Read term with options from stream}
 \predicatesummary{read_term_from_atom}{3}{Read term with options from atom}
@@ -623,6 +628,7 @@ suggest predicates from a keyword.
 \predicatesummary{select_dict}{2}{Select matching attributes from a dict}
 \predicatesummary{select_dict}{3}{Select matching attributes from a dict}
 \predicatesummary{set_end_of_stream}{1}{Set physical end of an open file}
+\predicatesummary{set_epilog}{1}{Control the SWI-Prolog console}
 \predicatesummary{set_flag}{2}{Set value of a flag}
 \predicatesummary{set_input}{1}{Set current input stream from a stream}
 \predicatesummary{set_locale}{1}{Set the default local}
@@ -811,16 +817,11 @@ suggest predicates from a keyword.
 \predicatesummary{win_exec}{2}{Win32: spawn Windows task}
 \predicatesummary{win_has_menu}{0}{Win32: true if console menu is available}
 \predicatesummary{win_folder}{2}{Win32: get special folder by CSIDL}
-\predicatesummary{win_insert_menu}{2}{swipl-win.exe: add menu}
-\predicatesummary{win_insert_menu_item}{4}{swipl-win.exe: add item to menu}
 \predicatesummary{win_process_modules}{1}{Win32 get .exe and .dll files of the process}
 \predicatesummary{win_shell}{2}{Win32: open document through Shell}
 \predicatesummary{win_shell}{3}{Win32: open document through Shell}
 \predicatesummary{win_registry_get_value}{3}{Win32: get registry value}
 \predicatesummary{win_get_user_preferred_ui_languages}{2}{Win32: get language preferences}
-\predicatesummary{win_window_color}{2}{Win32: change colors of console window}
-\predicatesummary{win_window_pos}{1}{Win32: change size and position of window}
-\predicatesummary{window_title}{2}{Win32: change title of window}
 \predicatesummary{with_mutex}{2}{Run goal while holding mutex}
 \predicatesummary{with_output_to}{2}{Write to strings and more}
 \predicatesummary{with_quasi_quotation_input}{3}{Parse quasi quotation from stream}
@@ -832,7 +833,7 @@ suggest predicates from a keyword.
 \predicatesummary{writeln}{2}{Write term, followed by a newline to a stream}
 \predicatesummary{write_canonical}{1}{Write a term with quotes, ignore operators}
 \predicatesummary{write_canonical}{2}{Write a term with quotes, ignore operators on a stream}
-\predicatesummary{write_length}{3}{Dermine \#characters to output a term}
+\predicatesummary{write_length}{3}{Determine \#characters to output a term}
 \predicatesummary{write_term}{2}{Write term with options}
 \predicatesummary{write_term}{3}{Write term with options to stream}
 \predicatesummary{writef}{1}{Formatted write}
@@ -986,6 +987,7 @@ suggest predicates from a keyword.
 \opsummary{1200}{fx}{:-}{Introduces a directive}
 \opsummary{1200}{fx}{?-}{Introduces a directive}
 \opsummary{1200}{xfx}{-->}{DCGrammar: rewrite}
+\opsummary{1200}{xfx}{==>}{DCGrammar: rewrite}
 \opsummary{1200}{xfx}{:-}{head \Sneck{} body. separator}
 \end{summarylist}
 

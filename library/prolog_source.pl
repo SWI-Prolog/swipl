@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2006-2022, University of Amsterdam
+    Copyright (c)  2006-2025, University of Amsterdam
                               VU University Amsterdam
                               SWI-Prolog Solutions b.v.
     All rights reserved.
@@ -37,6 +37,7 @@
 :- module(prolog_source,
           [ prolog_read_source_term/4,  % +Stream, -Term, -Expanded, +Options
             read_source_term_at_location/3, %Stream, -Term, +Options
+            prolog_file_directives/3,   % +File, -Directives, +Options
             prolog_open_source/2,       % +Source, -Stream
             prolog_close_source/1,      % +Stream
             prolog_canonical_source/2,  % +Spec, -Id
@@ -55,6 +56,7 @@
 :- autoload(library(lists), [member/2, last/2, select/3, append/3, selectchk/3]).
 :- autoload(library(operators), [push_op/3, push_operators/1, pop_operators/0]).
 :- autoload(library(option), [select_option/4, option/3, option/2]).
+:- autoload(library(modules),[in_temporary_module/3]).
 
 
 /** <module> Examine Prolog source-files
@@ -142,7 +144,7 @@ prolog_read_source_term(In, Term, Expanded, Options) :-
                 ]),
     expand(Term, TermPos, In, Expanded),
     '$current_source_module'(M),
-    update_state(Term, Expanded, M).
+    update_state(Term, Expanded, M, In).
 prolog_read_source_term(In, Term, Expanded, Options) :-
     '$current_source_module'(M),
     select_option(syntax_errors(SE), Options, RestOptions0, dec10),
@@ -159,7 +161,7 @@ prolog_read_source_term(In, Term, Expanded, Options) :-
               | FinalOptions
               ]),
     expand(Term, TermPos, In, Expanded),
-    update_state(Term, Expanded, M).
+    update_state(Term, Expanded, M, In).
 
 read_clause_option(syntax_errors(_)).
 read_clause_option(term_position(_)).
@@ -226,84 +228,97 @@ requires_library((:- draw_begin_shape(_,_,_,_)),   library(pcedraw)).
 requires_library((:- use_module(library(pce))),    library(pce)).
 requires_library((:- pce_begin_class(_,_)),        library(pce)).
 requires_library((:- pce_begin_class(_,_,_)),      library(pce)).
+requires_library((:- html_meta(_)),                library(http/html_decl)).
 
-%!  update_state(+Term, +Expanded, +Module) is det.
+%!  update_state(+Term, +Expanded, +Module, +In) is det.
 %
-%   Update operators and style-check options from the expanded term.
+%   Update operators and style-check options from Term or Expanded.
 
 :- multifile
     pce_expansion:push_compile_operators/1,
     pce_expansion:pop_compile_operators/0.
 
-update_state(Raw, _, _) :-
-    Raw == (:- pce_end_class),
-    !,
+update_state((:- pce_end_class), _, _, _) =>
     ignore(pce_expansion:pop_compile_operators).
-update_state(Raw, _, SM) :-
-    subsumes_term((:- pce_extend_class(_)), Raw),
-    !,
+update_state((:- pce_extend_class(_)), _, SM, _) =>
     pce_expansion:push_compile_operators(SM).
-update_state(_Raw, Expanded, M) :-
-    update_state(Expanded, M).
+update_state(Raw, _, Module, _),
+    catch(prolog:xref_update_syntax(Raw, Module),
+          error(_,_),
+          fail) =>
+    true.
+update_state(_Raw, Expanded, M, In) =>
+    update_state(Expanded, M, In).
 
-update_state(Var, _) :-
+update_state(Var, _, _) :-
     var(Var),
     !.
-update_state([], _) :-
+update_state([], _, _) :-
     !.
-update_state([H|T], M) :-
+update_state([H|T], M, In) :-
     !,
-    update_state(H, M),
-    update_state(T, M).
-update_state((:- Directive), M) :-
+    update_state(H, M, In),
+    update_state(T, M, In).
+update_state((:- Directive), M, In) :-
     nonvar(Directive),
     !,
-    catch(update_directive(Directive, M), _, true).
-update_state((?- Directive), M) :-
+    catch(update_directive(Directive, M, In), _, true).
+update_state((?- Directive), M, In) :-
     !,
-    update_state((:- Directive), M).
-update_state(_, _).
+    update_state((:- Directive), M, In).
+update_state(MetaDecl, _M, _) :-
+    MetaDecl = html_write:html_meta_head(_Head,_Module,_Meta),
+    (   clause(MetaDecl, true)
+    ->  true
+    ;   assertz(MetaDecl)
+    ).
+update_state(_, _, _).
 
-update_directive(Directive, Module) :-
-    prolog:xref_update_syntax(Directive, Module),
+%!  update_directive(+Directive, +Module, +In) is det.
+
+update_directive(Directive, Module, _) :-
+    prolog:xref_update_syntax((:- Directive), Module),
     !.
-update_directive(module(Module, Public), _) :-
+update_directive(encoding(Enc), _, In) :-
+    !,
+    set_stream(In, encoding(Enc)).
+update_directive(module(Module, Public), _, _) :-
     atom(Module),
     is_list(Public),
     !,
     '$set_source_module'(Module),
     maplist(import_syntax(_,Module, _), Public).
-update_directive(M:op(P,T,N), SM) :-
+update_directive(M:op(P,T,N), SM, In) :-
     atom(M),
     ground(op(P,T,N)),
     !,
-    update_directive(op(P,T,N), SM).
-update_directive(op(P,T,N), SM) :-
+    update_directive(op(P,T,N), SM, In).
+update_directive(op(P,T,N), SM, _) :-
     ground(op(P,T,N)),
     !,
     strip_module(SM:N, M, PN),
     push_op(P,T,M:PN).
-update_directive(style_check(Style), _) :-
+update_directive(style_check(Style), _, _) :-
     ground(Style),
     style_check(Style),
     !.
-update_directive(use_module(Spec), SM) :-
+update_directive(use_module(Spec), SM, _) :-
     ground(Spec),
     catch(module_decl(Spec, Path, Public), _, fail),
     is_list(Public),
     !,
     maplist(import_syntax(Path, SM, _), Public).
-update_directive(use_module(Spec, Imports), SM) :-
+update_directive(use_module(Spec, Imports), SM, _) :-
     ground(Spec),
     is_list(Imports),
     catch(module_decl(Spec, Path, Public), _, fail),
     is_list(Public),
     !,
     maplist(import_syntax(Path, SM, Imports), Public).
-update_directive(pce_begin_class_definition(_,_,_,_), SM) :-
+update_directive(pce_begin_class_definition(_,_,_,_), SM, _) :-
     pce_expansion:push_compile_operators(SM),
     !.
-update_directive(_, _).
+update_directive(_, _, _).
 
 %!  import_syntax(+Path, +Module, +Imports, +ExportStatement) is det.
 %
@@ -317,7 +332,7 @@ import_syntax(_, M, Imports, Op) :-
     Op = op(_,_,_),
     \+ \+ member(Op, Imports),
     !,
-    update_directive(Op, M).
+    update_directive(Op, M, _).
 import_syntax(Path, SM, Imports, Syntax/4) :-
     \+ \+ member(Syntax/4, Imports),
     load_quasi_quotation_syntax(SM:Path, Syntax),
@@ -358,21 +373,29 @@ load_quasi_quotation_syntax(SM:Path, Syntax) :-
     !,
     use_module(SM:Path, [Syntax/4]).
 
-%!  module_decl(+FileSpec, -Path, -Decl) is semidet.
+%!  module_decl(+FileSpec, -Source, -Exports) is semidet.
 %
 %   If FileSpec refers to a Prolog  module   file,  unify  Path with the
 %   canonical file path to the file and Decl with the second argument of
 %   the module declaration.
 
-module_decl(Spec, Path, Decl) :-
+module_decl(Spec, Source, Exports) :-
     absolute_file_name(Spec, Path,
                        [ file_type(prolog),
                          file_errors(fail),
                          access(read)
                        ]),
+    module_decl_(Path, Source, Exports).
+
+module_decl_(Path, Source, Exports) :-
+    file_name_extension(_, qlf, Path),
+    !,
+    '$qlf_module'(Path, Info),
+    _{file:Source, exports:Exports} :< Info.
+module_decl_(Path, Path, Exports) :-
     setup_call_cleanup(
         prolog_open_source(Path, In),
-        read_module_decl(In, Decl),
+        read_module_decl(In, Exports),
         prolog_close_source(In)).
 
 read_module_decl(In, Decl) :-
@@ -597,6 +620,105 @@ load_qq_and_retry(_Pos, Syntax, Module, Context, _Stream, _Term, _Options) :-
 prolog:quasi_quotation_syntax(html,       library(http/html_write)).
 prolog:quasi_quotation_syntax(javascript, library(http/js_write)).
 
+
+%!  prolog_file_directives(+File, -Directives, +Options) is det.
+%
+%   True when Directives is a list  of   directives  that  appear in the
+%   source  file  File.  Reading   directives    stops   at   the  first
+%   non-directive term. Processing deals with   expand_term/2 as well as
+%   conditional compilation.  Options processed:
+%
+%     - canonical_source(-Source)
+%       Unify Source with the canonical source identifier as also
+%       used by library(prolog_xref).
+%     - silent(+Boolean)
+%       If `true` (default `false`), do not report syntax errors and
+%       other errors.
+
+prolog_file_directives(File, Directives, Options) :-
+    option(canonical_source(Path), Options, _),
+    prolog_canonical_source(File, Path),
+    in_temporary_module(
+        TempModule,
+        true,
+        read_directives(TempModule, Path, Directives, Options)).
+
+read_directives(TempModule, Path, Directives, Options) :-
+    setup_call_cleanup(
+        read_directives_setup(TempModule, Path, In, State),
+        phrase(read_directives(In, Options, [true]), Directives),
+        read_directives_cleanup(In, State)).
+
+read_directives_setup(TempModule, Path, In, state(OldM, OldXref)) :-
+    prolog_open_source(Path, In),
+    '$set_source_module'(OldM, TempModule),
+    current_prolog_flag(xref, OldXref),
+    set_prolog_flag(xref, true).
+
+read_directives_cleanup(In, state(OldM, OldXref)) :-
+    '$set_source_module'(OldM),
+    set_prolog_flag(xref, OldXref),
+    prolog_close_source(In).
+
+read_directives(In, Options, State) -->
+    {  E = error(_,_),
+       repeat,
+       catch(prolog_read_source_term(In, Term, Expanded,
+                                     [ process_comment(true),
+                                       syntax_errors(error)
+                                     ]),
+             E, report_syntax_error(E, Options))
+    -> nonvar(Term),
+       Term = (:-_)
+    },
+    !,
+    terms(Expanded, State, State1),
+    read_directives(In, Options, State1).
+read_directives(_, _, _) --> [].
+
+report_syntax_error(_, Options) :-
+    option(silent(true), Options),
+    !,
+    fail.
+report_syntax_error(E, _Options) :-
+    print_message(warning, E),
+    fail.
+
+terms(Var, State, State) --> { var(Var) }, !.
+terms([H|T], State0, State) -->
+    !,
+    terms(H, State0, State1),
+    terms(T, State1, State).
+terms((:-if(Cond)), State0, [True|State0]) -->
+    !,
+    { eval_cond(Cond, True) }.
+terms((:-elif(Cond)), [True0|State], [True|State]) -->
+    !,
+    { eval_cond(Cond, True1),
+      elif(True0, True1, True)
+    }.
+terms((:-else), [True0|State], [True|State]) -->
+    !,
+    { negate(True0, True) }.
+terms((:-endif), [_|State], State) -->  !.
+terms(H, State, State) -->
+    (   {State = [true|_]}
+    ->  [H]
+    ;   []
+    ).
+
+eval_cond(Cond, true) :-
+    catch(Cond, error(_,_), fail),
+    !.
+eval_cond(_, false).
+
+elif(true,  _,    else_false) :- !.
+elif(false, true, true) :- !.
+elif(True,  _,    True).
+
+negate(true,       false).
+negate(false,      true).
+negate(else_false, else_false).
 
                  /*******************************
                  *           SOURCES            *

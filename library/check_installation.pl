@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker and Richard O'Keefe
     E-mail:        J.Wielemaker@cs.vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2014-2024, VU University Amsterdam
+    Copyright (c)  2014-2025, VU University Amsterdam
                               CWI, Amsterdam
 			      SWI-Prolog Solutions b.v.
     All rights reserved.
@@ -103,7 +103,7 @@ component(library(double_metaphone), _{}).
 component(library(editline), _{os:unix}).
 component(library(filesex), _{}).
 component(library(http/http_stream), _{}).
-component(library(http/json), _{}).
+component(library(json), _{}).
 component(library(http/jquery), _{features:jquery_file}).
 component(library(isub), _{}).
 component(library(janus), _{features:python_version}).
@@ -118,7 +118,7 @@ component(library(pdt_console), _{}).
 component(library(porter_stem), _{}).
 component(library(process), _{}).
 component(library(protobufs), _{}).
-component(library(readline), _{os:unix}).
+%component(library(readline), _{os:unix}).
 component(library(readutil), _{}).
 component(library(rlimit), _{os:unix}).
 component(library(semweb/rdf_db), _{}).
@@ -504,6 +504,12 @@ check_on_path.
 %       When `false`, do not test the packages
 %     - package(+Package)
 %       Only test package package.
+%
+%   When  running  this  predicate  the   _working  directory_  must  be
+%   writeable and allow for writing  executable   files.  This is due to
+%   tests  for  file  system  interaction    and  tests  for  generating
+%   stand-alone executables. Note also that due to its side effects, the
+%   predicate should not be invoked twice in the same session.
 
 test_installation :-
     test_installation([]).
@@ -686,7 +692,7 @@ strip_stack(Error, Error).
 details(Properties) -->
     { issue_url(Properties, URL), !
     },
-    [ nl, 'See ~w'-[URL] ].
+    [ nl, 'See '-[], url(URL) ].
 details(_) --> [].
 
 explain(Messages) -->

@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker and Anjo Anjewierden
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2011-2022, University of Amsterdam
+    Copyright (c)  2011-2024, University of Amsterdam
                               VU University Amsterdam
 			      SWI-Prolog Solutions b.v.
     All rights reserved.
@@ -40,9 +40,9 @@
 typedef enum
 { PL_CHARS_VIRGIN = 0,			/* not initialised */
   PL_CHARS_MALLOC,			/* malloced data */
-  PL_CHARS_RING,			/* stored in the buffer ring */
+  PL_CHARS_STACK,			/* stored in the buffer ring */
   PL_CHARS_HEAP,			/* stored in program area (atoms) */
-  PL_CHARS_STACK,			/* stored on the global stack */
+  PL_CHARS_PROLOG_STACK,			/* stored on the global stack */
   PL_CHARS_LOCAL			/* stored in in-line buffer */
 } PL_chars_alloc_t;
 
@@ -62,7 +62,7 @@ typedef struct
 					/* private stuff */
   IOENC encoding;			/* how it is encoded */
   PL_chars_alloc_t storage;		/* how it is stored */
-  int canonical;			/* TRUE: ENC_ISO_LATIN_1 or ENC_WCHAR */
+  int canonical;			/* true: ENC_ISO_LATIN_1 or ENC_WCHAR */
   char buf[100];			/* buffer for simple stuff */
 } PL_chars_t;
 
@@ -70,16 +70,18 @@ typedef struct
 	{ (txt)->text.t    = NULL; \
 	  (txt)->encoding  = ENC_UNKNOWN; \
 	  (txt)->storage   = PL_CHARS_LOCAL; \
-	  (txt)->canonical = FALSE; \
+	  (txt)->canonical = false; \
 	}
 
 #if USE_LD_MACROS
 #define	PL_get_text(l, text, flags)	LDFUNC(PL_get_text, l, text, flags)
+#define textToAtom(text)		LDFUNC(textToAtom, text)
+#define textToString(text)		LDFUNC(textToString, text)
 #endif /*USE_LD_MACROS*/
 
 #define LDFUNC_DECLARATIONS
 
-int	PL_unify_text(term_t term, term_t tail, PL_chars_t *text, int type);
+bool	PL_unify_text(term_t term, term_t tail, PL_chars_t *text, int type);
 int	PL_unify_text_range(term_t term, const PL_chars_t *text,
 			    size_t from, size_t len, int type);
 
@@ -94,7 +96,18 @@ int	PL_concat_text(int n, PL_chars_t **text, PL_chars_t *result);
 
 void	PL_free_text(PL_chars_t *text);
 int	PL_save_text(PL_chars_t *text, int flags);
-size_t  PL_text_length(const PL_chars_t *text);
+size_t  utf16_text_length(const PL_chars_t *text);
+
+static inline size_t
+PL_text_length(const PL_chars_t *text)
+{ assert(text->encoding == ENC_ISO_LATIN_1 || text->encoding == ENC_WCHAR);
+#if SIZEOF_WCHAR_T == 2
+  if ( text->encoding == ENC_WCHAR )
+    return utf16_text_length(text);
+#endif
+  return text->length;
+}
+
 
 int		PL_get_text(term_t l, PL_chars_t *text, int flags);
 atom_t		textToAtom(PL_chars_t *text);
@@ -135,5 +148,18 @@ text_chr(const PL_chars_t *t, int chr)
 
   return (size_t)-1;
 }
+
+		/*******************************
+		*         STRING BUFFERS       *
+		*******************************/
+
+#define PL_STRINGS_MARK_IF_MALLOC(flags) \
+	{ buf_mark_t __PL_mark; \
+	  if ( flags&BUF_MALLOC ) \
+	    PL_mark_string_buffers(&__PL_mark);
+#define PL_STRINGS_RELEASE_IF_MALLOC(flags) \
+	  if ( flags&BUF_MALLOC ) \
+	    PL_release_string_buffers_from_mark(__PL_mark); \
+	}
 
 #endif /*PL_TEXT_H_INCLUDED*/

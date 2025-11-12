@@ -25,6 +25,16 @@
 #define _CUTILS_H
 
 #include <inttypes.h>
+#include <stdbool.h>
+
+#if (defined(__GNUC__) && __GNUC__ >= 13) || \
+    (defined(__clang__) && __clang_major__ >= 17)
+#define ASSUME(expr) __attribute__((assume(expr)))
+#elif defined(_MSC_VER)
+#define ASSUME(expr) __assume(expr)
+#else
+#define ASSUME(expr) assert(expr)
+#endif
 
 #ifdef _MSC_VER
 #include <intrin.h>
@@ -102,13 +112,6 @@ __builtin_mul_overflow(uint64_t l, uint64_t r, uint64_t *rc)
 #define offsetof(type, field) ((size_t) &((type *)0)->field)
 #endif
 #define countof(x) (sizeof(x) / sizeof(x[0]))
-
-typedef int BOOL;
-
-enum {
-    FALSE = 0,
-    TRUE = 1,
-};
 
 void pstrcpy(char *buf, ssize_t buf_size, const char *str);
 char *pstrcat(char *buf, ssize_t buf_size, const char *s);
@@ -188,7 +191,7 @@ typedef struct {
     uint8_t *buf;
     size_t size;
     size_t allocated_size;
-    BOOL error; /* true if a memory allocation error occurred */
+    bool error; /* true if a memory allocation error occurred */
     DynBufReallocFunc *realloc_func;
     void *opaque; /* for realloc_func */
 } DynBuf;
@@ -216,7 +219,7 @@ __attribute__((format(printf, 2, 3)))
 dbuf_printf(DynBuf *s, const char *fmt, ...);
 
 void dbuf_free(DynBuf *s);
-static inline BOOL dbuf_error(DynBuf *s) {
+static inline bool dbuf_error(DynBuf *s) {
     return s->error;
 }
 

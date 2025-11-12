@@ -175,7 +175,7 @@ dwimMatch(const char *str1, const char *str2)
 		*       PROLOG CONNECTION       *
 		*********************************/
 
-word
+foreign_t
 pl_dwim_match(term_t a1, term_t a2, term_t mm)
 { GET_LD
   char *s1, *s2;
@@ -196,12 +196,12 @@ specified module or context module  that  match  in  a  DWIM  sense  the
 predicate head.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-word
+foreign_t
 pl_dwim_predicate(term_t pred, term_t dwim, control_t h)
 { GET_LD
   functor_t fdef;
   Module module = (Module) NULL;
-  Procedure proc;
+  table_value_t val;
   term_t head = PL_new_term_ref();
   TableEnum e;
 
@@ -217,12 +217,13 @@ pl_dwim_predicate(term_t pred, term_t dwim, control_t h)
     fail;				/* silent: leave errors for later */
 
   if ( ForeignControl(h) == FRG_FIRST_CALL )
-    e = newTableEnum(module->procedures);
+    e = newTableEnumWP(module->procedures);
   else
     e = ForeignContextPtr(h);
 
-  while( advanceTableEnum(e, NULL, (void**)&proc) )
-  { Definition def;
+  while( advanceTableEnum(e, NULL, &val) )
+  { Procedure proc = val2ptr(val);
+    Definition def;
     char *name;
 
     def  = proc->definition;

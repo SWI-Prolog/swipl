@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2014-2021, VU University Amsterdam
+    Copyright (c)  2014-2025, VU University Amsterdam
 			      CWI, Amsterdam
 			      SWI-Prolog Solutions b.v.
     All rights reserved.
@@ -48,28 +48,30 @@
 #define	assertProcedureSource(sf, proc, clause)		LDFUNC(assertProcedureSource, sf, proc, clause)
 #define	setAttrProcedureSource(sf, proc, attr, val)	LDFUNC(setAttrProcedureSource, sf, proc, attr, val)
 #define	setMetapredicateSource(sf, proc, args)		LDFUNC(setMetapredicateSource, sf, proc, args)
+#define exportProcedureSource(sf, mod, proc)		LDFUNC(exportProcedureSource, sf, mod, proc)
+#define endConsult(sf) LDFUNC(endConsult, sf)
 #endif /*USE_LD_MACROS*/
 
 #define LDFUNC_DECLARATIONS
 
-int		startConsult(SourceFile f);
-int		endConsult(SourceFile f);
+bool		startConsult(SourceFile f);
+bool		endConsult(SourceFile f);
 size_t		highSourceFileIndex(void);
 SourceFile	lookupSourceFile(atom_t name, int create);
-int		releaseSourceFileNo(int index);
+bool		releaseSourceFileNo(int index);
 SourceFile	indexToSourceFile(int index);
 void		cleanupSourceFiles(void);
 void		unlinkSourceFileModule(SourceFile sf, Module m);
 void		addProcedureSourceFile(SourceFile sf, Procedure proc);
-int		hasProcedureSourceFile(SourceFile sf, Procedure proc);
+bool		hasProcedureSourceFile(SourceFile sf, Procedure proc);
 int		reloadHasClauses(SourceFile sf, Procedure proc);
 ClauseRef	assertProcedureSource(SourceFile sf, Procedure proc,
 				      Clause clause);
-int		setAttrProcedureSource(SourceFile sf, Procedure proc,
-				       uint64_t attr, int val);
-int		setMetapredicateSource(SourceFile sf, Procedure proc,
-				       arg_info *args);
-int		exportProcedureSource(SourceFile sf, Module module,
+bool		setAttrProcedureSource(SourceFile sf, Procedure proc,
+				       uint64_t attr, bool val);
+bool		setMetapredicateSource(SourceFile sf, Procedure proc,
+				       const arg_info *args);
+bool		exportProcedureSource(SourceFile sf, Module module,
 				      Procedure proc);
 void		registerReloadModule(SourceFile sf, Module module);
 
@@ -78,7 +80,7 @@ void		registerReloadModule(SourceFile sf, Module module);
 #ifdef O_DEBUG
 void		acquireSourceFile_d(SourceFile f,
 				    const char *file, unsigned int line);
-int		releaseSourceFile_d(SourceFile f,
+bool		releaseSourceFile_d(SourceFile f,
 				    const char *file, unsigned int line);
 #define acquireSourceFile(f) acquireSourceFile_d(f, __FILE__, __LINE__)
 #define releaseSourceFile(f) releaseSourceFile_d(f, __FILE__, __LINE__)
@@ -86,7 +88,7 @@ void		acquireSourceFileNo(int index);
 #else
 void		acquireSourceFile(SourceFile sf);
 void		acquireSourceFileNo(int index);
-int		releaseSourceFile(SourceFile f);
+bool		releaseSourceFile(SourceFile f);
 #endif
 
 #endif /*_PL_SRCFILE_H*/

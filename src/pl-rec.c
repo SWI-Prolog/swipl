@@ -3,9 +3,10 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2020, University of Amsterdam
+    Copyright (c)  1985-2024, University of Amsterdam
                               VU University Amsterdam
 			      CWI, Amsterdam
+			      SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -60,8 +61,8 @@ static int  is_external(const char *rec, size_t len);
 #define LD LOCAL_LD
 
 static void
-free_recordlist_symbol(void *name, void *value)
-{ RecordList l = value;
+free_recordlist_symbol(table_key_t name, table_value_t value)
+{ RecordList l = val2ptr(value);
 
   unallocRecordList(l);
 }
@@ -69,18 +70,18 @@ free_recordlist_symbol(void *name, void *value)
 
 void
 initRecords(void)
-{ GD->recorded_db.record_lists = newHTable(8);
+{ GD->recorded_db.record_lists = newHTableWP(8);
   GD->recorded_db.record_lists->free_symbol = free_recordlist_symbol;
 }
 
 
 void
 cleanupRecords(void)
-{ Table t;
+{ TableWP t;
 
   if ( (t=GD->recorded_db.record_lists) )
   { GD->recorded_db.record_lists = NULL;
-    destroyHTable(t);
+    destroyHTableWP(t);
   }
 }
 
@@ -93,15 +94,15 @@ lookupRecordList(word key)
 { GET_LD
   RecordList l;
 
-  if ( (l = lookupHTable(GD->recorded_db.record_lists, (void *)key)) )
+  if ( (l = lookupHTableWP(GD->recorded_db.record_lists, key)) )
   { return l;
   } else
   { if ( isAtom(key) )			/* can also be functor_t */
-      PL_register_atom(key);
+      PL_register_atom(word2atom(key));
     l = allocHeapOrHalt(sizeof(*l));
     memset(l, 0, sizeof(*l));
     l->key = key;
-    addNewHTable(GD->recorded_db.record_lists, (void *)key, l);
+    addNewHTableWP(GD->recorded_db.record_lists, key, l);
 
     return l;
   }
@@ -113,7 +114,7 @@ firstRecordRecordList(RecordList rl)
 { RecordRef record;
 
   for(record = rl->firstRecord; record; record = record->next)
-  { if ( false(record->record, R_ERASED) )
+  { if ( isoff(record->record, R_ERASED) )
       return record;
   }
 
@@ -126,7 +127,7 @@ isCurrentRecordList(word key, int must_be_non_empty)
 { GET_LD
   RecordList rl;
 
-  if ( (rl = lookupHTable(GD->recorded_db.record_lists, (void *)key)) )
+  if ( (rl = lookupHTableWP(GD->recorded_db.record_lists, key)) )
   { if ( must_be_non_empty )
     { RecordRef record;
 
@@ -171,7 +172,7 @@ cleanRecordList(RecordList rl)
   for(r = rl->firstRecord; r; r = next )
   { next = r->next;
 
-    if ( true(r->record, R_ERASED) )
+    if ( ison(r->record, R_ERASED) )
       remove_record(r);
   }
 }
@@ -230,7 +231,7 @@ typedef struct
   int	     external;			/* Allow for external storage */
   int	     lock;			/* lock compiled atoms */
   cerror     error;			/* generated error */
-  word	     econtext[1];		/* error context */
+  atom_t     econtext[1];		/* error context */
 } compile_info, *CompileInfo;
 
 #define	PL_TYPE_VARIABLE	(1)	/* variable */
@@ -280,7 +281,7 @@ addUnalignedBuf(TmpBuffer b, void *ptr, size_t bytes)
 
 static inline void
 addOpCode(CompileInfo info, int code)
-{ addBuffer(&info->code, code, uchar);
+{ addBuffer(&info->code, (uchar)code, uchar);
   DEBUG(9, Sdprintf("Added %d, now %d big\n",
 		    code, sizeOfBuffer(&info->code)));
 }
@@ -302,7 +303,7 @@ addUintBuffer(Buffer b, size_t val)
   { addBuffer(b, (uchar)val, uchar);
   } else
   { int zips = ((sizeof(val))*8+7-1)/7 - 1;
-    int leading = TRUE;
+    int leading = true;
 
     for(; zips >= 0; zips--)
     { uint d = (uint)((val >> zips*7) & 0x7f);
@@ -310,8 +311,8 @@ addUintBuffer(Buffer b, size_t val)
       if ( d || !leading )
       { if ( zips != 0 )
 	  d |= 0x80;
-	addBuffer(b, d, uchar);
-	leading = FALSE;
+	addBuffer(b, (uchar)d, uchar);
+	leading = false;
       }
     }
   }
@@ -347,12 +348,12 @@ addInt64(CompileInfo info, int64_t v)
     i = (MSB64(a)+9)/8;
   }
 
-  addBuffer(&info->code, i, uchar);
+  addBuffer(&info->code, (uchar)i, uchar);
 
   while( --i >= 0 )
   { int b = (int)(v>>(i*8)) & 0xff;
 
-    addBuffer(&info->code, b, uchar);
+    addBuffer(&info->code, (uchar)b, uchar);
   }
 }
 
@@ -416,7 +417,7 @@ addAtom(CompileInfo info, atom_t a)
   } else if ( unlikely(info->external) )
   { Atom ap = atomValue(a);
 
-    if ( true(ap->type, PL_BLOB_TEXT) )
+    if ( ison(ap->type, PL_BLOB_TEXT) )
     { if ( isUCSAtom(ap) )
 	addOpCode(info, PL_TYPE_EXT_WATOM);
       else
@@ -426,7 +427,7 @@ addAtom(CompileInfo info, atom_t a)
     } else
     { info->error = EFAST_SERIALIZE;
       info->econtext[0] = a;
-      return FALSE;
+      return false;
     }
   } else
   { addOpCode(info, PL_TYPE_ATOM);
@@ -435,7 +436,7 @@ addAtom(CompileInfo info, atom_t a)
       PL_register_atom(a);
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -456,7 +457,7 @@ addFunctor(CompileInfo info, functor_t f)
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -466,9 +467,17 @@ typedef struct
 } cycle_mark;
 
 
-#define mkAttVarP(p)  ((Word)((word)(p) | 0x1L))
-#define isAttVarP(p)  ((word)(p) & 0x1)
-#define valAttVarP(p) ((Word)((word)(p) & ~0x1L))
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Variable handling.  The buffer info->vars holds addresses of variables
+that we number  while processing the term.  For  normal variables this
+is easy  as the address is  enough.  For attributed variables  we must
+push the value as  well as the address such that we  can put the value
+back where it came.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+#define mkAttVarP(p)  ((Word)((uintptr_t)(p) | 0x1L))
+#define isAttVarP(p)  ((uintptr_t)(p) & 0x1)
+#define valAttVarP(p) ((Word)((uintptr_t)(p) & ~0x1L))
 
 #define compile_term_to_heap(agenda, info) LDFUNC(compile_term_to_heap, agenda, info)
 static int
@@ -523,8 +532,8 @@ compile_term_to_heap(DECL_LD term_agenda *agenda, CompileInfo info)
 	  addSizeInt(info, n);
 	  DEBUG(9, Sdprintf("Added var-link %d\n", n));
 	} else
-	{ if ( !addAtom(info, w) )
-	    return FALSE;
+	{ if ( !addAtom(info, word2atom(w)) )
+	    return false;
 	  DEBUG(9, Sdprintf("Added '%s'\n", stringAtom(w)));
 	}
 
@@ -586,12 +595,12 @@ compile_term_to_heap(DECL_LD term_agenda *agenda, CompileInfo info)
       case TAG_COMPOUND:
       { Functor f = valueTerm(w);
 	int arity;
-	word functor;
+	functor_t functor;
 
 #if O_CYCLIC
 	if ( isInteger(f->definition) )
 	{ addOpCode(info, PL_REC_CYCLE);
-	  addSizeInt(info, valInt(f->definition));
+	  addSizeInt(info, (size_t)valInt(f->definition));
 
 	  DEBUG(1, Sdprintf("Added cycle for offset = %d\n",
 			    valInt(f->definition)));
@@ -601,12 +610,12 @@ compile_term_to_heap(DECL_LD term_agenda *agenda, CompileInfo info)
 	{ cycle_mark mark;
 
 	  arity   = arityFunctor(f->definition);
-	  functor = f->definition;
+	  functor = word2functor(f->definition);
 
 	  mark.term = f;
-	  mark.fdef = f->definition;
+	  mark.fdef = functor;
 	  if ( !pushSegStack(&LD->cycle.lstack, mark, cycle_mark) )
-	    return FALSE;
+	    return false;
 	  f->definition = (functor_t)consUInt(info->size);
 				  /* overflow test (should not be possible) */
 	  DEBUG(CHK_SECURE, assert(valUInt(f->definition) == (uintptr_t)info->size));
@@ -615,13 +624,13 @@ compile_term_to_heap(DECL_LD term_agenda *agenda, CompileInfo info)
 
 	info->size += arity+1;
 	if ( !addFunctor(info, functor) )
-	  return FALSE;
+	  return false;
 	DEBUG(9, if ( GD->io_initialised )
 		   Sdprintf("Added %s/%d\n",
 			    stringAtom(valueFunctor(functor)->name),
 			    arityFunctor(functor)));
 	if ( !pushWorkAgenda(agenda, arity, f->arguments) )
-	  return FALSE;
+	  return false;
 	continue;
       }
       default:
@@ -629,7 +638,7 @@ compile_term_to_heap(DECL_LD term_agenda *agenda, CompileInfo info)
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 #if USE_LD_MACROS
@@ -661,6 +670,8 @@ static void unvisit(DECL_LD) {}
 
 #endif
 
+/* Restore variable numbered in compile_term_to_heap() */
+
 static void
 restoreVars(compile_info *info)
 { Word *p = topBuffer(&info->vars, Word);
@@ -669,8 +680,9 @@ restoreVars(compile_info *info)
   while(p > b)
   { p--;
     if (isAttVarP(*p) )
-    { *valAttVarP(*p) = (word)p[-1];
-      p--;
+    { Word addr = valAttVarP(*p);
+      p -= sizeof(word)/sizeof(Word);
+      *addr = *(Word)p;
     } else
       setVar(**p);
   }
@@ -768,7 +780,7 @@ variantRecords(const Record r1, const Record r2)
 
 #define REC_SZMASK  (REC_32|REC_64)	/* SIZE_MASK */
 
-#if SIZEOF_VOIDP == 8
+#if SIZEOF_WORD == 8
 #define REC_SZ REC_64
 #else
 #define REC_SZ REC_32
@@ -804,7 +816,7 @@ rec_error(CompileInfo info)
     }
     default:
       assert(0);
-      return FALSE;
+      return false;
   }
 }
 
@@ -816,6 +828,7 @@ compile_external_record(DECL_LD term_t t, record_data *data)
   int first = REC_HDR;
   term_agenda agenda;
   int scode, rc;
+  int64_t v;
 
   DEBUG(CHK_SECURE, checkData(valTermRef(t)));
   p = valTermRef(t);
@@ -823,38 +836,27 @@ compile_external_record(DECL_LD term_t t, record_data *data)
 
   init_cycle();
   initBuffer(&data->info.code);
-  data->info.external = TRUE;
-  data->info.lock = FALSE;
+  data->info.external = true;
+  data->info.lock = false;
 
-  if ( isInteger(*p) )			/* integer-only record */
-  { int64_t v;
-
-    if ( isTaggedInt(*p) )
-      v = valInt(*p);
-    else if ( isBignum(*p) )
-      v = valBignum(*p);
-    else				/* GMP integers */
-      goto general;
-
-    first |= (REC_INT|REC_GROUND);
+  if ( get_int64(*p, &v) )		/* integer-only record */
+  { first |= (REC_INT|REC_GROUND);
     addOpCode(&data->info, first);
     addInt64(&data->info, v);
-    data->simple = TRUE;
+    data->simple = true;
 
-    return TRUE;
+    return true;
   } else if ( isAtom(*p) )		/* atom-only record */
   { first |= (REC_ATOM|REC_GROUND);
     addOpCode(&data->info, first);
-    if ( !addAtom(&data->info, *p) )
-      return FALSE;
-    data->simple = TRUE;
+    if ( !addAtom(&data->info, word2atom(*p)) )
+      return false;
+    data->simple = true;
 
-    return TRUE;
+    return true;
   }
-
 					/* the real stuff */
-general:
-  data->simple = FALSE;
+  data->simple = false;
   initBuffer(&data->info.vars);
   data->info.size = 0;
   data->info.nvars = 0;
@@ -871,12 +873,12 @@ general:
   scode = (int)sizeOfBuffer(&data->info.code);
 
   initBuffer(&data->hdr);
-  addBuffer(&data->hdr, first, uchar);			/* magic code */
+  addBuffer(&data->hdr, (uchar)first, uchar);		/* magic code */
   addUintBuffer((Buffer)&data->hdr, scode);		/* code size */
   addUintBuffer((Buffer)&data->hdr, data->info.size);	/* size on stack */
   if ( data->info.nvars > 0 )
     addUintBuffer((Buffer)&data->hdr, data->info.nvars);/* Number of variables */
-  return TRUE;
+  return true;
 }
 
 
@@ -958,7 +960,7 @@ PRED_IMPL("fast_term_serialized", 2, fast_term_serialized, 0)
 	size_t scode = sizeOfBuffer(&data.info.code);
 	Word p;
 
-	if ( (p=allocString(shdr+scode+1)) )
+	if ( (p=globalBlob(shdr+scode+1, TAG_STRING)) )
 	{ char *q = (char *)&p[1];
 	  word w  = consPtr(p, TAG_STRING|STG_GLOBAL);
 
@@ -966,17 +968,17 @@ PRED_IMPL("fast_term_serialized", 2, fast_term_serialized, 0)
 	  memcpy(q,      data.hdr.base,       shdr);
 	  memcpy(q+shdr, data.info.code.base, scode);
 
-	  rc = _PL_unify_atomic(string, w);
+	  rc = PL_unify_atomic(string, w);
 	  discard_record_data(&data);
 
 	  return rc;
 	} else
 	{ discard_record_data(&data);
-	  return FALSE;
+	  return false;
 	}
       }
     } else
-    { return FALSE;
+    { return false;
     }
   } else if ( PL_get_nchars(string, &len, &rec,
 			    CVT_STRING|BUF_STACK|REP_ISO_LATIN_1|CVT_EXCEPTION) )
@@ -987,7 +989,7 @@ PRED_IMPL("fast_term_serialized", 2, fast_term_serialized, 0)
 	     PL_recorded_external(rec, tmp) &&
 	     PL_unify(term, tmp) );
   } else
-  { return FALSE;
+  { return false;
   }
 }
 
@@ -1027,7 +1029,7 @@ PRED_IMPL("fast_write", 2, fast_write, 0)
     return PL_release_stream(out) && rc;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -1047,7 +1049,7 @@ readSizeInt(IOSTREAM *in, char *to, size_t *sz)
       return NULL;
     }
 
-    *t++ = d;
+    *t++ = (char)d;
     if ( t-to > 10 )
       return NULL;
     r = (r<<7)|(d&0x7f);
@@ -1099,19 +1101,19 @@ PRED_IMPL("fast_read", 2, fast_read, 0)
 	{ int size = Sgetc(in)&0xff;
 
 	  if ( size <= 8 )
-	  { rec[0] = m;
-	    rec[1] = size;
+	  { rec[0] = (char)m;
+	    rec[1] = (char)size;
 	    if ( Sfread(&rec[2], 1, size, in) != size )
 	      rc = PL_syntax_error("fastrw_integer", in);
 	    else
-	      rc = TRUE;
+	      rc = true;
 	  } else
 	  { rc = PL_syntax_error("fastrw_integer", in);
 	  }
 	  break;
 	}
 	case REC_HDR|REC_ATOM|REC_GROUND:
-	{ uchar op = Sgetc(in);
+	{ int op = Sgetc(in);
 
 	  switch(op)
 	  { case PL_TYPE_NIL:
@@ -1125,13 +1127,13 @@ PRED_IMPL("fast_read", 2, fast_read, 0)
 	    { size_t bytes;
 	      char *np;
 
-	      rec[0] = m;
-	      rec[1] = op;
+	      rec[0] = (char)m;
+	      rec[1] = (char)op;
 
 	      if ( (np=readSizeInt(in, &rec[2], &bytes)) &&
 		   (rec = realloc_record(rec, &np, bytes)) &&
 		   Sfread(np, 1, bytes, in) == bytes )
-		rc = TRUE;
+		rc = true;
 	      else
 		rc = PL_syntax_error("fastrw_atom", in);
 	      break;
@@ -1146,14 +1148,14 @@ PRED_IMPL("fast_read", 2, fast_read, 0)
 	{ char *np;
 	  size_t codes, gsize, nvars;
 
-	  rec[0] = m;
+	  rec[0] = (char)m;
 
 	  if ( (np=readSizeInt(in, &rec[1], &codes)) &&
 	       (np=readSizeInt(in, np, &gsize)) &&
 	       ((m&REC_GROUND) || (np=readSizeInt(in, np, &nvars))) &&
 	       (rec = realloc_record(rec, &np, codes)) &&
 	       Sfread(np, 1, codes, in) == codes )
-	    rc = TRUE;
+	    rc = true;
 	  else
 	    rc = PL_syntax_error("fastrw_term", in);
 	  break;
@@ -1180,7 +1182,7 @@ PRED_IMPL("fast_read", 2, fast_read, 0)
     return PL_release_stream(in) && rc;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -1205,7 +1207,7 @@ typedef struct
 
 static void skipSizeInt(CopyInfo b);
 
-static inline int
+static inline int		/* true or MEMORY_OVERFLOW */
 init_copy_vars(copy_info *info, uint n)
 { if ( n > 0 )
   { Word *p;
@@ -1221,7 +1223,7 @@ init_copy_vars(copy_info *info, uint n)
   { info->vars = NULL;
   }
 
-  return TRUE;
+  return true;
 }
 
 static inline void
@@ -1346,7 +1348,7 @@ fetchChars(CopyInfo b, unsigned len, Word to)
 static int
 copy_record(DECL_LD Word p, CopyInfo b)
 { term_agenda agenda;
-  int is_compound = FALSE;
+  int is_compound = false;
   int tag;
 
   do
@@ -1379,10 +1381,10 @@ copy_record(DECL_LD Word p, CopyInfo b)
       }
 #if O_ATTVAR
       case PL_TYPE_ATTVAR:
-      { intptr_t n = fetchSizeInt(b);
+      { size_t n = fetchSizeInt(b);
 
 	DEBUG(MSG_REC_ATTVAR,
-	      Sdprintf("Restore attvar %ld at %p\n", (long)n, &b->gstore[1]));
+	      Sdprintf("Restore attvar %zd at %p\n", n, &b->gstore[1]));
 	register_attvar(b->gstore);
 	b->gstore[1] = consPtr(&b->gstore[2], TAG_ATTVAR|STG_GLOBAL);
 	*p = makeRefG(&b->gstore[1]);
@@ -1405,13 +1407,17 @@ copy_record(DECL_LD Word p, CopyInfo b)
 	continue;
       }
       case PL_TYPE_EXT_ATOM:
-      { fetchAtom(b, p);
-	PL_unregister_atom(*p);
+      { atom_t a;
+	fetchAtom(b, &a);
+        *p = atom2word(a);
+	PL_unregister_atom(a);
 	continue;
       }
       case PL_TYPE_EXT_WATOM:
-      { fetchAtomW(b, p);
-	PL_unregister_atom(*p);
+      { atom_t a;
+	fetchAtomW(b, &a);
+	*p = atom2word(a);
+	PL_unregister_atom(a);
 	continue;
       }
       case PL_TYPE_TAGGED_INTEGER:
@@ -1460,10 +1466,10 @@ copy_record(DECL_LD Word p, CopyInfo b)
 	int pad;
 	word hdr;
 
-	lw = (len+sizeof(word))/sizeof(word); /* see globalNString() */
+	lw = (len+sizeof(word))/sizeof(word); /* see globalBlob() */
 	pad = (lw*sizeof(word) - len);
 	*p = consPtr(b->gstore, TAG_STRING|STG_GLOBAL);
-	*b->gstore++ = hdr = mkStrHdr(lw, pad);
+	*b->gstore++ = hdr = mkBlobHdr(lw, pad, TAG_STRING);
 	b->gstore[lw-1] = 0L;		/* zero-padding */
 	fetchChars(b, len, b->gstore);
 	b->gstore += lw;
@@ -1492,7 +1498,7 @@ copy_record(DECL_LD Word p, CopyInfo b)
 	p = b->gstore;
 	b->gstore += arity;
 	if ( !is_compound )
-	{ is_compound = TRUE;
+	{ is_compound = true;
 	  initTermAgenda(&agenda, arity, p);
 	} else
 	{ if ( !pushWorkAgenda(&agenda, arity, p) )
@@ -1542,7 +1548,7 @@ copy_record(DECL_LD Word p, CopyInfo b)
 	p = b->gstore;
 	b->gstore += 2;
 	if ( !is_compound )
-	{ is_compound = TRUE;
+	{ is_compound = true;
 	  initTermAgenda(&agenda, 2, p);
 	} else
 	{ if ( !pushWorkAgenda(&agenda, 2, p) )
@@ -1555,11 +1561,11 @@ copy_record(DECL_LD Word p, CopyInfo b)
     }
   } while ( is_compound && (p=nextTermAgendaNoDeRef(&agenda)) );
 
-  return TRUE;
+  return true;
 }
 
 
-int
+int				/* true or *_OVERFLOW */
 copyRecordToGlobal(DECL_LD term_t copy, Record r, int flags)
 { copy_info b;
   int rc;
@@ -1570,25 +1576,25 @@ copyRecordToGlobal(DECL_LD term_t copy, Record r, int flags)
   assert(r->magic == REC_MAGIC);
 #endif
   if ( !hasGlobalSpace(r->gsize) )
-  { if ( (rc=ensureGlobalSpace(r->gsize, flags)) != TRUE )
+  { if ( (rc=ensureGlobalSpace(r->gsize, flags)) != true )
       return rc;
   }
   b.base = b.data = dataRecord(r);
   b.gbase = b.gstore = gTop;
   b.version_map = NULL;
 
-  if ( (rc=init_copy_vars(&b, r->nvars)) == TRUE )
+  if ( (rc=init_copy_vars(&b, r->nvars)) == true )
   { gTop += r->gsize;
     rc = copy_record(valTermRef(copy), &b);
     free_copy_vars(&b);
   }
-  if ( rc != TRUE )
+  if ( rc != true )
     return rc;
 
   assert(b.gstore == gTop);
   DEBUG(CHK_SECURE, checkData(valTermRef(copy)));
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1634,7 +1640,7 @@ is_external(const char *rec, size_t len)
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -1699,7 +1705,7 @@ scanAtomsRecord(CopyInfo b, void (*func)(atom_t a))
 	continue;
       }
       case PL_TYPE_ATOM:
-      { atom_t a = fetchWord(b);
+      { atom_t a = word2atom(fetchWord(b)); /* TBD: Store atom rather than word */
 
 	(*func)(a);
 	continue;
@@ -1793,11 +1799,11 @@ unregister_atom_rec(atom_t a)
 
 bool
 freeRecord(Record record)
-{ if ( true(record, R_DUPLICATE) && --record->references > 0 )
+{ if ( ison(record, R_DUPLICATE) && --record->references > 0 )
     succeed;
 
 #ifdef O_ATOMGC
-  if ( false(record, (R_EXTERNAL|R_NOLOCK)) )
+  if ( isoff(record, (R_EXTERNAL|R_NOLOCK)) )
   { copy_info ci;
 
     DEBUG(3, Sdprintf("freeRecord(%p)\n", record));
@@ -1827,7 +1833,7 @@ unallocRecordRef(RecordRef r)
 
 static void
 freeRecordRef(RecordRef r)
-{ int reclaim_now = false(r->record, R_DBREF);
+{ int reclaim_now = isoff(r->record, R_DBREF);
 
   freeRecord(r->record);
   if ( reclaim_now )
@@ -1841,7 +1847,7 @@ freeRecordRef(RecordRef r)
 		 *	 EXTERNAL RECORDS	*
 		 *******************************/
 
-int
+bool
 PL_recorded_external(const char *rec, term_t t)
 { GET_LD
   copy_info b;
@@ -1906,12 +1912,12 @@ PL_recorded_external(const char *rec, term_t t)
   skipSizeInt(&b);			/* code-size */
   gsize = fetchSizeInt(&b);
   if ( !(b.gbase = b.gstore = allocGlobal(gsize)) )
-    return FALSE;			/* global stack overflow */
+    return false;			/* global stack overflow */
   b.dicts = 0;
   if ( !(m & REC_GROUND) )
   { uint nvars = fetchSizeInt(&b);
 
-    if ( (rc=init_copy_vars(&b, nvars)) == TRUE )
+    if ( (rc=init_copy_vars(&b, nvars)) == true )
     { rc = copy_record(valTermRef(t), &b);
       free_copy_vars(&b);
     }
@@ -1919,7 +1925,7 @@ PL_recorded_external(const char *rec, term_t t)
   { rc = copy_record(valTermRef(t), &b);
   }
 
-  if ( rc != TRUE )
+  if ( rc != true )
     return raiseStackOverflow(rc);
 
   assert(b.gstore == gTop);
@@ -1928,14 +1934,14 @@ PL_recorded_external(const char *rec, term_t t)
     resortDictsInTerm(t);
   DEBUG(CHK_SECURE, checkData(valTermRef(t)));
 
-  return TRUE;
+  return true;
 }
 
 
-int
+bool
 PL_erase_external(char *rec)
 { PL_free(rec);
-  return TRUE;
+  return true;
 }
 
 
@@ -1955,7 +1961,7 @@ unifyKey(term_t key, word val)
 { GET_LD
 
   if ( isAtom(val) || isTaggedInt(val) )
-  { return _PL_unify_atomic(key, val);
+  { return PL_unify_atomic(key, val);
   } else
   { return PL_unify_functor(key, (functor_t) val);
   }
@@ -1989,10 +1995,10 @@ PRED_IMPL("current_key", 1, current_key, PL_FA_NONDETERMINISTIC)
   switch( CTX_CNTRL )
   { case FRG_FIRST_CALL:
     { if ( PL_is_variable(A1) )
-      { e = newTableEnum(GD->recorded_db.record_lists);
+      { e = newTableEnumWP(GD->recorded_db.record_lists);
 	break;
       } else if ( getKeyEx(A1, &k) &&
-		  isCurrentRecordList(k, TRUE) )
+		  isCurrentRecordList(k, true) )
 	succeed;
 
       fail;
@@ -2005,14 +2011,14 @@ PRED_IMPL("current_key", 1, current_key, PL_FA_NONDETERMINISTIC)
       freeTableEnum(e);
       /*FALLTHROUGH*/
     default:				/* fool gcc */
-      return TRUE;
+      return true;
   }
 
   if ( (fid = PL_open_foreign_frame()) )
-  { void *sk, *sv;
+  { table_value_t sv;
 
-    while(advanceTableEnum(e, &sk, &sv))
-    { RecordList rl = sv;
+    while(advanceTableEnum(e, NULL, &sv))
+    { RecordList rl = val2ptr(sv);
       RecordRef record;
 
       PL_LOCK(L_RECORD);
@@ -2032,7 +2038,7 @@ PRED_IMPL("current_key", 1, current_key, PL_FA_NONDETERMINISTIC)
   }
 
   freeTableEnum(e);
-  return FALSE;
+  return false;
 }
 
 
@@ -2067,7 +2073,7 @@ PL_record_az(word k, term_t term, term_t ref, record_az az)
   if ( ref && !PL_unify_recref(ref, r) )
   { PL_erase(copy);
     freeHeap(r, sizeof(*r));
-    return FALSE;
+    return false;
   }
 
   PL_LOCK(L_RECORD);
@@ -2130,7 +2136,7 @@ save_state(recorded_state *state)
   } else
   { recorded_state *newstate = allocForeignState(sizeof(*state));
     memcpy(newstate, state, sizeof(*state));
-    newstate->saved = TRUE;
+    newstate->saved = true;
     return newstate;
   }
 }
@@ -2144,7 +2150,7 @@ free_state(recorded_state *state)
   if ( state->r )
   { RecordList rl = state->r->list;
 
-    if ( --rl->references == 0 && true(rl, RL_DIRTY) )
+    if ( --rl->references == 0 && ison(rl, RL_DIRTY) )
       cleanRecordList(rl);
   }
   if ( state->saved )
@@ -2164,11 +2170,11 @@ advance_state(recorded_state *state)
   { if ( !r->next )
     { RecordList rl = r->list;
 
-      if ( --rl->references == 0 && true(rl, RL_DIRTY) )
+      if ( --rl->references == 0 && ison(rl, RL_DIRTY) )
 	cleanRecordList(rl);
     }
     r = r->next;
-  } while ( r && true(r->record, R_ERASED) );
+  } while ( r && ison(r->record, R_ERASED) );
 
   state->r = r;
   return r;
@@ -2204,30 +2210,30 @@ PRED_IMPL("recorded", va, recorded, PL_FA_NONDETERMINISTIC)
 	    else
 	      rc = PL_unify(term, copy);
 	  } else
-	    rc = FALSE;
+	    rc = false;
 	  PL_UNLOCK(L_RECORD);
 
 	  return rc;
 	}
-	return FALSE;
+	return false;
       }
 
       memset(state, 0, sizeof(*state));
       if ( PL_is_variable(key) )
-      { state->e = newTableEnum(GD->recorded_db.record_lists);
+      { state->e = newTableEnumWP(GD->recorded_db.record_lists);
 	PL_LOCK(L_RECORD);
       } else if ( getKeyEx(key, &k) )
       { RecordList rl;
 
-	if ( !(rl = isCurrentRecordList(k, TRUE)) )
-	  return FALSE;
+	if ( !(rl = isCurrentRecordList(k, true)) )
+	  return false;
 	PL_LOCK(L_RECORD);
 	rl->references++;
 	state->r = rl->firstRecord;
-	if ( true(state->r->record, R_ERASED) )
+	if ( ison(state->r->record, R_ERASED) )
 	  advance_state(state);
       } else
-      { return FALSE;
+      { return false;
       }
       break;
     }
@@ -2249,7 +2255,7 @@ PRED_IMPL("recorded", va, recorded, PL_FA_NONDETERMINISTIC)
 
   /* Now holding L_RECORD */
   if ( (fid = PL_open_foreign_frame()) )
-  { int answered = FALSE;
+  { int answered = false;
     term_t copy = 0;
 
     while( !answered )
@@ -2277,7 +2283,7 @@ PRED_IMPL("recorded", va, recorded, PL_FA_NONDETERMINISTIC)
 	  continue;
 	}
 
-	answered = TRUE;
+	answered = true;
 
 	if ( record->next )
 	{ state->r = record->next;
@@ -2288,10 +2294,10 @@ PRED_IMPL("recorded", va, recorded, PL_FA_NONDETERMINISTIC)
       }
 
       if ( state->e )
-      { void *sk, *sv;
+      { table_value_t sv;
 
-	while(advanceTableEnum(state->e, &sk, &sv))
-	{ RecordList rl = sv;
+	while(advanceTableEnum(state->e, NULL, &sv))
+	{ RecordList rl = val2ptr(sv);
 	  RecordRef r;
 
 	  if ( (r=firstRecordRecordList(rl)) )
@@ -2312,7 +2318,7 @@ PRED_IMPL("recorded", va, recorded, PL_FA_NONDETERMINISTIC)
 	} else
 	{ free_state(state);
 	  PL_UNLOCK(L_RECORD);
-	  return TRUE;
+	  return true;
 	}
       }
 
@@ -2326,7 +2332,7 @@ PRED_IMPL("recorded", va, recorded, PL_FA_NONDETERMINISTIC)
   free_state(state);
   PL_UNLOCK(L_RECORD);
 
-  return FALSE;
+  return false;
 }
 
 
@@ -2351,18 +2357,18 @@ fixup_ssu(DECL_LD term_t in, term_t out)
     atom_t a;
 
     if ( !g )
-      return FALSE;
+      return false;
 
     _PL_get_arg(1, body, g);
     _PL_get_arg(2, body, body);
 
     if ( PL_get_atom(g, &a) && a == ATOM_cut )
     { if ( !PL_put_term(guard, --g) )
-	return FALSE;
+	return false;
       while(--g > guard)
       { if ( !PL_cons_functor(guard, FUNCTOR_comma2, g, guard) ||
 	     !PL_cons_functor(head, FUNCTOR_comma2, head, guard) )
-	  return FALSE;
+	  return false;
       }
 
       return PL_unify_term(out,
@@ -2390,18 +2396,18 @@ PRED_IMPL("instance", 2, instance, 0)
   term_t term = A2;
 
   if ( !(ptr=PL_get_dbref(ref, &type)) )
-    return FALSE;
+    return false;
 
   if ( type == DB_REF_CLAUSE )
   { ClauseRef cref = ptr;
     Clause clause = cref->value.clause;
     gen_t generation = generationFrame(environment_frame);
 
-    if ( true(clause, GOAL_CLAUSE) ||
+    if ( ison(clause, GOAL_CLAUSE) ||
 	 !visibleClause(clause, generation) )
-      return FALSE;
+      return false;
 
-    if ( true(clause, UNIT_CLAUSE) )
+    if ( ison(clause, UNIT_CLAUSE) )
     { term_t head = PL_new_term_ref();
 
       return ( decompile(clause, head, 0) &&
@@ -2409,7 +2415,7 @@ PRED_IMPL("instance", 2, instance, 0)
 			     PL_FUNCTOR, FUNCTOR_prove2,
 			       PL_TERM, head,
 			       PL_ATOM, ATOM_true) );
-    } else if ( true(clause, SSU_CHOICE_CLAUSE) )
+    } else if ( ison(clause, SSU_CHOICE_CLAUSE) )
     { term_t tmp = PL_new_term_ref();
 
       return ( decompile(clause, tmp, 0) &&
@@ -2421,11 +2427,11 @@ PRED_IMPL("instance", 2, instance, 0)
   { RecordRef rref = ptr;
     term_t t = PL_new_term_ref();
 
-    if ( copyRecordToGlobal(t, rref->record, ALLOW_GC) == TRUE )
+    if ( copyRecordToGlobal(t, rref->record, ALLOW_GC) == true )
       return PL_unify(term, t);
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -2439,18 +2445,18 @@ PRED_IMPL("erase", 1, erase, 0)
   term_t ref = A1;
 
   if ( !(ptr=PL_get_dbref(ref, &type)) )
-    return FALSE;
+    return false;
 
   if ( type == DB_REF_CLAUSE )
   { ClauseRef cref = ptr;
     Clause clause = cref->value.clause;
     Definition def = clause->predicate;
 
-    if ( !true(def, P_DYNAMIC) )
+    if ( !ison(def, P_DYNAMIC) )
       return PL_error("erase", 1, NULL, ERR_PERMISSION,
 		      ATOM_clause, ATOM_erase, ref);
 
-    return retractClauseDefinition(def, clause, TRUE);
+    return retractClauseDefinition(def, clause, true);
   } else
   { RecordRef r = ptr;
     int rc;

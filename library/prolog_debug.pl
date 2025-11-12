@@ -2,8 +2,8 @@
 
     Author:        Jan Wielemaker
     E-mail:        jan@swi-prolog.org
-    WWW:           http://www.swi-prolog.org
-    Copyright (c)  2021-2024, SWI-Prolog Solutions b.v.
+    WWW:           https://www.swi-prolog.org
+    Copyright (c)  2021-2025, SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -104,12 +104,19 @@ spy_(Spec) :-
     '$member'(PI, Preds),
         pi_to_head(PI, Head),
         '$define_predicate'(Head),
-        '$spy'(Head),
+        set_spy_point(Head),
     fail.
 spy_(_).
 
+set_spy_point(Head) :-
+    '$get_predicate_attribute'(Head, spy, 1),
+    !,
+    print_message(informational, already_spying(Head)).
+set_spy_point(Head) :-
+    '$spy'(Head).
+
 nospy(Spec) :-
-    '$notrace'(nospy_(Spec)).
+    notrace(nospy_(Spec)).
 
 nospy_(_:X) :-
     var(X),
@@ -131,7 +138,7 @@ nospy_(Spec) :-
 nospy_(_).
 
 nospyall :-
-    '$notrace'(nospyall_).
+    notrace(nospyall_).
 
 nospyall_ :-
     prolog:debug_control_hook(nospyall),
@@ -152,34 +159,36 @@ pi_to_head(Name/Arity, Head) :-
 %
 %   Report current status of the debugger.
 
+:- '$hide'(debugging/0).
 debugging :-
-    '$notrace'(debugging_).
+    current_prolog_flag(debug, DebugMode),
+    notrace(debugging_(DebugMode)).
 
-debugging_ :-
-    prolog:debug_control_hook(debugging),
+debugging_(DebugMode) :-
+    prolog:debug_control_hook(debugging(DebugMode)),
     !.
-debugging_ :-
-    (   current_prolog_flag(debug, true)
-    ->  print_message(informational, debugging(on)),
-        findall(H, spy_point(H), SpyPoints),
+debugging_(DebugMode) :-
+    print_message(informational, debugging(DebugMode)),
+    (   DebugMode == true
+    ->  findall(H, spy_point(H), SpyPoints),
         print_message(informational, spying(SpyPoints))
-    ;   print_message(informational, debugging(off))
+    ;   true
     ),
     trapping,
-    forall(debugging_hook, true).
+    forall(debugging_hook(DebugMode), true).
 
 spy_point(Module:Head) :-
     current_predicate(_, Module:Head),
     '$get_predicate_attribute'(Module:Head, spy, 1),
     \+ predicate_property(Module:Head, imported_from(_)).
 
-%!  debugging_hook
+%!  debugging_hook(+DebugMode)
 %
-%   Multifile hook that is called   as  forall(debugging_hook, true) and
-%   that may be used  to  extend   the  information  printed  from other
-%   debugging libraries.
+%   Multifile hook that is   called as forall(debugging_hook(DebugMode),
+%   true) and that may be used to   extend  the information printed from
+%   other debugging libraries.
 
-:- multifile debugging_hook/0.
+:- multifile debugging_hook/1.
 
 
 		 /*******************************
@@ -278,13 +287,14 @@ trapping :-
 :- dynamic   prolog:prolog_exception_hook/5.
 :- multifile prolog:prolog_exception_hook/5.
 
-%!  exception_hook(+ExIn, -ExOut, +Frame, +Catcher) is failure.
+%!  exception_hook(+ExIn, -ExOut, +Frame, +Catcher, +DebugMode) is
+%!                 failure.
 %
 %   Trap exceptions and consider whether or not to start the tracer.
 
 :- public exception_hook/5.
 
-exception_hook(Ex, Ex, _Frame, Catcher, _Debug) :-
+exception_hook(Ex, Ex, Frame, Catcher, _Debug) :-
     thread_self(Me),
     thread_property(Me, debug(true)),
     broadcast(debug(exception(Ex))),
@@ -295,8 +305,21 @@ exception_hook(Ex, Ex, _Frame, Catcher, _Debug) :-
     ;   Catcher == none,
         NotCaught == true
     ),
+    \+ direct_catch(Frame),
     trace, fail.
 
+%!  direct_catch(+Frame) is semidet.
+%
+%   True if we are dealing with a  catch(SytemPred, _, _), i.e., a catch
+%   directly wrapped around a call to  a   built-in.  In that case it is
+%   highly unlikely that we want the debugger to step in.
+
+direct_catch(Frame) :-
+    prolog_frame_attribute(Frame, parent, Parent),
+    prolog_frame_attribute(Parent, predicate_indicator, system:catch/3),
+    prolog_frame_attribute(Frame, level, MyLevel),
+    prolog_frame_attribute(Parent, level, CatchLevel),
+    MyLevel =:= CatchLevel+1.
 
 %!  install_exception_hook
 %

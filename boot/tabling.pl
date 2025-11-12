@@ -3,7 +3,7 @@
     Author:        Benoit Desouter <Benoit.Desouter@UGent.be>
                    Jan Wielemaker (SWI-Prolog port)
                    Fabrizio Riguzzi (mode directed tabling)
-    Copyright (c) 2016-2021, Benoit Desouter,
+    Copyright (c) 2016-2025, Benoit Desouter,
                              Jan Wielemaker,
                              Fabrizio Riguzzi
                              SWI-Prolog Solutions b.v.
@@ -115,6 +115,9 @@ goal_expansion(tdebug(Goal), Expansion) :-
     ).
 
 :- if(current_prolog_flag(prolog_debug, true)).
+:- set_prolog_flag(optimise_debug, false).
+:- autoload(library(debug), [debug/3, debugging/1]).
+
 wl_goal(tnot(WorkList), ~(Goal), Skeleton) :-
     !,
     '$tbl_wkl_table'(WorkList, ATrie),
@@ -2229,10 +2232,14 @@ eval_dl_in_residual(G) :-
     eval_subgoal_in_residual(SGF, Return).
 
 more_general_table(G, Trie) :-
+    term_attvars(G, []),
+    !,
     term_variables(G, Vars),
     '$tbl_variant_table'(VariantTrie),
     trie_gen(VariantTrie, G, Trie),
     is_most_general_term(Vars).
+more_general_table(G, _Trie) :-
+    '$type_error'(free_of_attvar, G).
 
 :- table eval_subgoal_in_residual/2.
 

@@ -46,6 +46,7 @@
 #include "pl-gc.h"
 #include "pl-attvar.h"
 #include "pl-inline.h"
+#include "pl-comp.h"
 #undef LD
 #define LD LOCAL_LD
 
@@ -63,7 +64,7 @@ static mpz_t MPZ_MIN_INT64;		/* int64_t integers */
 static mpz_t MPZ_MAX_INT64;
 #endif
 static mpz_t MPZ_MAX_UINT64;
-#if SIZEOF_LONG	< SIZEOF_VOIDP
+#if SIZEOF_LONG	< SIZEOF_WORD
 static mpz_t MPZ_MIN_LONG;		/* Prolog int64_t integers */
 static mpz_t MPZ_MAX_LONG;
 #endif
@@ -113,7 +114,11 @@ gmp_too_big(DECL_LD gmp_tb why)
       max.value.i = LD->gmp.max_integer_size;
       PL_error(NULL, 0, "requires more than max_integer_size bytes",
 	       ERR_AR_TRIPWIRE, ATOM_max_integer_size, &max);
+#if O_THROW
       PL_rethrow();
+#else
+      PL_fatal_error("Big number retraint not supported without PL_throw()");
+#endif
     }
     case GMP_TB_STACK:
       outOfStack((Stack)&LD->stacks.global, STACK_OVERFLOW_THROW);
@@ -121,12 +126,20 @@ gmp_too_big(DECL_LD gmp_tb why)
     case GMP_TB_MALLOC:
     default:
       PL_no_memory();
+#if O_THROW
       PL_rethrow();
+#else
+      PL_fatal_error("Too large big number");
+#endif
   }
 
   abortProlog();		/* Just in case the above fails */
+#if O_THROW
   PL_rethrow();
-  return FALSE;
+#else
+  PL_fatal_error("Too large big number");
+#endif
+  return false;
 }
 
 
@@ -135,16 +148,16 @@ gmp_check_size(DECL_LD size_t bytes)
 { gmp_tb why = GMO_TB_OK;
 
   if ( bytes <= 1000 )
-    return TRUE;
+    return true;
   if ( bytes > LD->gmp.max_integer_size )
     why = GMP_TB_RESTRAINT;
   else if ( bytes > (size_t)globalStackLimit())
     why = GMP_TB_STACK;
   else
-    return TRUE;
+    return true;
 
   gmp_too_big(why);
-  return FALSE;
+  return false;
 }
 
 
@@ -363,7 +376,7 @@ mp_test_alloc(void)
 
   AR_END();
 
-  return TRUE;
+  return true;
 }
 #endif
 
@@ -480,7 +493,7 @@ globalMPZ(DECL_LD Word at, mpz_t mpz, int flags)
     if ( !hasGlobalSpace(wsz+MPZ_STACK_EXTRA+2) )
     { int rc = ensureGlobalSpace(wsz+MPZ_STACK_EXTRA+2, flags);
 
-      if ( rc != TRUE )
+      if ( rc != true )
 	return rc;
     }
     p = gTop;
@@ -508,7 +521,7 @@ globalMPZ(DECL_LD Word at, mpz_t mpz, int flags)
     *at = consPtr(p, TAG_INTEGER|STG_GLOBAL);
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -538,7 +551,7 @@ globalMPQ(DECL_LD Word at, mpq_t mpq, int flags)
     if ( !hasGlobalSpace(num_wsz+den_wsz+2+2*MPZ_STACK_EXTRA) )
     { int rc = ensureGlobalSpace(num_wsz+den_wsz+2+2*MPZ_STACK_EXTRA, flags);
 
-      if ( rc != TRUE )
+      if ( rc != true )
 	return rc;
     }
     p = gTop;
@@ -577,7 +590,7 @@ globalMPQ(DECL_LD Word at, mpq_t mpq, int flags)
     *at = consPtr(p, TAG_INTEGER|STG_GLOBAL);
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -591,157 +604,126 @@ the global stack.
 Normally called through the inline get_integer() function.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
+static void
+get_mpz_from_stack(Word p, mpz_t mpz)
+{
+#if O_GMP
+  mpz->_mp_size  = mpz_stack_size(*p++);
+  mpz->_mp_alloc = 0;
+  mpz->_mp_d     = (mp_limb_t*) p;
+#elif O_BF
+  slimb_t len = mpz_stack_size(*p++);
+  mpz->ctx	 = NULL;
+  mpz->expn = (slimb_t)*p++;
+  mpz->sign = len < 0;
+  mpz->len  = abs(len);
+  mpz->tab  = (limb_t*)p;
+#endif
+}
+
+static void
+get_mpq_from_stack(Word p, mpq_t mpq)
+{ mpz_t num, den;
+  size_t num_size;
+
+#if O_GMP
+  num->_mp_size  = mpz_stack_size(*p++);
+  num->_mp_alloc = 0;
+  num->_mp_d     = (mp_limb_t*) (p+1);
+  num_size       = mpz_wsize(num, NULL);
+  den->_mp_size  = mpz_stack_size(*p++);
+  den->_mp_alloc = 0;
+  den->_mp_d     = (mp_limb_t*) (p+num_size);
+#elif O_BF
+  slimb_t len = mpz_stack_size(*p++);
+  num->ctx    = NULL;
+  num->alloc  = 0;
+  num->expn   = (slimb_t)*p++;
+  num->sign   = len < 0;
+  num->len    = abs(len);
+  num->tab    = (limb_t*)(p+2);
+  num_size    = mpz_wsize(num, NULL);
+  den->ctx    = NULL;
+  den->alloc  = 0;
+  den->sign   = 0;			/* canonical MPQ */
+  den->len    = mpz_stack_size(*p++);
+  den->expn   = (slimb_t)*p++;
+  den->tab    = (limb_t*) (p+num_size);
+#endif
+  *mpq_numref(mpq) = num[0];
+  *mpq_denref(mpq) = den[0];
+}
+
 void
 get_bigint(word w, Number n)
-{ GET_LD
-  Word p = addressIndirect(w);
-  size_t wsize = wsizeofInd(*p);
+{ Word p = addressIndirect(w);
 
   DEBUG(0, assert(storage(w) != STG_INLINE));
 
-  p++;
-  if ( wsize == WORDS_PER_INT64 )
-  { n->type = V_INTEGER;
-    memcpy(&n->value.i, p, sizeof(int64_t));
-  } else
-  { n->type = V_MPZ;
-
-#if O_GMP
-    n->value.mpz->_mp_size  = mpz_stack_size(*p++);
-    n->value.mpz->_mp_alloc = 0;
-    n->value.mpz->_mp_d     = (mp_limb_t*) p;
-#elif O_BF
-    slimb_t len = mpz_stack_size(*p++);
-    n->value.mpz->ctx	 = NULL;
-    n->value.mpz->expn = (slimb_t)*p++;
-    n->value.mpz->sign = len < 0;
-    n->value.mpz->len  = abs(len);
-    n->value.mpz->tab  = (limb_t*)p;
-#endif
-  }
+  p++;				/* bits of indirect */
+  n->type = V_MPZ;
+  get_mpz_from_stack(p, n->value.mpz);
 }
 
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Get a rational (int or non-int-rational) from a Prolog word, knowing the
+word is not an inlined (tagged) integer.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 void
 get_rational_no_int(DECL_LD word w, Number n)
 { Word p = addressIndirect(w);
-  size_t wsize = wsizeofInd(*p);
 
   p++;
-  if ( wsize == WORDS_PER_INT64 )
-  { n->type = V_INTEGER;
-    memcpy(&n->value.i, p, sizeof(int64_t));
-  } else if ( (*p&MP_RAT_MASK) )
-  { mpz_t num, den;
-    size_t num_size;
-
-    n->type = V_MPQ;
-#if O_GMP
-    num->_mp_size  = mpz_stack_size(*p++);
-    num->_mp_alloc = 0;
-    num->_mp_d     = (mp_limb_t*) (p+1);
-    num_size       = mpz_wsize(num, NULL);
-    den->_mp_size  = mpz_stack_size(*p++);
-    den->_mp_alloc = 0;
-    den->_mp_d     = (mp_limb_t*) (p+num_size);
-#elif O_BF
-    slimb_t len = mpz_stack_size(*p++);
-    num->ctx	 = NULL;
-    num->alloc = 0;
-    num->expn  = (slimb_t)*p++;
-    num->sign  = len < 0;
-    num->len   = abs(len);
-    num->tab   = (limb_t*)(p+2);
-    num_size   = mpz_wsize(num, NULL);
-    den->ctx   = NULL;
-    den->alloc = 0;
-    den->sign  = 0;			/* canonical MPQ */
-    den->len   = mpz_stack_size(*p++);
-    den->expn  = (slimb_t)*p++;
-    den->tab   = (limb_t*) (p+num_size);
-#endif
-    *mpq_numref(n->value.mpq) = num[0];
-    *mpq_denref(n->value.mpq) = den[0];
+  if ( (*p&MP_RAT_MASK) )
+  { n->type = V_MPQ;
+    get_mpq_from_stack(p, n->value.mpq);
   } else
   { n->type = V_MPZ;
-
-#if O_GMP
-    n->value.mpz->_mp_size  = mpz_stack_size(*p++);
-    n->value.mpz->_mp_alloc = 0;
-    n->value.mpz->_mp_d     = (mp_limb_t*) p;
-#elif O_BF
-    slimb_t len = mpz_stack_size(*p++);
-    n->value.mpz->ctx	 = NULL;
-    n->value.mpz->expn = (slimb_t)*p++;
-    n->value.mpz->sign = len < 0;
-    n->value.mpz->len  = abs(len);
-    n->value.mpz->tab  = (limb_t*)p;
-#endif
+    get_mpz_from_stack(p, n->value.mpz);
   }
 }
 
 
 Code
 get_mpz_from_code(Code pc, mpz_t mpz)
-{ size_t wsize = wsizeofInd(*pc);
+{ word m;
+  Word data;
+  pc = code_get_indirect(pc, &m, &data);
 
-  pc++;
-#if O_GMP
-  mpz->_mp_size  = mpz_stack_size(*pc);
-  mpz->_mp_alloc = 0;
-  mpz->_mp_d     = (mp_limb_t*)(pc+1);
-#elif O_BF
-  slimb_t len = mpz_stack_size(*pc);
-  mpz->ctx   = NULL;
-  mpz->alloc = 0;
-  mpz->expn  = (slimb_t)pc[1];
-  mpz->sign  = len < 0;
-  mpz->len   = abs(len);
-  mpz->tab   = (limb_t*)pc+2;
-#endif
+  get_mpz_from_stack(data, mpz);
 
-  return pc+wsize;
+  return pc;
 }
+
 
 Code
 get_mpq_from_code(Code pc, mpq_t mpq)
-{ Word p = pc;
-  size_t wsize = wsizeofInd(*p);
-  p++;
-  mpz_t num, den;
+{ word m;
+  Word data;
+  pc = code_get_indirect(pc, &m, &data);
 
-#if O_GMP
-  int num_size = mpz_stack_size(*p++);
-  int den_size = mpz_stack_size(*p++);
-  size_t limpsize = sizeof(mp_limb_t) * abs(num_size);
-  num->_mp_size   = num_size;
-  den->_mp_size   = den_size;
-  num->_mp_alloc  = 0;
-  den->_mp_alloc  = 0;
-  num->_mp_d = (mp_limb_t*)p;
-  p += (limpsize+sizeof(word)-1)/sizeof(word);
-  den->_mp_d = (mp_limb_t*)p;
-#elif O_BF
-  int num_size = mpz_stack_size(*p++);
-  num->ctx = NULL;
-  num->expn = *p++;
-  num->sign = num_size < 0;
-  num->len  = abs(num_size);
-  int den_size = mpz_stack_size(*p++);
-  size_t limpsize = sizeof(mp_limb_t) * abs(num_size);
-  den->ctx = NULL;
-  den->expn = *p++;
-  den->sign = den_size < 0;
-  den->len  = abs(den_size);
-  num->tab = (mp_limb_t*)p;
-  p += (limpsize+sizeof(word)-1)/sizeof(word);
-  den->tab = (mp_limb_t*)p;
-#endif
-  *mpq_numref(mpq) = num[0];
-  *mpq_denref(mpq) = den[0];
+  get_mpq_from_stack(data, mpq);
 
-  return pc+wsize+1;
+  return pc;
 }
+
+
+bool
+get_int64(DECL_LD word w, int64_t *ip)
+{ if ( tagex(w) == (TAG_INTEGER|STG_INLINE) )
+  { *ip = valInt(w);
+    return true;
+  } else if ( tagex(w) == (TAG_INTEGER|STG_GLOBAL) )
+  { number n;
+
+    get_bigint(w, &n);
+    return mpz_to_int64(n.value.mpz, ip);
+  } else
+    return false;
+}
+
 
 
 		 /*******************************
@@ -846,9 +828,9 @@ load_abs_mpz_size(const char *data, int *szp, int *neg)
   if ( neg )
   { if ( size < 0 )
     { size = -size;
-      *neg = TRUE;
+      *neg = true;
     } else
-    { *neg = FALSE;
+    { *neg = false;
     }
   } else if ( size < 0 )
     size = -size;
@@ -885,8 +867,7 @@ by N bytes in big endian notation.
 
 char *
 loadMPZFromCharp(const char *data, Word r, Word *store)
-{ GET_LD
-  int size = 0;
+{ int size = 0;
   size_t limbsize;
   size_t wsize;
   int neg;
@@ -920,8 +901,7 @@ loadMPZFromCharp(const char *data, Word r, Word *store)
 
 char *
 loadMPQFromCharp(const char *data, Word r, Word *store)
-{ GET_LD
-  int num_size;
+{ int num_size;
   int den_size;
   size_t num_limbsize, num_wsize;
   size_t den_limbsize, den_wsize;
@@ -1088,7 +1068,7 @@ promoteToMPZNumber(number *n)
       break;
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1123,7 +1103,7 @@ promoteToMPQNumber(number *n)
     }
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1202,7 +1182,7 @@ clearGMPNumber(Number n)
 void
 initGMP(void)
 { if ( !GD->gmp.initialised )
-  { GD->gmp.initialised = TRUE;
+  { GD->gmp.initialised = true;
 
 #if O_BF
     initBF();
@@ -1215,7 +1195,7 @@ initGMP(void)
     mpz_init_set_si64(MPZ_MAX_INT64,  INT64_MAX);
 #endif
     mpz_init_max_uint(MPZ_MAX_UINT64, 64);
-#if SIZEOF_LONG < SIZEOF_VOIDP
+#if SIZEOF_LONG < SIZEOF_WORD
     mpz_init_set_si64(MPZ_MIN_LONG, LONG_MIN);
     mpz_init_set_si64(MPZ_MAX_LONG, LONG_MAX);
 #endif
@@ -1241,7 +1221,7 @@ initGMP(void)
 void
 cleanupGMP(void)
 { if ( GD->gmp.initialised )
-  { GD->gmp.initialised = FALSE;
+  { GD->gmp.initialised = false;
 
 #ifdef O_MY_GMP_ALLOC
     if ( !GD->gmp.keep_alloc_functions )
@@ -1269,6 +1249,8 @@ cleanupGMP(void)
    as used  for clause indexing.   If the integer  is huge, we  do not
    want to use the whole thing.   Instead, we pick the dimensions, the
    first two and last limb of the content.
+
+   Note: p might be aligned at Code rather than Word.
  */
 
 word
@@ -1334,10 +1316,10 @@ mpz_to_int64(mpz_t mpz, int64_t *i)
     else
       *i = (int64_t)v;
 
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 /* return: <0:              -1
@@ -1400,15 +1382,13 @@ without any knowledge of the represented data.
 #define put_mpz(at, mpz, flags) LDFUNC(put_mpz, at, mpz, flags)
 static int
 put_mpz(DECL_LD Word at, mpz_t mpz, int flags)
-{ int64_t v;
-
-  DEBUG(2,
+{ DEBUG(2,
 	{ char buf[256];
 	  Sdprintf("put_mpz(%s)\n",
 		   mpz_get_str(buf, 10, mpz));
 	});
 
-#if SIZEOF_LONG < SIZEOF_VOIDP
+#if SIZEOF_LONG < SIZEOF_WORD
   if ( mpz_cmp(mpz, MPZ_MIN_LONG) >= 0 &&
        mpz_cmp(mpz, MPZ_MAX_LONG) <= 0 )
 #else
@@ -1420,14 +1400,13 @@ put_mpz(DECL_LD Word at, mpz_t mpz, int flags)
     if ( !hasGlobalSpace(0) )		/* ensure we have room for bindConst */
     { int rc = ensureGlobalSpace(0, flags);
 
-      if ( rc != TRUE )
+      if ( rc != true )
 	return rc;
     }
 
     *at = consInt(v);
-    return TRUE;
-  } else if ( mpz_to_int64(mpz, &v) )
-  { return put_int64(at, v, flags);
+    assert(valInt(*at) == v);
+    return true;
   } else
   { return globalMPZ(at, mpz, flags);
   }
@@ -1437,11 +1416,33 @@ put_mpz(DECL_LD Word at, mpz_t mpz, int flags)
 
 /* returns one of
 
-  TRUE: ok
-  FALSE: some error
+  true: ok
+  false: some error
   GLOBAL_OVERFLOW: no space
   LOCAL_OVERFLOW: cannot represent (no GMP)
 */
+
+int
+put_int64(DECL_LD Word at, int64_t l, int flags)
+{ word r;
+
+  r = consInt(l);
+  if ( valInt(r) == l )
+  { *at = r;
+    return true;
+  } else
+  {
+#ifdef O_BIGNUM
+    mpz_t mpz;
+
+    mpz_init_set_si64(mpz, l);
+    return globalMPZ(at, mpz, flags);
+#else
+    return LOCAL_OVERFLOW;
+#endif
+  }
+}
+
 
 int
 put_uint64(DECL_LD Word at, uint64_t l, int flags)
@@ -1453,7 +1454,7 @@ put_uint64(DECL_LD Word at, uint64_t l, int flags)
     mpz_t mpz;
 
     mpz_init_set_uint64(mpz, l);
-    return put_mpz(at, mpz, flags);
+    return globalMPZ(at, mpz, flags);
 #else
     return LOCAL_OVERFLOW;
 #endif
@@ -1469,13 +1470,13 @@ affected by GC/shift.  The intented scenario is:
 
   { word c;
 
-    if ( (rc=put_number(&c, n, ALLOW_GC)) == TRUE )
+    if ( (rc=put_number(&c, n, ALLOW_GC)) == true )
       bindConst(<somewhere>, c);
     ...
   }
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+int				/* true, false, _*OVERFLOW */
 put_number(DECL_LD Word at, Number n, int flags)
 { switch(n->type)
   { case V_INTEGER:
@@ -1485,12 +1486,12 @@ put_number(DECL_LD Word at, Number n, int flags)
       { if ( !hasGlobalSpace(0) )
 	{ int rc = ensureGlobalSpace(0, flags);
 
-	  if ( rc != TRUE )
+	  if ( rc != true )
 	    return rc;
 	}
 
 	*at = w;
-	return TRUE;
+	return true;
       }
 
       return put_int64(at, n->value.i, flags);
@@ -1510,7 +1511,7 @@ put_number(DECL_LD Word at, Number n, int flags)
   }
 
   assert(0);
-  return FALSE;
+  return false;
 }
 
 
@@ -1523,23 +1524,20 @@ PL_unify_number(DECL_LD term_t t, Number n)
 
   if ( isVar(*p) &&
        n->type == V_INTEGER &&
-       valInt(w=consInt(n->value.i)) == n->value.i &&
-       hasTrailSpace(1) )
-  { varBindConst(p, w);
-    return TRUE;
-  }
+       valInt(w=consInt(n->value.i)) == n->value.i )
+    return varBindConst(p, w);
 
   if ( canBind(*p) )
   { int rc;
 
-    if ( (rc=put_number(&w, n, ALLOW_GC)) != TRUE )
+    if ( (rc=put_number(&w, n, ALLOW_GC)) != true )
       return raiseStackOverflow(rc);
 
     p = valTermRef(t);			/* put_number can shift the stacks */
     deRef(p);
 
     bindConst(p, w);
-    return TRUE;
+    return true;
   }
 
   switch(n->type)
@@ -1594,12 +1592,12 @@ PL_put_number(DECL_LD term_t t, Number n)
 { word w;
   int rc;
 
-  if ( (rc=put_number(&w, n, ALLOW_GC)) != TRUE )
+  if ( (rc=put_number(&w, n, ALLOW_GC)) != true )
     return raiseStackOverflow(rc);
 
   *valTermRef(t) = w;
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1641,7 +1639,7 @@ API_STUB(int)
 		 *	     PROMOTION		*
 		 *******************************/
 
-int
+bool
 promoteToFloatNumber(Number n)
 { switch(n->type)
   { case V_INTEGER:
@@ -1667,18 +1665,18 @@ promoteToFloatNumber(Number n)
     }
 #endif
     case V_FLOAT:
-      break;
+      return true;
   }
 
   return check_float(n);
 }
 
 
-int
+bool
 promoteNumber(Number n, numtype t)
 { switch(t)
   { case V_INTEGER:
-      return TRUE;
+      return true;
 #ifdef O_BIGNUM
     case V_MPZ:
       return promoteToMPZNumber(n);
@@ -1689,19 +1687,19 @@ promoteNumber(Number n, numtype t)
       return promoteToFloatNumber(n);
     default:
       assert(0);
-      return FALSE;
+      return false;
   }
 }
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-same_type_numbers(n1, n2)
+make_same_type_numbers(n1, n2)
     Upgrade both numbers to the `highest' type of both. Number types are
     defined in the enum-type numtype, which is supposed to define a
     total ordering between the number types.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+bool
 make_same_type_numbers(Number n1, Number n2)
 { if ( (int)n1->type > (int)n2->type )
     return promoteNumber(n2, n1->type);
@@ -2256,7 +2254,7 @@ mpq_set_double(mpq_t r, double f)	/* float -> nice rational */
 		 *	 PUBLIC INTERFACE	*
 		 *******************************/
 
-int
+bool
 PL_get_mpz(term_t t, mpz_t mpz)
 { GET_LD
   Word p = valTermRef(t);
@@ -2279,14 +2277,14 @@ PL_get_mpz(term_t t, mpz_t mpz)
 	assert(0);
     }
 
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
-int
+bool
 PL_get_mpq(term_t t, mpq_t mpq)
 { if ( PL_is_rational(t) )
   { GET_LD
@@ -2299,28 +2297,28 @@ PL_get_mpq(term_t t, mpq_t mpq)
     { case V_INTEGER:
 	if ( n.value.i >= LONG_MIN && n.value.i <= LONG_MAX )
 	{ mpq_set_si(mpq, (long)n.value.i, 1L);
-	  return TRUE;
+	  return true;
 	}
 	promoteToMPZNumber(&n);
 	/*FALLTHROUGH*/
       case V_MPZ:
 	mpq_set_z(mpq, n.value.mpz);
 	clearNumber(&n);
-	return TRUE;
+	return true;
       case V_MPQ:
 	mpq_set(mpq, n.value.mpq);
 	clearNumber(&n);
-	return TRUE;
+	return true;
       default:
 	;
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
-int
+bool
 PL_unify_mpz(term_t t, mpz_t mpz)
 { GET_LD
   number n;
@@ -2337,7 +2335,7 @@ PL_unify_mpz(term_t t, mpz_t mpz)
 }
 
 
-int
+bool
 PL_unify_mpq(term_t t, mpq_t mpq)
 { GET_LD
   number n;

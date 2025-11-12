@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2023, University of Amsterdam
+    Copyright (c)  1985-2025, University of Amsterdam
 			      VU University Amsterdam
 			      CWI, Amsterdam
 			      SWI-Prolog Solutions b.v.
@@ -649,11 +649,11 @@ catch_with_backtrace(Goal, Ball, Recover) :-
 
 %!  '$recover_and_rethrow'(:Goal, +Term)
 %
-%   This goal is used to wrap  the   catch/3  recover handler if the
-%   exception is not supposed to be   `catchable'.  An example of an
-%   uncachable exception is '$aborted', used   by abort/0. Note that
-%   we cut to ensure  that  the   exception  is  not delayed forever
-%   because the recover handler leaves a choicepoint.
+%   This goal is used  to  wrap  the   catch/3  recover  handler  if the
+%   exception is not  supposed  to  be   `catchable'.  This  applies  to
+%   exceptions of the shape unwind(Term).  Note   that  we cut to ensure
+%   that the exception is  not  delayed   forever  because  the  recover
+%   handler leaves a choicepoint.
 
 :- public '$recover_and_rethrow'/2.
 
@@ -1068,9 +1068,6 @@ user:file_search_path(library, swi(library)).
 user:file_search_path(library, swi(library/clp)).
 user:file_search_path(library, Dir) :-
     '$ext_library_directory'(Dir).
-user:file_search_path(foreign, swi(ArchLib)) :-
-    current_prolog_flag(apple_universal_binary, true),
-    ArchLib = 'lib/fat-darwin'.
 user:file_search_path(path, Dir) :-
     getenv('PATH', Path),
     current_prolog_flag(path_sep, Sep),
@@ -1093,6 +1090,8 @@ user:file_search_path(app_preferences, user_app_config('.')).
 user:file_search_path(user_profile, app_preferences('.')).
 user:file_search_path(app, swi(app)).
 user:file_search_path(app, app_data(app)).
+user:file_search_path(working_directory, CWD) :-
+    working_directory(CWD, CWD).
 
 '$xdg_prolog_directory'(Which, Dir) :-
     '$xdg_directory'(Which, XDGDir),
@@ -1349,10 +1348,6 @@ absolute_file_name(Spec, Path, Options) :-
     '$member'(Elem, List).
 '$one_or_member'(Elem, Elem).
 
-
-'$file_type_extensions'(source, Exts) :-       % SICStus 3.9 compatibility
-    !,
-    '$file_type_extensions'(prolog, Exts).
 '$file_type_extensions'(Type, Exts) :-
     '$current_module'('$bags', _File),
     !,
@@ -1387,6 +1382,8 @@ absolute_file_name(Spec, Path, Options) :-
 user:prolog_file_type(pl,       prolog).
 user:prolog_file_type(prolog,   prolog).
 user:prolog_file_type(qlf,      prolog).
+user:prolog_file_type(pl,       source).
+user:prolog_file_type(prolog,   source).
 user:prolog_file_type(qlf,      qlf).
 user:prolog_file_type(Ext,      executable) :-
     current_prolog_flag(shared_object_extension, Ext).
@@ -1413,23 +1410,42 @@ user:prolog_file_type(dylib,    executable) :-
     !,
     '$segments_to_atom'(Segments, Atom),
     '$chk_file'(Atom, Ext, Cond, Cache, FullName).
-'$chk_file'(File, Exts, Cond, _, FullName) :-
+'$chk_file'(File, Exts, Cond, _, FullName) :-           % Absolute files
     is_absolute_file_name(File),
     !,
     '$extend_file'(File, Exts, Extended),
     '$file_conditions'(Cond, Extended),
     '$absolute_file_name'(Extended, FullName).
-'$chk_file'(File, Exts, Cond, _, FullName) :-
-    '$relative_to'(Cond, source, Dir),
-    atomic_list_concat([Dir, /, File], AbsFile),
-    '$extend_file'(AbsFile, Exts, Extended),
-    '$file_conditions'(Cond, Extended),
+'$chk_file'(File, Exts, Cond, _, FullName) :-           % Explicit relative_to
+    '$option'(relative_to(_), Cond),
     !,
-    '$absolute_file_name'(Extended, FullName).
-'$chk_file'(File, Exts, Cond, _, FullName) :-
+    '$relative_to'(Cond, none, Dir),
+    '$chk_file_relative_to'(File, Exts, Cond, Dir, FullName).
+'$chk_file'(File, Exts, Cond, _Cache, FullName) :-      % From source
+    source_location(ContextFile, _Line),
+    !,
+    (   file_directory_name(ContextFile, Dir),
+        '$chk_file_relative_to'(File, Exts, Cond, Dir, FullName)
+    ->  true
+    ;   current_prolog_flag(source_search_working_directory, true),
+	'$extend_file'(File, Exts, Extended),
+	'$file_conditions'(Cond, Extended),
+	'$absolute_file_name'(Extended, FullName),
+        '$print_message'(warning,
+                         deprecated(source_search_working_directory(
+                                        File, FullName)))
+    ).
+'$chk_file'(File, Exts, Cond, _Cache, FullName) :-      % Not loading source
     '$extend_file'(File, Exts, Extended),
     '$file_conditions'(Cond, Extended),
     '$absolute_file_name'(Extended, FullName).
+
+'$chk_file_relative_to'(File, Exts, Cond, Dir, FullName) :-
+    atomic_list_concat([Dir, /, File], AbsFile),
+    '$extend_file'(AbsFile, Exts, Extended),
+    '$file_conditions'(Cond, Extended),
+    '$absolute_file_name'(Extended, FullName).
+
 
 '$segments_to_atom'(Atom, Atom) :-
     atomic(Atom),
@@ -1462,7 +1478,7 @@ user:prolog_file_type(dylib,    executable) :-
 	;   file_directory_name(FileOrDir, Dir)
 	)
     ;   Default == cwd
-    ->  '$cwd'(Dir)
+    ->  working_directory(Dir, Dir)
     ;   Default == source
     ->  source_location(ContextFile, _Line),
 	file_directory_name(ContextFile, Dir)
@@ -2051,14 +2067,10 @@ compiling :-
 		     include_file(start(Level,
 					file(File, Path)))),
     '$last'([Parent|Parents], Owner),
-    (   (   '$compilation_mode'(database)
-	;   '$qlf_current_source'(Owner)
-	)
-    ->  '$store_admin_clause'(
-	    system:'$included'(Parent, Line, Path, Time),
-	    _, Owner, SrcFile:Line)
-    ;   '$qlf_include'(Owner, Parent, Line, Path, Time)
-    ).
+    '$store_admin_clause'(
+        system:'$included'(Parent, Line, Path, Time),
+        _, Owner, SrcFile:Line, database),
+    '$ifcompiling'('$qlf_include'(Owner, Parent, Line, Path, Time)).
 '$record_included'(_, _, _, _, true).
 
 %!  '$master_file'(+File, -MasterFile)
@@ -2222,9 +2234,17 @@ consult(M:X) :-
     flag('$user_consult', N, N+1),
     NN is N + 1,
     atom_concat('user://', NN, Id),
-    load_files(M:Id, [stream(user_input), check_script(false), silent(false)]).
+    '$consult_user'(M:Id).
 consult(List) :-
     load_files(List, [expand(true)]).
+
+%!  '$consult_user'(:Id) is det.
+%
+%   Handle ``?- [user].``. This is a   separate  predicate, such that we
+%   can easily wrap this for the browser version.
+
+'$consult_user'(Id) :-
+    load_files(Id, [stream(user_input), check_script(false), silent(false)]).
 
 %!  load_files(:File, +Options)
 %
@@ -2267,8 +2287,7 @@ load_files(Module:Files, Options) :-
 
 '$load_one_file'(Spec, Module, Options) :-
     atomic(Spec),
-    '$option'(expand(Expand), Options, false),
-    Expand == true,
+    '$option'(expand(true), Options, false),
     !,
     expand_file_name(Spec, Expanded),
     (   Expanded = [Load]
@@ -2290,7 +2309,7 @@ load_files(Module:Files, Options) :-
     fail.
 '$noload'(_, FullFile, _Options) :-
     '$time_source_file'(FullFile, Time, system),
-    Time > 0.0,
+    float(Time),
     !.
 '$noload'(not_loaded, FullFile, _) :-
     source_file(FullFile),
@@ -2328,9 +2347,20 @@ load_files(Module:Files, Options) :-
 '$qlf_file'(Spec, _, Spec, stream, Options) :-
     '$option'(stream(_), Options),      % stream: no choice
     !.
-'$qlf_file'(Spec, FullFile, FullFile, compile, _) :-
+'$qlf_file'(Spec, FullFile, LoadFile, compile, _) :-
     '$spec_extension'(Spec, Ext),       % user explicitly specified
-    user:prolog_file_type(Ext, prolog),
+    (   user:prolog_file_type(Ext, qlf)
+    ->  absolute_file_name(Spec, LoadFile,
+                           [ file_type(qlf),
+                             access(read)
+                           ])
+    ;   user:prolog_file_type(Ext, prolog)
+    ->  LoadFile = FullFile
+    ),
+    !.
+'$qlf_file'(_, FullFile, FullFile, compile, _) :-
+    current_prolog_flag(source, true),
+    access_file(FullFile, read),
     !.
 '$qlf_file'(Spec, FullFile, LoadFile, Mode, Options) :-
     '$compilation_mode'(database),
@@ -2339,7 +2369,7 @@ load_files(Module:Files, Options) :-
     user:prolog_file_type(QlfExt, qlf),
     file_name_extension(Base, QlfExt, QlfFile),
     (   access_file(QlfFile, read),
-	(   '$qlf_out_of_date'(FullFile, QlfFile, Why)
+        (   '$qlf_out_of_date'(FullFile, QlfFile, Why)
 	->  (   access_file(QlfFile, write)
 	    ->  print_message(informational,
 			      qlf(recompile(Spec, FullFile, QlfFile, Why))),
@@ -2368,7 +2398,6 @@ load_files(Module:Files, Options) :-
 	LoadFile = FullFile
     ).
 '$qlf_file'(_, FullFile, FullFile, compile, _).
-
 
 %!  '$qlf_out_of_date'(+PlFile, +QlfFile, -Why) is semidet.
 %
@@ -2418,11 +2447,13 @@ load_files(Module:Files, Options) :-
 
 '$spec_extension'(File, Ext) :-
     atom(File),
+    !,
     file_name_extension(_, Ext, File).
 '$spec_extension'(Spec, Ext) :-
     compound(Spec),
     arg(1, Spec, Arg),
-    '$spec_extension'(Arg, Ext).
+    '$segments_to_atom'(Arg, File),
+    file_name_extension(_, Ext, File).
 
 
 %!  '$load_file'(+Spec, +ContextModule, +Options) is det.
@@ -2496,20 +2527,43 @@ load_files(Module:Files, Options) :-
 %!  '$resolve_source_path'(+File, -FullFile, +Options) is semidet.
 %
 %   Resolve a source file specification to   an absolute path. May throw
-%   existence and other errors.
+%   existence and other errors.  Attempts:
+%
+%     1. Do a regular file search
+%     2. Find a known source file.  This is used if the actual file was
+%        loaded from a .qlf file.
+%     3. Fail silently if if(exists) is in Options
+%     4. Raise a existence_error(source_sink, File)
 
-'$resolve_source_path'(File, FullFile, Options) :-
-    (   '$option'(if(If), Options),
-	If == exists
-    ->  Extra = [file_errors(fail)]
-    ;   Extra = []
-    ),
+'$resolve_source_path'(File, FullFile, _Options) :-
+    absolute_file_name(File, AbsFile,
+		       [ file_type(prolog),
+			 access(read),
+                         file_errors(fail)
+		       ]),
+    !,
+    '$admin_file'(AbsFile, FullFile),
+    '$register_resolved_source_path'(File, FullFile).
+'$resolve_source_path'(File, FullFile, _Options) :-
     absolute_file_name(File, FullFile,
 		       [ file_type(prolog),
-			 access(read)
-		       | Extra
+                         solutions(all),
+                         file_errors(fail)
 		       ]),
-    '$register_resolved_source_path'(File, FullFile).
+    source_file(FullFile),
+    !.
+'$resolve_source_path'(_File, _FullFile, Options) :-
+    '$option'(if(exists), Options),
+    !,
+    fail.
+'$resolve_source_path'(File, _FullFile, _Options) :-
+    '$existence_error'(source_sink, File).
+
+%!  '$register_resolved_source_path'(+Spec, -FullFile) is det.
+%
+%   If Spec is Path(File), cache where  we   found  the  file. This both
+%   avoids many lookups on the  file  system   and  avoids  that Spec is
+%   resolved to different locations.
 
 '$register_resolved_source_path'(File, FullFile) :-
     (   compound(File)
@@ -2661,7 +2715,9 @@ load_files(Module:Files, Options) :-
     !,
     setup_call_catcher_cleanup(
 	'$qstart'(StageQlf, Module, State),
-	'$do_load_file'(File, FullFile, Module, Action, Options),
+	( '$do_load_file'(File, FullFile, Module, Action, Options),
+          '$qlf_add_dependencies'(FullFile)
+        ),
 	Catcher,
 	'$qend'(State, Catcher, StageQlf, QlfOut)).
 '$qdo_load_file2'(File, FullFile, Module, Action, Options) :-
@@ -2682,6 +2738,35 @@ load_files(Module:Files, Options) :-
     '$current_source_module'(OldModule),
     '$set_source_module'(Module).
 
+%!  '$qlf_add_dependencies'(+File) is det.
+%
+%   Add compilation dependencies. These are files   that are loaded into
+%   Module that define term or goal expansion rules.
+
+'$qlf_add_dependencies'(File) :-
+    forall('$dependency'(File, DepFile),
+           '$qlf_dependency'(DepFile)).
+
+'$dependency'(File, DepFile) :-
+    '$current_module'(Module, File),
+    '$load_context_module'(DepFile, Module, _Options),
+    '$source_defines_expansion'(DepFile).
+
+% Also used by autoload.pl
+'$source_defines_expansion'(File) :-
+    '$expansion_hook'(P),
+    source_file(P, File),
+    !.
+
+'$expansion_hook'(user:goal_expansion(_,_)).
+'$expansion_hook'(user:goal_expansion(_,_,_,_)).
+'$expansion_hook'(system:goal_expansion(_,_)).
+'$expansion_hook'(system:goal_expansion(_,_,_,_)).
+'$expansion_hook'(user:term_expansion(_,_)).
+'$expansion_hook'(user:term_expansion(_,_,_,_)).
+'$expansion_hook'(system:term_expansion(_,_)).
+'$expansion_hook'(system:term_expansion(_,_,_,_)).
+
 %!  '$do_load_file'(+Spec, +FullFile, +ContextModule,
 %!                  -Action, +Options) is det.
 %
@@ -2693,11 +2778,11 @@ load_files(Module:Files, Options) :-
     '$qlf_file'(File, FullFile, Absolute, Mode, Options),
     (   Mode == qcompile
     ->  qcompile(Module:File, Options)
-    ;   '$do_load_file_2'(File, Absolute, Module, Action, Options)
+    ;   '$do_load_file_2'(File, FullFile, Absolute, Module, Action, Options)
     ).
 
-'$do_load_file_2'(File, Absolute, Module, Action, Options) :-
-    '$source_file_property'(Absolute, number_of_clauses, OldClauses),
+'$do_load_file_2'(File, FullFile, Absolute, Module, Action, Options) :-
+    '$source_file_property'(FullFile, number_of_clauses, OldClauses),
     statistics(cputime, OldTime),
 
     '$setup_load'(ScopedFlags, OldSandBoxed, OldVerbose, OldAutoLevel, OldXRef,
@@ -2739,7 +2824,7 @@ load_files(Module:Files, Options) :-
 
     '$import_from_loaded_module'(LM, Module, Options),
 
-    '$source_file_property'(Absolute, number_of_clauses, NewClauses),
+    '$source_file_property'(FullFile, number_of_clauses, NewClauses),
     statistics(cputime, Time),
     ClausesCreated is NewClauses - OldClauses,
     TimeUsed is Time - OldTime,
@@ -3000,7 +3085,7 @@ load_files(Module:Files, Options) :-
 	  error(_, _),
 	  fail),
     !.
-'$modified_id'(_, 0.0, _).
+'$modified_id'(_, 0, _).
 
 
 '$compile_type'(What) :-
@@ -3033,23 +3118,44 @@ load_files(Module:Files, Options) :-
     source_location(FromFile, Line),
     !,
     '$master_file'(FromFile, MasterFile),
-    '$check_load_non_module'(File, Module),
+    '$admin_file'(File, PlFile),
+    '$check_load_non_module'(PlFile, Module),
     '$add_dialect'(Options, Options1),
     '$load_ctx_options'(Options1, Options2),
     '$store_admin_clause'(
-	system:'$load_context_module'(File, Module, Options2),
+	system:'$load_context_module'(PlFile, Module, Options2),
 	_Layout, MasterFile, FromFile:Line).
 '$assert_load_context_module'(File, Module, Options) :-
-    '$check_load_non_module'(File, Module),
+    '$admin_file'(File, PlFile),
+    '$check_load_non_module'(PlFile, Module),
     '$add_dialect'(Options, Options1),
     '$load_ctx_options'(Options1, Options2),
-    (   clause('$load_context_module'(File, Module, _), true, Ref),
+    (   clause('$load_context_module'(PlFile, Module, _), true, Ref),
 	\+ clause_property(Ref, file(_)),
 	erase(Ref)
     ->  true
     ;   true
     ),
-    assertz('$load_context_module'(File, Module, Options2)).
+    assertz('$load_context_module'(PlFile, Module, Options2)).
+
+%!  '$admin_file'(+File, -PlFile) is det.
+%
+%   Get the canonical Prolog file name in case File is a .qlf file. Note
+%   that all source admin uses the Prolog file names rather than the qlf
+%   file names.
+
+'$admin_file'(QlfFile, PlFile) :-
+    file_name_extension(_, qlf, QlfFile),
+    '$qlf_module'(QlfFile, Info),
+    get_dict(file, Info, PlFile),
+    !.
+'$admin_file'(File, File).
+
+%!  '$add_dialect'(+Options0, -Options) is det.
+%
+%   If we are in a dialect  environment,   add  this to the load options
+%   such  that  the  load  context  reflects  the  correct  options  for
+%   reloading this file.
 
 '$add_dialect'(Options0, Options) :-
     current_prolog_flag(emulated_dialect, Dialect), Dialect \== swi,
@@ -3425,9 +3531,11 @@ load_files(Module:Files, Options) :-
 
 %!  '$import_list'(+TargetModule, +FromModule, +Import, +Reexport) is det.
 %
-%   Import from FromModule to TargetModule. Import  is one of =all=,
+%   Import from FromModule to TargetModule. Import  is one of `all`,
 %   a list of optionally  mapped  predicate   indicators  or  a term
 %   except(Import).
+%
+%   @arg Reexport is a bool asking to re-export our imports or not.
 
 '$import_list'(_, _, Var, _) :-
     var(Var),
@@ -3449,12 +3557,23 @@ load_files(Module:Files, Options) :-
     '$import_except'(Spec, Source, Export, Import),
     '$import_all'(Import, Target, Source, Reexport, weak).
 '$import_list'(Target, Source, Import, Reexport) :-
-    !,
     is_list(Import),
     !,
-    '$import_all'(Import, Target, Source, Reexport, strong).
+    '$exported_ops'(Source, Ops, []),
+    '$expand_ops'(Import, Ops, Import1),
+    '$import_all'(Import1, Target, Source, Reexport, strong).
 '$import_list'(_, _, Import, _) :-
     '$type_error'(import_specifier, Import).
+
+'$expand_ops'([], _, []).
+'$expand_ops'([H|T0], Ops, Imports) :-
+    nonvar(H), H = op(_,_,_),
+    !,
+    '$include'('$can_unify'(H), Ops, Ops1),
+    '$append'(Ops1, T1, Imports),
+    '$expand_ops'(T0, Ops, T1).
+'$expand_ops'([H|T0], Ops, [H|T1]) :-
+    '$expand_ops'(T0, Ops, T1).
 
 
 '$import_except'([], _, List, List).
@@ -3514,6 +3633,11 @@ load_files(Module:Files, Options) :-
 
 
 %!  '$import_all'(+Import, +Context, +Source, +Reexport, +Strength)
+%
+%   Import Import from Source into Context.   If Reexport is `true`, add
+%   the imported material to the  exports   of  Context.  If Strength is
+%   `weak`, definitions in Context overrule the   import. If `strong`, a
+%   local definition is considered an error.
 
 '$import_all'(Import, Context, Source, Reexport, Strength) :-
     '$import_all2'(Import, Context, Source, Imported, ImpOps, Strength),
@@ -3840,22 +3964,32 @@ load_files(Module:Files, Options) :-
 		*********************************/
 
 %!  '$store_admin_clause'(+Clause, ?Layout, +Owner, +SrcLoc) is det.
+%!  '$store_admin_clause'(+Clause, ?Layout, +Owner, +SrcLoc, +Mode) is det.
 %
 %   Store a clause into the   database  for administrative purposes.
 %   This bypasses sanity checking.
 
 '$store_admin_clause'(Clause, Layout, Owner, SrcLoc) :-
+    '$compilation_mode'(Mode),
+    '$store_admin_clause'(Clause, Layout, Owner, SrcLoc, Mode).
+
+'$store_admin_clause'(Clause, Layout, Owner, SrcLoc, Mode) :-
     Owner \== (-),
     !,
     setup_call_cleanup(
 	'$start_aux'(Owner, Context),
-	'$store_admin_clause2'(Clause, Layout, Owner, SrcLoc),
+	'$store_admin_clause2'(Clause, Layout, Owner, SrcLoc, Mode),
 	'$end_aux'(Owner, Context)).
-'$store_admin_clause'(Clause, Layout, File, SrcLoc) :-
-    '$store_admin_clause2'(Clause, Layout, File, SrcLoc).
+'$store_admin_clause'(Clause, Layout, File, SrcLoc, Mode) :-
+    '$store_admin_clause2'(Clause, Layout, File, SrcLoc, Mode).
 
+:- public '$store_admin_clause2'/4.     % Used by autoload.pl
 '$store_admin_clause2'(Clause, _Layout, File, SrcLoc) :-
-    (   '$compilation_mode'(database)
+    '$compilation_mode'(Mode),
+    '$store_admin_clause2'(Clause, _Layout, File, SrcLoc, Mode).
+
+'$store_admin_clause2'(Clause, _Layout, File, SrcLoc, Mode) :-
+    (   Mode == database
     ->  '$record_clause'(Clause, File, SrcLoc)
     ;   '$record_clause'(Clause, File, SrcLoc, Ref),
 	'$qlf_assert_clause'(Ref, development)
@@ -4002,11 +4136,11 @@ compile_aux_clauses(Clauses) :-
 
 '$install_staged_file'(exit, Staged, Target, error) :-
     !,
-    rename_file(Staged, Target).
+    win_rename_file(Staged, Target).
 '$install_staged_file'(exit, Staged, Target, OnError) :-
     !,
     InstallError = error(_,_),
-    catch(rename_file(Staged, Target),
+    catch(win_rename_file(Staged, Target),
 	  InstallError,
 	  '$install_staged_error'(OnError, InstallError, Staged, Target)).
 '$install_staged_file'(_, Staged, _, _OnError) :-
@@ -4022,6 +4156,20 @@ compile_aux_clauses(Clauses) :-
     ->  fail
     ;   print_message(warning, Error)
     ).
+
+%!  win_rename_file(+From, +To) is det.
+%
+%   Retry installing to deal with  possible   permission  errors  due to
+%   Windows sharing violations.
+
+:- if(current_prolog_flag(windows, true)).
+win_rename_file(From, To) :-
+    between(1, 10, _),
+    catch(rename_file(From, To), error(permission_error(rename, file, _),_), (sleep(0.1),fail)),
+    !.
+:- endif.
+win_rename_file(From, To) :-
+    rename_file(From, To).
 
 
 		 /*******************************
@@ -4213,6 +4361,8 @@ compile_aux_clauses(Clauses) :-
     ),
     '$include'(G, T0, T).
 
+'$can_unify'(A, B) :-
+    \+ A \= B.
 
 %!  length(?List, ?N)
 %
@@ -4522,11 +4672,6 @@ cancel_halt(Reason) :-
        file_directory_name(File, Dir),
        atom_concat(Dir, '/load.pl', LoadFile),
        '$load_wic_files'(system:[LoadFile]),
-       (   current_prolog_flag(windows, true)
-       ->  atom_concat(Dir, '/menu.pl', MenuFile),
-	   '$load_wic_files'(system:[MenuFile])
-       ;   true
-       ),
        '$boot_message'('SWI-Prolog boot files loaded~n', []),
        '$compilation_mode'(OldC, wic),
        '$execute_directive'('$set_source_module'(user), [], []),

@@ -251,7 +251,7 @@ while loop, either use a goto or use the PASS_AS_LD macro instead.
     { assert(LD == other_ld);
       assert(get_current_ld() == other_ld);
       break;
-      assert(FALSE);
+      assert(false);
     }
     assert(LD == my_ld);
 
@@ -481,28 +481,38 @@ is also printed if stdio is not available.
 #include "pl-debug.h"
 
 #if O_DEBUG
-#define DEBUG(n, g)	do \
-			{ if (DEBUGGING(n)) \
-			  { ENTER_DEBUG(n); g; EXIT_DEBUG(n); } \
-			} while(0)
-#define ENTER_DEBUG(n)	pl_internaldebugstatus_t \
-			  __orig_ld_debug = GLOBAL_LD->internal_debug, \
-			  __new_ld_debug = GLOBAL_LD->internal_debug = \
-			  (pl_internaldebugstatus_t) \
-			  { .channel = DEBUGGING(n) ? prolog_debug_topic_name(n) : NULL, \
-			    .depth = __orig_ld_debug.depth + 1, \
-			  }
-#define EXIT_DEBUG(n)	GLOBAL_LD->internal_debug = \
-			( GLOBAL_LD->internal_debug.depth != __new_ld_debug.depth \
-			? Sdprintf("DEBUG stack depth mismatch! %d != %d\n", GLOBAL_LD->internal_debug.depth, __new_ld_debug.depth) \
-			: 1 \
-			) ? __orig_ld_debug : __orig_ld_debug
+#define DEBUG(n, g) \
+  do							      \
+  { if (DEBUGGING(n))					      \
+    { PL_local_data_t *__dbg_ld = GLOBAL_LD;		      \
+      if ( __dbg_ld )					      \
+      { ENTER_DEBUG(__dbg_ld, n); g; EXIT_DEBUG(__dbg_ld, n); \
+      } else						      \
+      { g;						      \
+      }							      \
+    }							      \
+  } while(0)
+#define ENTER_DEBUG(ld, n)					 \
+  pl_internaldebugstatus_t					 \
+  __orig_ld_debug = ld->internal_debug,				 \
+    __new_ld_debug = ld->internal_debug =			 \
+    (pl_internaldebugstatus_t)					 \
+  { .channel = DEBUGGING(n) ? prolog_debug_topic_name(n) : NULL, \
+    .depth = __orig_ld_debug.depth + 1,				 \
+  }
+#define EXIT_DEBUG(ld, n)						\
+  ld->internal_debug =							\
+    ( GLOBAL_LD->internal_debug.depth != __new_ld_debug.depth		\
+      ? Sdprintf("DEBUG stack depth mismatch! %d != %d\n",		\
+		 GLOBAL_LD->internal_debug.depth, __new_ld_debug.depth) \
+      : 1								\
+      ) ? __orig_ld_debug : __orig_ld_debug
 #define DEBUGGING(n)	((n) <= DBG_LEVEL9 ? GD->debug_level >= (n) : \
 			 (GD->debug_topics && true_bit(GD->debug_topics, n)))
-#define WITH_DEBUG_FOR(n) for \
-			( ENTER_DEBUG(n); \
-			  __orig_ld_debug.depth >= 0; \
-			  EXIT_DEBUG(n), __orig_ld_debug.depth = -1 )
+#define WITH_DEBUG_FOR(n) for	  \
+    ( ENTER_DEBUG(GLOBAL_LD, n);	  \
+      __orig_ld_debug.depth >= 0; \
+      EXIT_DEBUG(GLOBAL_LD, n), __orig_ld_debug.depth = -1 )
 #define IF_DEBUGGING(n)	if (DEBUGGING(n)) WITH_DEBUG_FOR(n)
 
 /* We want to use the version of Sdprintf with the debug channel, if possible */
@@ -512,9 +522,9 @@ int Sdprintf_ex(const char *channel, const char *file, int line, const char *fm,
 
 #else
 #define DEBUG(a, b) ((void)0)
-#define ENTER_DEBUG(n) ;
-#define EXIT_DEBUG(n) ;
-#define DEBUGGING(n) FALSE
+#define ENTER_DEBUG(ld, n) ;
+#define EXIT_DEBUG(ld, n) ;
+#define DEBUGGING(n) false
 #define WITH_DEBUG_FOR(n) /* empty */
 #define IF_DEBUGGING(n) if (0)
 #endif
@@ -581,8 +591,8 @@ non-deterministic predicates. The implementation returns   using  one of
 these  constructs.  The  `Redo'   variations    are   only   allowed  if
 PL_FA_NONDETERMINISTIC is present in `flags'.
 
-    * return FALSE
-    * return TRUE
+    * return false
+    * return true
     * ForeignRedoInt(intptr_t val)
     * ForeignRedoPtr(void *ptr)
 

@@ -97,7 +97,7 @@ get_trace_store(int create)
     { btrace *s = malloc(sizeof(*s));
       if ( s )
       { memset(s, 0, sizeof(*s));
-	s->shared = TRUE;
+	s->shared = true;
 	LD->btrace_store = s;
       }
     }
@@ -149,7 +149,7 @@ next_btrace_id(btrace *bt)
 
 btrace *
 save_backtrace(const char *why)
-{ btrace *bt = get_trace_store(TRUE);
+{ btrace *bt = get_trace_store(true);
 
   if ( bt )
   { btrace_stack *s;
@@ -194,7 +194,7 @@ print_trace(btrace *bt, int me)
 
 void
 print_backtrace(int last)		/* 1..SAVE_TRACES */
-{ btrace *bt = get_trace_store(FALSE);
+{ btrace *bt = get_trace_store(false);
 
   if ( bt )
   { int me = bt->current-last;
@@ -277,7 +277,7 @@ get_trace_store(int create)
     { btrace *s = malloc(sizeof(*s));
       if ( s )
       { memset(s, 0, sizeof(*s));
-	s->shared = TRUE;
+	s->shared = true;
 	LD->btrace_store = s;
       }
     }
@@ -325,7 +325,7 @@ next_btrace_id(btrace *bt)
 
 btrace *
 save_backtrace(const char *why)
-{ btrace *bt = get_trace_store(TRUE);
+{ btrace *bt = get_trace_store(true);
 
   if ( bt )
   { void *array[100];
@@ -398,7 +398,7 @@ addr2line(const char *fname, uintptr_t offset, char *buf, size_t size)
 	    o += strlen(sep);
 	  }
 	} else
-	{ *o++ = c;
+	{ *o++ = (char)c;
 	}
       }
 #endif
@@ -410,7 +410,7 @@ addr2line(const char *fname, uintptr_t offset, char *buf, size_t size)
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -460,7 +460,7 @@ print_trace(btrace *bt, int me)
 
 void
 print_backtrace(int last)		/* 1..SAVE_TRACES */
-{ btrace *bt = get_trace_store(FALSE);
+{ btrace *bt = get_trace_store(false);
 
   if ( bt )
   { int me = bt->current-last;
@@ -580,7 +580,7 @@ get_trace_store(int create)
   { btrace *s = malloc(sizeof(*s));
     if ( s )
     { memset(s, 0, sizeof(*s));
-      s->shared = TRUE;
+      s->shared = true;
       LD->btrace_store = s;
     }
   } else if ( create )
@@ -678,7 +678,7 @@ int backtrace(btrace_stack* trace, PEXCEPTION_POINTERS pExceptionInfo)
   ZeroMemory(&frame, sizeof( STACKFRAME64));
   memset(&moduleInfo,0,sizeof(IMAGEHLP_MODULE64));
   moduleInfo.SizeOfStruct = sizeof(IMAGEHLP_MODULE64);
-  rc = SymInitialize(hProcess, NULL, TRUE);
+  rc = SymInitialize(hProcess, NULL, true);
   if (rc == 0)
     return 0;
 
@@ -708,7 +708,7 @@ int backtrace(btrace_stack* trace, PEXCEPTION_POINTERS pExceptionInfo)
 			    SymGetModuleBase64,
 			    NULL)) != 0)
    { int hasModule = 0;
-     BOOL hasSymbol = FALSE;
+     BOOL hasSymbol = false;
 
      if (skip > 0)
      { skip--;
@@ -768,7 +768,7 @@ int backtrace(btrace_stack* trace, PEXCEPTION_POINTERS pExceptionInfo)
 
 btrace *
 win_save_backtrace(const char *why, PEXCEPTION_POINTERS pExceptionInfo)
-{ btrace *bt = get_trace_store(TRUE);
+{ btrace *bt = get_trace_store(true);
   if ( bt )
   { int current = next_btrace_id(bt);
     btrace_stack *s = &bt->dumps[current];
@@ -796,7 +796,7 @@ print_trace(btrace *bt, int me)
   { int depth;
     HANDLE hProcess = GetCurrentProcess();
 
-    SymInitialize(hProcess, NULL, TRUE);
+    SymInitialize(hProcess, NULL, true);
 
     Sdprintf("Stack trace labeled \"%s\":\n", s->name);
     for(depth=0; depth<s->depth; depth++)
@@ -840,7 +840,7 @@ print_trace(btrace *bt, int me)
 
 void
 print_backtrace(int last)		/* 1..SAVE_TRACES */
-{ btrace *bt = get_trace_store(FALSE);
+{ btrace *bt = get_trace_store(false);
 
   if ( bt )
   { int me = bt->current-last;
@@ -900,7 +900,7 @@ initBackTrace(void)
 
 void
 print_backtrace_named(const char *why)
-{ bstore_print_backtrace_named(get_trace_store(FALSE), why);
+{ bstore_print_backtrace_named(get_trace_store(false), why);
 }
 
 
@@ -915,12 +915,7 @@ print_c_backtrace(const char *why)
 
 void
 sigCrashHandler(int sig)
-{ int tid;
-  atom_t alias;
-  const pl_wchar_t *name = L"";
-  time_t now = time(NULL);
-  char tbuf[48];
-
+{ GET_LD
   signal(sig,     SIG_DFL);
 #ifdef SIGALRM
   signal(SIGALRM, SIG_DFL);
@@ -935,19 +930,14 @@ sigCrashHandler(int sig)
   alarm(10);				/* try to avoid deadlocks */
 #endif
 
-  tid = PL_thread_self();
-  ctime_r(&now, tbuf);
-  tbuf[24] = '\0';
+  Sdprintf("\nERROR: Received fatal signal %d (%s)\n",
+	   sig, signal_name(sig));
+  save_backtrace("crash");
+#ifdef O_PLMT
+  LD->thread.info->c_stack_low = true; /* Actually, we are on an alt-stack */
+#endif
+  printCrashContext("crash");
 
-  if ( PL_get_thread_alias(tid, &alias) )
-    name = PL_atom_wchars(alias, NULL);
-
-  SdprintfX("\nSWI-Prolog [thread %d (%Ws) at %s]: "
-	    "received fatal signal %d (%s)\n",
-	    PL_thread_self(), name, tbuf, sig, signal_name(sig));
-  print_c_backtrace("crash");
-  Sdprintf("Prolog stack:\n");
-  PL_backtrace(25, PL_BT_SAFE);
   Sdprintf("Running on_halt hooks with status %d\n", 128+sig);
   run_on_halt(&GD->os.exit_hooks, 128+sig);
 
@@ -994,7 +984,7 @@ PRED_IMPL("c_backtrace_clear", 0, c_backtrace_clear, 0)
     LD->btrace_store = NULL;
   }
 
-  return TRUE;
+  return true;
 }
 
 static
@@ -1003,10 +993,10 @@ PRED_IMPL("c_backtrace_print", 1, c_backtrace_print, 0)
 
   if ( PL_get_chars(A1, &s, CVT_ATOM|CVT_STRING|CVT_EXCEPTION) )
   { print_backtrace_named(s);
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 #endif
@@ -1176,7 +1166,7 @@ CStackSize(DECL_LD)
 
 	if ( getrlimit(RLIMIT_STACK, &rlim) == 0 &&
 	     rlim.rlim_cur != RLIM_INFINITY && rlim.rlim_cur )
-	{ cinfo->size = rlim.rlim_cur;
+	{ cinfo->size = (size_t)rlim.rlim_cur;
 	  c_stack_base(cinfo);
 	}
 #endif
@@ -1192,7 +1182,7 @@ CStackSize(DECL_LD)
 #endif
       }
     }
-    cinfo->initialised = TRUE;
+    cinfo->initialised = true;
     DEBUG(MSG_CSTACK, Sdprintf("[%d]: C-stack %p[%zd]\n",
 			       info->pl_tid, cinfo->base, cinfo->size));
 

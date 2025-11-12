@@ -15,6 +15,7 @@ export CC=
 export CXX=
 opts=
 cmake=cmake
+os=any
 
 config=$(basename $(pwd))
 
@@ -40,6 +41,37 @@ case $config in
     ;;
 esac
 
+# wasm
+# termux
+#
+# Build for specific targets
+
+case $config in
+    *wasm*)
+        os=wasm
+	WASM_HOME=${WASM_HOME-$HOME/wasm}
+	source $WASM_HOME/emsdk/emsdk_env.sh
+	TOOLCHAIN=$EMSDK/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake
+	[ -f $TOOLCHAIN ] || echo "Could not find emscripten toolchain"
+	cmake="emcmake cmake"
+	build_type=Release
+	opts+=" -DCMAKE_TOOLCHAIN_FILE=$TOOLCHAIN"
+	opts+=" -DCMAKE_FIND_ROOT_PATH=$WASM_HOME"
+	opts+=" -DUSE_GMP=OFF"
+	opts+=" -DINSTALL_DOCUMENTATION=OFF"
+	opts+=" -DINSTALL_PROLOG_SRC=OFF"
+	;;
+    *termux*)
+	opts+=" -DPOSIX_SHELL=${PREFIX}/bin/sh"
+	opts+=" -DSWIPL_TMP_DIR=${PREFIX}/tmp"
+	opts+=" -DSYSTEM_CACERT_FILENAME=${PREFIX}/etc/tls/cert.pem"
+	;;
+    *homebrew*)
+	# MacOS with dependencies from Homebrew
+	opts+=" -DMACOSX_DEPENDENCIES_FROM=Homebrew"
+	;;
+esac
+
 # nogmp
 # libbf
 #
@@ -61,12 +93,25 @@ case $config in
     ;;
 esac
 
+# engines
+#
+# Include engine support, also in single threaded versions.
+
+case $config in
+  *engines*)
+    opts+=" -DENGINES=ON"
+    ;;
+esac
+
 # vmif
 #
 # Implement VMI instructions as functions.  Slower on GCC, about
 # equal for Clang (and WASM) and much faster for MSVC
 
 case $config in
+  *novmif*)
+    opts+=" -DVMI_FUNCTIONS=OFF"
+    ;;
   *vmif*)
     opts+=" -DVMI_FUNCTIONS=ON"
     ;;
@@ -79,6 +124,17 @@ esac
 case $config in
   *profile*)
     opts+=" -DVMI_FUNCTIONS=ON"
+    CFLAGS+=" -fno-inline"
+    ;;
+esac
+
+# gcov
+#
+# Prepare for coverage analysis
+
+case $config in
+  *gcov*)
+    opts+=" -DGCOV=ON -DINSTALL_TESTS=ON"
     CFLAGS+=" -fno-inline"
     ;;
 esac
@@ -105,6 +161,16 @@ case $config in
     ;;
 esac
 
+# nogui
+#
+# Disable building the GUI
+
+case $config in
+  *nogui*)
+    opts+=" -DSWIPL_PACKAGES_X=OFF"
+    ;;
+esac
+
 # test
 #
 # Install the  tests along  with the  executable.  Allows  running the
@@ -123,6 +189,26 @@ esac
 case $config in
   *pdf*)
     opts+=" -DBUILD_PDF_DOCUMENTATION=ON"
+    ;;
+esac
+
+# qlf
+#
+# Compile entire library to qlf
+
+case $config in
+  *qlf*)
+    opts+=" -DINSTALL_QLF=ON"
+    ;;
+esac
+
+# nosrc
+#
+# Do NOT install the library .pl files (only the .qlf files)
+
+case $config in
+  *nosrc*)
+    opts+=" -DINSTALL_PROLOG_SRC=OFF"
     ;;
 esac
 
@@ -169,32 +255,6 @@ case $config in
     build_type=Sanitize
     opts+=" -DSANITIZE=undefined"
     ;;
-esac
-
-# wasm
-# termux
-#
-# Build for specific targets
-
-case $config in
-    *wasm*)
-	WASM_HOME=$HOME/wasm
-	source $WASM_HOME/emsdk/emsdk_env.sh
-	TOOLCHAIN=$EMSDK/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake
-	[ -f $TOOLCHAIN ] || echo "Could not find emscripten toolchain"
-	cmake="emcmake cmake"
-	build_type=Release
-	LDFLAGS+=" -s STACK_SIZE=1048576"
-	opts+=" -DCMAKE_TOOLCHAIN_FILE=$TOOLCHAIN"
-	opts+=" -DCMAKE_FIND_ROOT_PATH=$HOME/wasm"
-	opts+=" -DUSE_GMP=OFF"
-	opts+=" -DINSTALL_DOCUMENTATION=OFF"
-	;;
-    *termux*)
-	opts+=" -DPOSIX_SHELL=${PREFIX}/bin/sh"
-	opts+=" -DSWIPL_TMP_DIR=${PREFIX}/tmp"
-	opts+=" -DSYSTEM_CACERT_FILENAME=${PREFIX}/etc/tls/cert.pem"
-	;;
 esac
 
 function confirm ()
@@ -246,5 +306,10 @@ chmod +x configure
 [ -z "$CXX" ]     || echo "export CXX=$CXX"               >> .envrc
 [ -z "$CFLAGS" ]  || echo "export CFLAGS="'"'$CFLAGS'"'   >> .envrc
 [ -z "$LDFLAGS" ] || echo "export LDFLAGS="'"'$LDFLAGS'"' >> .envrc
-
+case $config in
+    *wasm*)
+        echo "export WASM_HOME="'"'$WASM_HOME'"'         >> .envrc
+	echo "export EMSDK_QUIET=1"			 >> .envrc
+	echo "source "'$'"WASM_HOME/emsdk/emsdk_env.sh"	 >> .envrc
+esac
 ./configure

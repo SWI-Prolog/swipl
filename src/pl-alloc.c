@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2021, University of Amsterdam
+    Copyright (c)  1985-2024, University of Amsterdam
 			      VU University Amsterdam
 			      CWI, Amsterdam
 			      SWI-Prolog Solutions b.v.
@@ -47,6 +47,7 @@
 #include "pl-fli.h"
 #include "pl-setup.h"
 #include "pl-pro.h"
+#include "pl-comp.h"
 #include <math.h>
 #ifdef HAVE_MALLOC_H
 #include <malloc.h>
@@ -222,9 +223,14 @@ freeHeap(void *mem, size_t n)
 
 void
 linger_always(linger_list** list, void (*unalloc)(void *), void *object)
-{ if ( GD->cleaning != CLN_DATA )
+{ if ( GD->halt.cleaning != CLN_DATA )
   { linger_list *c = allocHeapOrHalt(sizeof(*c));
     linger_list *o;
+
+    DEBUG(0,
+	  for(linger_list *l = *list; l; l = l->next)
+	  { assert(l->object != object);
+	  });
 
     c->generation = global_generation();
     c->object	  = object;
@@ -269,10 +275,10 @@ enableSpareStack(Stack s, int always)
 	  Sdprintf("Enabling spare on %s: %zd bytes\n", s->name, s->spare));
     s->max = addPointer(s->max, s->spare);
     s->spare = 0;
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -280,9 +286,9 @@ void
 enableSpareStacks(void)
 { GET_LD
 
-  enableSpareStack((Stack)&LD->stacks.local,  FALSE);
-  enableSpareStack((Stack)&LD->stacks.global, FALSE);
-  enableSpareStack((Stack)&LD->stacks.trail,  FALSE);
+  enableSpareStack((Stack)&LD->stacks.local,  false);
+  enableSpareStack((Stack)&LD->stacks.global, false);
+  enableSpareStack((Stack)&LD->stacks.trail,  false);
 }
 
 
@@ -340,13 +346,13 @@ is_variant_frame(DECL_LD LocalFrame fr1, LocalFrame fr2)
 
     for(i=0; i<arity; i++)
     { if ( !is_variant_ptr(argFrameP(fr1, i), argFrameP(fr2, i)) )
-	return FALSE;
+	return false;
     }
 
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -444,8 +450,7 @@ Returns `0` if there is no enough space to store this term.
 
 static size_t
 size_frame_term(LocalFrame fr)
-{ GET_LD
-  size_t arity = fr->predicate->functor->arity;
+{ size_t arity = fr->predicate->functor->arity;
   size_t size = 4 + 3 + arity+1;
   size_t i;
 
@@ -660,7 +665,7 @@ Out of stack exception context:
   - Global storage only reachable through choice points
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+bool
 outOfStack(void *stack, stack_overflow_action how)
 { GET_LD
   Stack s = stack;
@@ -674,7 +679,7 @@ outOfStack(void *stack, stack_overflow_action how)
     print_backtrace_named("crash");
     fatalError("Sorry, cannot continue");
 
-    return FALSE;				/* NOTREACHED */
+    return false;				/* NOTREACHED */
   }
 
   save_backtrace(msg);
@@ -687,8 +692,8 @@ outOfStack(void *stack, stack_overflow_action how)
   }
 
   enableSpareStacks();
-  LD->trim_stack_requested = TRUE;
-  LD->exception.processing = TRUE;
+  LD->trim_stack_requested = true;
+  LD->exception.processing = true;
   LD->outofstack = stack;
 
   switch(how)
@@ -711,17 +716,21 @@ outOfStack(void *stack, stack_overflow_action how)
       } else
       { Sdprintf("ERROR: Out of global-stack.\n"
 		 "ERROR: No room for exception term.  Aborting.\n");
-	*valTermRef(LD->exception.bin) = ATOM_aborted;
+	*valTermRef(LD->exception.bin) = ATOM_abort;
       }
       exception_term = exception_bin;
 
+#if O_THROW
       if ( how == STACK_OVERFLOW_THROW &&
 	   LD->exception.throw_environment )
       {						/* see PL_throw() */
 	longjmp(LD->exception.throw_environment->exception_jmp_env, 1);
       }
+#else
+      PL_fatal_error("Could not handle stack overflow");
+#endif
 
-      return FALSE;
+      return false;
     }
     default:
       assert(0);
@@ -730,7 +739,7 @@ outOfStack(void *stack, stack_overflow_action how)
 }
 
 
-int
+bool
 raiseStackOverflow(int overflow)
 { GET_LD
   Stack s;
@@ -743,8 +752,8 @@ raiseStackOverflow(int overflow)
     case ARGUMENT_OVERFLOW: s = (Stack)&LD->stacks.argument; break;
     case MEMORY_OVERFLOW:
       return PL_error(NULL, 0, NULL, ERR_NOMEM);
-    case FALSE:				/* some other error is pending */
-      return FALSE;
+    case false:				/* some other error is pending */
+      return false;
     default:
       s = NULL;
       assert(0);
@@ -799,14 +808,8 @@ Word
 allocGlobal(DECL_LD size_t n)
 { Word result;
 
-  if ( !hasGlobalSpace(n) )
-  { int rc;
-
-    if ( (rc=ensureGlobalSpace(n, ALLOW_GC)) != TRUE )
-    { raiseStackOverflow(rc);
-      return NULL;
-    }
-  }
+  if ( !ensureGlobalSpace(n, ALLOW_GC) )
+    return NULL;
 
   result = gTop;
   gTop += n;
@@ -839,98 +842,32 @@ newTerm(void)
 }
 
 		 /*******************************
-		 *    OPERATIONS ON INTEGERS	*
-		 *******************************/
-
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-Translate  a  64-bit  integer  into   a    Prolog   cell.   Uses  tagged
-representation if possible or allocates 64-bits on the global stack.
-
-Return is one of:
-
-	TRUE:		 Success
-	FALSE:		 Interrupt
-	GLOBAL_OVERFLOW: Stack overflow
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-int
-put_int64(DECL_LD Word at, int64_t l, int flags)
-{ Word p;
-  word r, m;
-  int req;
-
-  r = consInt(l);
-  if ( valInt(r) == l )
-  { *at = r;
-    return TRUE;
-  }
-
-#if SIZEOF_VOIDP == 8
-  req = 3;
-#elif SIZEOF_VOIDP == 4
-  req = 4;
-#else
-#error "FIXME: Unsupported sizeof word"
-#endif
-
-  if ( !hasGlobalSpace(req) )
-  { int rc = ensureGlobalSpace(req, flags);
-
-    if ( rc != TRUE )
-      return rc;
-  }
-  p = gTop;
-  gTop += req;
-
-#if SIZEOF_VOIDP == 8
-  r = consPtr(p, TAG_INTEGER|STG_GLOBAL);
-  m = mkIndHdr(1, TAG_INTEGER);
-
-  *p++ = m;
-  *p++ = l;
-  *p   = m;
-#else
-#if SIZEOF_VOIDP == 4
-  r = consPtr(p, TAG_INTEGER|STG_GLOBAL);
-  m = mkIndHdr(2, TAG_INTEGER);
-
-  *p++ = m;
-#ifdef WORDS_BIGENDIAN
-  *p++ = (word)(l>>32);
-  *p++ = (word)l;
-#else
-  *p++ = (word)l;
-  *p++ = (word)(l>>32);
-#endif
-  *p   = m;
-#else
-#error "FIXME: Unsupported sizeof intptr_t."
-#endif
-#endif
-
-  *at = r;
-  return TRUE;
-}
-
-
-		 /*******************************
 		 *    OPERATIONS ON STRINGS	*
 		 *******************************/
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-To distinguish between byte and wide strings,   the system adds a 'B' or
-'W' in front of the real string. For   a  'W', the following 3 bytes are
-ignored to avoid alignment restriction problems.
+Allocate a  blob of non-word  aligned size,  given the size  in bytes.
+Note that  that last word is  zeroed to make sure  possible padding is
+zero  and canonical  and strings  are 0-terminated  (they may  contain
+internal zeros).
 
-Note that these functions can trigger GC
+TBD: This function  ensures there is at least one  0 byte that follows
+the data.  That  is good for strings,  but not if we want  to use this
+for non-null terminated  data.  If you want to fix  this, take care of
+strings  as  they  live  in   code,  records  and  .QLF  files.   Also
+getCharsString() and getCharsWString() must  be updated to compute the
+correct length.
+
+This function calls allocGlobal() and thus  may cause a stack shift or
+garbage collect.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 Word
-allocString(DECL_LD size_t len)
+globalBlob(DECL_LD size_t len, int tag)
 { size_t lw = (len+sizeof(word))/sizeof(word);
   int pad = (int)(lw*sizeof(word) - len);
   Word p = allocGlobal(2 + lw);
-  word m = mkStrHdr(lw, pad);
+  word m = mkBlobHdr(lw, pad, tag);
 
   if ( !p )
     return NULL;
@@ -943,10 +880,18 @@ allocString(DECL_LD size_t len)
 }
 
 
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+To distinguish between byte and wide strings, the system adds a 'B' or
+'W'  in  front   of  the  real  string.  For  a   'W',  the  following
+sizeof(wchar_t)-1  bytes are  ignored to  avoid alignment  restriction
+problems.
+
+Note that these functions can trigger GC
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
 word
-globalString(size_t len, const char *s)
-{ GET_LD
-  Word p = allocString(len+1);
+globalString(DECL_LD size_t len, const char *s)
+{ Word p = globalBlob(len+1, TAG_STRING);
 
   if ( p )
   { char *q = (char *)&p[1];
@@ -954,7 +899,14 @@ globalString(size_t len, const char *s)
     *q++ = 'B';
     memcpy(q, s, len);
 
-    return consPtr(p, TAG_STRING|STG_GLOBAL);
+    word w = consPtr(p, TAG_STRING|STG_GLOBAL);
+    DEBUG(CHK_SECURE,
+	  { size_t len2;
+	    char *s2 = getCharsString(w, &len2);
+	    assert(len2 == len);
+	    assert(memcmp(s, s2, len) == 0);
+	  });
+    return w;
   }
 
   return 0;
@@ -962,9 +914,8 @@ globalString(size_t len, const char *s)
 
 
 word
-globalWString(size_t len, const pl_wchar_t *s)
-{ GET_LD
-  const pl_wchar_t *e = &s[len];
+globalWString(DECL_LD size_t len, const pl_wchar_t *s)
+{ const pl_wchar_t *e = &s[len];
   const pl_wchar_t *p;
   Word g;
 
@@ -976,7 +927,7 @@ globalWString(size_t len, const pl_wchar_t *s)
   if ( p == e )				/* 8-bit string */
   { unsigned char *t;
 
-    if ( !(g = allocString(len+1)) )
+    if ( !(g = globalBlob(len+1, TAG_STRING)) )
       return 0;
     t = (unsigned char *)&g[1];
     *t++ = 'B';
@@ -986,7 +937,7 @@ globalWString(size_t len, const pl_wchar_t *s)
   { char *t;
     pl_wchar_t *w;
 
-    if ( !(g = allocString((len+1)*sizeof(pl_wchar_t))) )
+    if ( !(g = globalBlob((len+1)*sizeof(pl_wchar_t), TAG_STRING)) )
       return 0;
     t = (char *)&g[1];
     w = (pl_wchar_t*)t;
@@ -1031,7 +982,9 @@ getCharsWString(DECL_LD word w, size_t *len)
 
   s = (char *)&p[1];
   if ( *s != 'W' )
+  { assert(*s == 'B');
     return NULL;
+  }
 
   if ( len )
     *len = ((wn*sizeof(word) - pad)/sizeof(pl_wchar_t)) - 1;
@@ -1060,7 +1013,7 @@ put_double(DECL_LD Word at, double d, int flags)
   if ( flags != ALLOW_CHECKED && !hasGlobalSpace(2+WORDS_PER_DOUBLE) )
   { int rc = ensureGlobalSpace(2+WORDS_PER_DOUBLE, flags);
 
-    if ( rc != TRUE )
+    if ( rc != true )
       return rc;
   }
   p = gTop;
@@ -1076,11 +1029,9 @@ put_double(DECL_LD Word at, double d, int flags)
   p += WORDS_PER_DOUBLE;
   *p = m;
 
-  return TRUE;
+  return true;
 }
 
-
-/* valBignum(DECL_LD word w) moved to pl-inline.h */
 
 		 /*******************************
 		 *  GENERIC INDIRECT OPERATIONS	*
@@ -1088,8 +1039,7 @@ put_double(DECL_LD Word at, double d, int flags)
 
 int
 equalIndirect(word w1, word w2)
-{ GET_LD
-  Word p1 = addressIndirect(w1);
+{ Word p1 = addressIndirect(w1);
   Word p2 = addressIndirect(w2);
 
   if ( *p1 == *p2 )
@@ -1267,7 +1217,7 @@ PL_free(void *mem)
 }
 
 
-int
+bool
 PL_linger(void *mem)
 {
 #if defined(HAVE_BOEHM_GC) && defined(GC_FLAG_UNCOLLECTABLE)
@@ -1277,9 +1227,9 @@ PL_linger(void *mem)
     GC_linger(mem);
 #endif
   }
-  return TRUE;
+  return true;
 #else
-  return FALSE;
+  return false;
 #endif
 }
 
@@ -1302,11 +1252,11 @@ heap_gc_warn_proc(char *msg, GC_word arg)
 
 void
 initAlloc(void)
-{ static int done = FALSE;
+{ static int done = false;
 
   if ( done )
     return;
-  done = TRUE;
+  done = true;
 
 #if defined(_DEBUG) && defined(__WINDOWS__) && 0
   _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF|
@@ -1415,7 +1365,7 @@ tmp_malloc(size_t req)
   req += SA_OFFSET;
   if ( req < MMAP_THRESHOLD )
   { reg = malloc(req);
-    mmapped = FALSE;
+    mmapped = false;
   } else
   { req = roundpgsize(req);
 
@@ -1425,7 +1375,7 @@ tmp_malloc(size_t req)
 	       -1, 0);
     if ( reg == MAP_FAILED )
       reg = NULL;
-    mmapped = TRUE;
+    mmapped = true;
   }
 
   if ( reg )
@@ -1533,8 +1483,8 @@ tmp_nrealloc(void *mem, size_t req)
 size_t
 tmp_malloc_size(void *mem)
 { if ( mem )
-  { size_t *sp = mem;
-    return sp[-1];
+  { Word sp = mem;
+    return (size_t)sp[-1];
   }
 
   return 0;
@@ -1542,10 +1492,10 @@ tmp_malloc_size(void *mem)
 
 void *
 tmp_malloc(size_t size)
-{ void *mem = malloc(size+sizeof(size_t));
+{ void *mem = malloc(size+sizeof(word));
 
   if ( mem )
-  { size_t *sp = mem;
+  { Word sp = mem;
     *sp++ = size;
 #ifdef O_DEBUG
     memset(sp, 0xFB, size);
@@ -1559,8 +1509,8 @@ tmp_malloc(size_t size)
 
 void *
 tmp_realloc(void *old, size_t size)
-{ size_t *sp = old;
-  size_t osize = *--sp;
+{ Word sp = old;
+  size_t osize = (size_t)*--sp;
   void *mem;
 
 #ifdef O_DEBUG
@@ -1571,7 +1521,7 @@ tmp_realloc(void *old, size_t size)
   }
 #else
   (void)osize;
-  if ( (mem = realloc(sp, size+sizeof(size_t))) )
+  if ( (mem = realloc(sp, size+sizeof(word))) )
   { sp = mem;
     *sp++ = size;
     return sp;
@@ -1699,7 +1649,7 @@ malloc_property(term_t prop, control_t handle)
 	  }
 	}
 
-	return FALSE;
+	return false;
       } else if ( PL_is_variable(prop) )
       { pname = tcmalloc_properties;
 	goto enumerate;
@@ -1723,24 +1673,24 @@ malloc_property(term_t prop, control_t handle)
 	    if ( *pname )
 	      PL_retry_address(pname);
 	    else
-	      return TRUE;
+	      return true;
 	  }
 	}
 
 	if ( PL_exception(0) )
-	  return FALSE;
+	  return false;
 	PL_rewind_foreign_frame(fid);
       }
       PL_close_foreign_frame(fid);
 
-      return FALSE;
+      return false;
     }
     case PL_CUTTED:
-    { return TRUE;
+    { return true;
     }
     default:
     { assert(0);
-      return FALSE;
+      return false;
     }
   }
 }
@@ -1758,7 +1708,7 @@ set_malloc(term_t prop)
 
     if ( !PL_get_arg(1, prop, a) ||
 	 !PL_get_size_ex(a, &val) )
-      return FALSE;
+      return false;
 
     if ( s )
     { const char **pname = tcmalloc_properties;
@@ -1766,7 +1716,7 @@ set_malloc(term_t prop)
       for(; *pname; pname++)
       { if ( streq(s, *pname) )
 	{ if ( WEAK_FUNC(MallocExtension_SetNumericProperty)(*pname, val) )
-	    return TRUE;
+	    return true;
 	  else
 	    return PL_permission_error("set", "malloc_property", prop);
 	}
@@ -1807,23 +1757,23 @@ may be overruled.
 Returns 0 if tcmalloc is not present or not enabled.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static int is_tcmalloc = FALSE;
+static int is_tcmalloc = false;
 
 static int
 initTCMalloc(void)
-{ static int done = FALSE;
+{ static int done = false;
   int set = 0;
 
   if ( done )
     return is_tcmalloc;
-  done = TRUE;
+  done = true;
 
   if ( WEAK_IMPORT(MallocExtension_GetNumericProperty) )
   { size_t in_use;
 
     if ( WEAK_FUNC(MallocExtension_GetNumericProperty)("generic.current_allocated_bytes", &in_use) &&
 	 in_use > 100000 )
-    { is_tcmalloc = TRUE;
+    { is_tcmalloc = true;
       PL_set_prolog_flag("malloc", PL_ATOM, "tcmalloc");
     } else
     { return 0;
@@ -1846,7 +1796,7 @@ initTCMalloc(void)
   return set;
 }
 
-static int is_ptmalloc = FALSE;
+static int is_ptmalloc = false;
 #ifdef HAVE_MALLINFO2
 WEAK_DECLARE(struct mallinfo2, mallinfo2, (void));
 #elif defined(HAVE_MALLINFO)
@@ -1856,11 +1806,11 @@ WEAK_DECLARE(int, malloc_trim, (size_t pad));
 
 static int
 initPTMalloc(void)
-{ static int done = FALSE;
+{ static int done = false;
 
   if ( done )
     return is_ptmalloc;
-  done = TRUE;
+  done = true;
 
   size_t uordblks = 0;
 #ifdef HAVE_MALLINFO2
@@ -1875,7 +1825,7 @@ initPTMalloc(void)
 
   if ( uordblks > 100000 )
   { PL_set_prolog_flag("malloc", PL_ATOM, "ptmalloc");
-    is_ptmalloc = TRUE;
+    is_ptmalloc = true;
   }
 
   WEAK_IMPORT(malloc_trim); /* hope to have trim but it doesn't change the test */
@@ -1888,7 +1838,7 @@ int
 initMalloc(void)
 { return ( initTCMalloc() ||
 	   initPTMalloc() ||
-	   FALSE
+	   false
 	 );
 }
 
@@ -1905,7 +1855,7 @@ PRED_IMPL("trim_heap", 0, trim_heap, 0)
   else
     WEAK_TRY_CALL(malloc_trim, 0);
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1920,15 +1870,15 @@ PRED_IMPL("thread_idle", 2, thread_idle, PL_FA_TRANSPARENT)
   atom_t how;
 
   if ( !PL_get_atom_ex(A2, &how) )
-    return FALSE;
+    return false;
 
   if ( how == ATOM_short )
-  { trimStacks(TRUE);
+  { trimStacks(true);
     WEAK_TRY_CALL_VOID(MallocExtension_MarkThreadTemporarilyIdle);
   } else if ( how == ATOM_long )
-  { LD->trim_stack_requested = TRUE;
+  { LD->trim_stack_requested = true;
     garbageCollect(GC_USER);
-    LD->trim_stack_requested = FALSE;
+    LD->trim_stack_requested = false;
     WEAK_TRY_CALL_VOID(MallocExtension_MarkThreadIdle);
   }
 
@@ -1950,7 +1900,7 @@ static
 PRED_IMPL("garbage_collect_heap", 0, garbage_collect_heap, 0)
 { GC_gcollect();
 
-  return TRUE;
+  return true;
 }
 #endif
 

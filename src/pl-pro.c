@@ -64,7 +64,7 @@ resetProlog(int clear_stacks)
 
   if ( Sferror(in) )
   { Sclearerr(in);
-    LD->prompt.next = TRUE;
+    LD->prompt.next = true;
   }
 
   Scurin  = in;
@@ -90,26 +90,49 @@ resetProlog(int clear_stacks)
   LD->autoload.loop = NULL;
   updateAlerted(LD);
 
-  return TRUE;
+  return true;
 }
 
 
 static int
 restore_after_exception(term_t except)
 { GET_LD
-  atom_t a;
-  int rc = TRUE;
+  int rc = true;
 
-  tracemode(FALSE, NULL);
+  tracemode(false, NULL);
   debugmode(DBG_OFF, NULL);
-  if ( PL_get_atom(except, &a) && a == ATOM_aborted )
+  if ( classify_exception(except) == EXCEPT_ABORT )
   { rc = ( callEventHook(PLEV_ABORT) &&
-	   printMessage(ATOM_informational, PL_ATOM, ATOM_aborted) );
+	   printMessage(ATOM_informational, PL_FUNCTOR, FUNCTOR_unwind1,
+					      PL_ATOM, ATOM_abort) );
   }
 
   return rc;
 }
 
+static bool
+halt_from_exception(term_t ex)
+{ GET_LD
+  Word p = valTermRef(ex);
+
+  deRef(p);
+  if ( hasFunctor(*p, FUNCTOR_unwind1) )
+  { p = argTermP(*p, 0);
+    deRef(p);
+
+    if ( hasFunctor(*p, FUNCTOR_halt1) )
+    { p = argTermP(*p, 0);
+      deRef(p);
+      if ( isTaggedInt(*p) )
+      { uintptr_t status = valInt(*p);
+
+	return PL_halt(status&0xff);
+      }
+    }
+  }
+
+  return false;
+}
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 query_loop() runs a zero-argument goal on   behalf  of the toplevel. The
@@ -118,17 +141,17 @@ considered unhandled and thus  can  trap   the  debugger.  I.e., if goal
 terminates due to an exception, the exception   is  reported and goal is
 restarted. Before the restart, the system is   restored to a sane state.
 This notably affects I/O  (reset  current  I/O   to  user  I/O)  and the
-debugger.  Return: FALSE: failed, TRUE: success, -1: exception.
+debugger.  Return: false: failed, true: success, -1: exception.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 int
-query_loop(atom_t goal, int loop)
+query_loop(atom_t goal, bool loop)
 { GET_LD
   int rc;
   int clear_stacks = (LD->query == NULL);
 
   if ( loop )
-    enable_debug_on_interrupt(TRUE);
+    enable_debug_on_interrupt(true);
 
   do
   { fid_t fid;
@@ -143,7 +166,8 @@ query_loop(atom_t goal, int loop)
 
     p = PL_pred(PL_new_functor(goal, 0), MODULE_system);
 
-    if ( (qid = PL_open_query(MODULE_system, PL_Q_NORMAL, p, 0)) )
+    if ( (qid=PL_open_query(MODULE_system,
+			    PL_Q_NORMAL|PL_Q_EXCEPT_HALT, p, 0)) )
     { rc = PL_next_solution(qid);
     } else
     { error:
@@ -153,13 +177,22 @@ query_loop(atom_t goal, int loop)
     }
 
     if ( !rc && (except = PL_exception(qid)) )
-    { if ( classify_exception(except) == EXCEPT_ABORT )
-	Sclearerr(Suser_input);
+    { except_class exclass = classify_exception(except);
 
-      if ( Sferror(Suser_input) ||
-	   Sferror(Suser_output) ||
-	   Sferror(Suser_error) )
-	return -1;
+      if ( exclass == EXCEPT_ABORT )
+	Sclearerr(Suser_input);
+      if ( exclass == EXCEPT_HALT )
+      { rc = true;
+	loop = false;
+	int me = PL_thread_self();
+	if ( me < 0 || me == 1 )	/* no threads or main thread */
+	  halt_from_exception(except);
+      }
+
+      if ( !validUserStreams() )
+      { rc = true;
+	loop = false;
+      }
 
       restore_after_exception(except);
       rc = -1;
@@ -171,7 +204,7 @@ query_loop(atom_t goal, int loop)
       break;
 #ifdef O_ENGINES
     if (LD->thread.exit_requested)
-      loop = 0;
+      loop = false;
 #endif
   } while(loop);
 
@@ -192,21 +225,21 @@ the debugger.  Restores I/O and debugger on exit.  The Prolog  predicate
 `$break' is called to actually built the break environment.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static int
+static foreign_t
 pl_break1(atom_t goal)
 { GET_LD
-  int rc = TRUE;
+  foreign_t rc = true;
   int old_level = LD->break_level;
 
   IOSTREAM *inSave       = Scurin;
   IOSTREAM *outSave      = Scurout;
   intptr_t skipSave      = debugstatus.skiplevel;
   int  suspSave          = debugstatus.suspendTrace;
-  int  traceSave;
+  bool traceSave;
   debug_type debugSave;
   tbl_status tblstat;
 
-  tracemode(FALSE, &traceSave);
+  tracemode(false, &traceSave);
   debugmode(DBG_OFF, &debugSave);
   save_tabling_status(&tblstat);
 
@@ -221,7 +254,7 @@ pl_break1(atom_t goal)
 			PL_INT,  LD->break_level);
   }
 
-  rc = rc && (query_loop(goal, TRUE) == TRUE);
+  rc = rc && (query_loop(goal, true) == true);
 
   if ( LD->break_level > 0 )
   { rc = rc && printMessage(ATOM_informational,
@@ -250,13 +283,13 @@ Run a nested toplevel. Do not  use   PRED_IMPL()  for this because it is
 very handy to use from e.g., the gdb debugger.
 */
 
-word
+foreign_t
 pl_break(void)
 { GET_LD
   wakeup_state wstate;
 
-  if ( saveWakeup(&wstate, TRUE) )
-  { word rc;
+  if ( saveWakeup(&wstate, true) )
+  { foreign_t rc;
 
     rc = pl_break1(ATOM_dquery_loop);
     restoreWakeup(&wstate);
@@ -264,7 +297,7 @@ pl_break(void)
     return rc;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -285,35 +318,55 @@ static
 PRED_IMPL("$notrace", 2, notrace, PL_FA_NOTRACE)
 { PRED_LD
   int flags = 0;
+  int64_t sl;
 
   if ( debugstatus.tracing   )              flags |= NOTRACE_TRACE;
   if ( debugstatus.debugging )              flags |= NOTRACE_DEBUG;
   if ( truePrologFlag(PLFLAG_LASTCALL) )    flags |= NOTRACE_LCO;
   if ( truePrologFlag(PLFLAG_VMI_BUILTIN) ) flags |= NOTRACE_VMI;
 
-  if ( PL_unify_integer(A1, flags) &&
-       PL_unify_int64(A2, debugstatus.skiplevel) )
-  { debugstatus.tracing   = FALSE;
-    debugstatus.debugging = FALSE;
+  if ( debugstatus.skiplevel == SKIP_VERY_DEEP )
+    sl = -1;
+  else if ( debugstatus.skiplevel == SKIP_REDO_IN_SKIP )
+    sl = -2;
+  else
+  { sl = debugstatus.skiplevel;
+    assert(sl >= 0 && sl <= SIZE_MAX);
+  }
+
+  if ( PL_unify_integer(A1, flags) && PL_unify_int64(A2, sl) )
+  { debugstatus.tracing   = false;
+    debugstatus.debugging = false;
     debugstatus.skiplevel = SKIP_VERY_DEEP;
     setPrologRunMode(RUN_MODE_NORMAL);
     updateAlerted(LD);
 
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 static
 PRED_IMPL("$restore_trace", 2, restoretrace, PL_FA_NOTRACE)
 { PRED_LD
   int flags;
-  int64_t depth;
+  int64_t depthi;
 
   if ( PL_get_integer_ex(A1, &flags) &&
-       PL_get_int64_ex(A2, &depth) )
-  { debugstatus.tracing   = !!(flags&NOTRACE_TRACE);
+       PL_get_int64_ex(A2, &depthi) )
+  { size_t depth;
+
+    if ( depthi == -1 )
+      depth = SKIP_VERY_DEEP;
+    else if ( depthi == -2 )
+      depth = SKIP_REDO_IN_SKIP;
+    else if ( depthi < 0 || depthi > SIZE_MAX )
+      return PL_representation_error("size_t");
+    else
+      depth = (size_t)depthi;
+
+    debugstatus.tracing   = !!(flags&NOTRACE_TRACE);
     debugstatus.debugging = !!(flags&NOTRACE_DEBUG);
     debugstatus.skiplevel = depth;
 
@@ -329,10 +382,10 @@ PRED_IMPL("$restore_trace", 2, restoretrace, PL_FA_NOTRACE)
 
     updateAlerted(LD);
 
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -396,7 +449,7 @@ PRED_IMPL("$call_no_catch", 1, call_no_catch, PL_FA_TRANSPARENT)
     PL_clear_exception();
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -409,7 +462,7 @@ static
 PRED_IMPL("$can_yield", 0, can_yield, 0)
 { PRED_LD
 
-  return !!true(LD->query, PL_Q_ALLOW_YIELD);
+  return !!ison(LD->query, PL_Q_ALLOW_YIELD);
 }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -420,7 +473,7 @@ Note that the caller must provide a   foreign context. We cannot do that
 here because closing will loose the exception.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+bool
 callProlog(Module module, term_t goal, int flags, term_t *ex)
 { GET_LD
   term_t reset=0, g, ex2 = 0;
@@ -440,32 +493,33 @@ callProlog(Module module, term_t goal, int flags, term_t *ex)
   { error:
     if ( ex )
       *ex = exception_term;
-    return FALSE;
+    return false;
   }
 
   if ( !PL_strip_module(goal, &module, g) )
-    return FALSE;
+    return false;
   if ( !PL_get_functor(g, &fd) )
   { PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_callable, goal);
     if ( ex )
       *ex = exception_term;
 
     PL_reset_term_refs(g);
-    fail;
+    return false;
   }
 
   /* Quick check for sig_atomic(true) resulting from the call_cleanup
    * series
    */
   if ( fd == FUNCTOR_true0 )
-    return TRUE;
+    return true;
 
   proc = resolveProcedure(fd, module);
 
   { int arity = arityFunctor(fd);
     term_t args;
     qid_t qid = 0;
-    int n, rval;
+    int n;
+    bool rval;
 
     if ( (args = PL_new_term_refs(arity)) )
     { for(n=0; n<arity; n++)
@@ -498,7 +552,7 @@ callProlog(Module module, term_t goal, int flags, term_t *ex)
 	*ex = ex2;
 	reset = g;
       }
-      rval = FALSE;
+      rval = false;
     }
 
     if ( !reset )
@@ -510,24 +564,25 @@ callProlog(Module module, term_t goal, int flags, term_t *ex)
 }
 
 
-int
+bool
 abortProlog(void)
 { GET_LD
   fid_t fid;
   term_t ex;
-  int rc = FALSE;
+  bool rc = false;
 
-  pl_notrace();
+  tracemode(false, NULL);
+  debugmode(DBG_OFF, NULL);
   Sreset();				/* Discard pending IO */
 
-  LD->exception.processing = TRUE;	/* allow using spare stack */
+  LD->exception.processing = true;	/* allow using spare stack */
 
   if ( (fid = PL_open_foreign_frame()) &&
-       (ex = PL_new_term_ref()) )
+       (ex = PL_new_term_ref()) &&
+       PL_unify_term(ex, PL_FUNCTOR, FUNCTOR_unwind1, PL_ATOM, ATOM_abort) )
   { clearSegStack(&LD->cycle.lstack);	/* can do no harm */
     clearSegStack(&LD->cycle.vstack);
 
-    PL_put_atom(ex, ATOM_aborted);
     rc = PL_raise_exception(ex);
     PL_close_foreign_frame(fid);
   }
@@ -545,6 +600,39 @@ PRED_IMPL("abort", 0, abort, 0)
 { return abortProlog();
 }
 
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Raise  unwind(halt(Code))   and  return  `true`.   May   fail  without
+exception if we are in an environment where this won't work or with an
+exception if we cannot allocate the exception.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+bool
+raise_halt_exception(DECL_LD int status, bool force)
+{ int code = (status&PL_CLEANUP_STATUS_MASK);
+
+  pl_notrace();
+  LD->exception.processing = true;	/* allow using spare stack */
+
+  if ( force || handles_unwind(NULL, PL_Q_EXCEPT_HALT) )
+  { fid_t fid;
+    term_t ex;
+
+    DEBUG(MSG_CLEANUP, Sdprintf("Halt using exception\n"));
+    if ( (fid=PL_open_foreign_frame()) &&
+	 (ex=PL_new_term_ref()) &&
+	 PL_unify_term(ex, PL_FUNCTOR, FUNCTOR_unwind1,
+			     PL_FUNCTOR, FUNCTOR_halt1,
+			       PL_INT, code) )
+    { PL_raise_exception(ex);
+      PL_close_foreign_frame(fid);
+      return true;
+    }
+    if ( fid )
+      PL_discard_foreign_frame(fid);
+  }
+
+  return false;
+}
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 prologToplevel is called with various goals
@@ -567,13 +655,13 @@ prologToplevel(atom_t goal)
   if ( goal == ATOM_dquery_loop ||
        goal == ATOM_dtoplevel )
   { LD->break_level++;
-    loop = TRUE;
+    loop = true;
   } else
-    loop = FALSE;
+    loop = false;
   rc = query_loop(goal, loop);
   LD->break_level = old_level;
 
-  return rc == TRUE;
+  return rc == true;
 }
 
 
@@ -592,7 +680,7 @@ setAccessLevel(access_level_t accept)
 Cut (!) as called via the  meta-call  mechanism has no effect.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-word
+foreign_t
 pl_metacut(void)
 { succeed;
 }
@@ -609,7 +697,7 @@ trap_gdb()
 static
 PRED_IMPL("$trap_gdb", 0, trap_gdb, 0)
 { trap_gdb();
-  return TRUE;
+  return true;
 }
 
 #if O_DEBUG || defined(O_MAINTENANCE)
@@ -698,21 +786,18 @@ check_data(DECL_LD Word p, chk_data *context)
 last_arg:
 
 #ifndef O_ATTVAR
-#define isAttVar(p) FALSE
+#define isAttVar(p) false
 #endif
 
   while(isRef(*p))
   { assert(!is_marked(p));
+    p2 = unRef(*p);
     if ( storage(*p) == STG_LOCAL ) /* PushPtr()/PopPtr() reference? */
     { for(int i=0; i<LD->tmp.top; i++)
       { if ( valTermRef(LD->tmp.h[i]) == p )
-	{ p2 = unRefLG(*p);	    /* Yes */
 	  goto deref_ok;
-	}
       }
       printk(context, "Reference to local stack");
-    } else
-    { p2 = unRef(*p);
     }
   deref_ok:
     DEBUG(CHK_HIGHER_ADDRESS,
@@ -768,13 +853,12 @@ last_arg:
   { Word a = addressIndirect(*p);
 
     assert(!is_marked(p));
-
+    if ( (uintptr_t)a & (sizeof(word)-1) )
+      printk(context, "Indirect at %p is unaligned", a);
     if ( !onGlobal(a) )
       printk(context, "Indirect at %p not on global stack", a);
     if ( storage(*p) != STG_GLOBAL )
       printk(context, "Indirect data not on global");
-    if ( isBignum(*p) )
-      return key+(word) valBignum(*p);
     if ( isFloat(*p) )
       return key+(word) valFloat(*p);
     if ( isString(*p) )
@@ -897,16 +981,16 @@ checkData(Word p)
 
 #endif /* TEST */
 
-int
+bool
 PL_check_data(term_t data)
 {
 #ifdef HAVE_CHECK_DATA
   GET_LD
 
   (void)checkData(valTermRef(data));
-  return TRUE;
+  return true;
 #else
-  return FALSE;
+  return false;
 #endif
 }
 
@@ -937,9 +1021,9 @@ getAccessLevelMask(atom_t a, access_level_t *val)
   else if ( a == ATOM_system )
     *val = ACCESS_LEVEL_SYSTEM;
   else
-    return FALSE;
+    return false;
 
-  return TRUE;
+  return true;
 }
 
 

@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2017-2022, VU University Amsterdam
+    Copyright (c)  2017-2025, VU University Amsterdam
 			      CWI, Amsterdam
 			      SWI-Prolog Solutions b.v
     All rights reserved.
@@ -62,7 +62,7 @@ typedef struct trie_children_key
 
 typedef struct trie_children_hashed
 { tn_node_type	type;			/* TN_HASHED */
-  Table		table;			/* Key --> child map */
+  TableWP	table;			/* Key --> child map */
   unsigned	var_mask;		/* Variables in this place */
   trie_children_key *old_single;	/* Old single node */
 } trie_children_hashed;
@@ -102,6 +102,7 @@ typedef struct trie_node
 #define TRIE_COMPLETE	0x0008		/* Answer trie is complete */
 #define TRIE_ABOLISH_ON_COMPLETE 0x0010	/* Abolish the table when completed */
 #define TRIE_ISTRACKED  0x0020		/* Trie changes are tracked */
+#define TRIE_ISTABLE	0x0040		/* Trie is an answer table */
 
 typedef struct trie
 { atom_t		symbol;		/* The associated symbol */
@@ -113,7 +114,7 @@ typedef struct trie
 #ifdef O_PLMT
   int			tid;		/* thread id doing completion or re-evaluation */
 #endif
-  trie_node	        root;		/* the root node */
+  trie_node		root;		/* the root node */
   indirect_table       *indirects;	/* indirect values */
   void		      (*release_node)(struct trie *, trie_node *);
   alloc_pool	       *alloc_pool;	/* Node allocation pool */
@@ -180,33 +181,33 @@ void	prune_node(trie *trie, trie_node *n);
 void	prune_trie(trie *trie, trie_node *root,
 		   void (*free)(trie_node *node, void *ctx), void *ctx);
 trie *	get_trie_from_node(trie_node *node);
-int	is_ground_trie_node(trie_node *node);
-int	is_leaf_trie_node(trie_node *n);
-int	get_trie(term_t t, trie **tp);
-int	get_trie_noex(term_t t, trie **tp);
-int	unify_trie_term(trie_node *node, trie_node **parent,
+bool	is_ground_trie_node(trie_node *node);
+bool	is_leaf_trie_node(trie_node *n);
+bool	get_trie(term_t t, trie **tp);
+bool	get_trie_noex(term_t t, trie **tp);
+bool	unify_trie_term(trie_node *node, trie_node **parent,
 			term_t term);
 int	trie_lookup_abstract(trie *trie,
 			     trie_node *root, trie_node **nodep, Word k,
-			     int add, size_abstract *abstract,
+			     bool add, size_abstract *abstract,
 			     TmpBuffer vars);
-int	trie_error(int rc, term_t culprit);
-int	trie_trie_error(int rc, trie *trie);
+bool	trie_error(int rc, term_t culprit);
+bool	trie_trie_error(int rc, trie *trie);
 atom_t	trie_symbol(trie *trie);
 trie *	symbol_trie(atom_t symbol);
-int	put_trie_value(term_t t, trie_node *node);
-int	set_trie_value(trie *trie, trie_node *node, term_t value);
-int	set_trie_value_word(trie *trie, trie_node *node, word val);
+bool	put_trie_value(term_t t, trie_node *node);
+bool	set_trie_value(trie *trie, trie_node *node, term_t value);
+bool	set_trie_value_word(trie *trie, trie_node *node, word val);
 foreign_t trie_gen_raw(
 	      trie *trie, trie_node *root,
 	      term_t Key, term_t Value,
 	      term_t Data,
-	      int LDFUNCP (*unify_data)(term_t, trie_node*, void*),
+	      bool LDFUNCP (*unify_data)(term_t, trie_node*, void*),
 	      void *ctx, control_t PL__ctx);
 foreign_t clear_trie_gen_state(void *ctx);
 foreign_t trie_gen(term_t Trie, term_t Root, term_t Key, term_t Value,
 		   term_t Data,
-		   int LDFUNCP (*unify_data)(term_t, trie_node*, void*),
+		   bool LDFUNCP (*unify_data)(term_t, trie_node*, void*),
 		   void *ctx, control_t PL__ctx);
 void *	map_trie_node(trie_node *n,
 		      void* (*map)(trie_node *n, void *ctx), void *ctx);

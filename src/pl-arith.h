@@ -3,10 +3,10 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2023, University of Amsterdam
-                         VU University Amsterdam
-			 CWI, Amsterdam
-			 SWI-Prolog Solutions b.v.
+    Copyright (c)  2023-2025, University of Amsterdam
+                              VU University Amsterdam
+			      CWI, Amsterdam
+			      SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -64,26 +64,26 @@
 
 int		ar_compare(Number n1, Number n2, int what);
 int		ar_compare_eq(Number n1, Number n2);
-int		pl_ar_add(Number n1, Number n2, Number r);
-int		ar_mul(Number n1, Number n2, Number r);
+bool		pl_ar_add(Number n1, Number n2, Number r);
+bool		ar_mul(Number n1, Number n2, Number r);
 word		pl_current_arithmetic_function(term_t f, control_t h);
 void		initArith(void);
 void		cleanupArith(void);
 int		indexArithFunction(functor_t fdef);
 functor_t	functorArithFunction(unsigned int n);
 bool		ar_func_n(int findex, int argc);
-int		ar_add_si(Number n, long add);
-int		valueExpression(term_t p, Number n);
-int		evalExpression(term_t p, Number n);
-int		toIntegerNumber(Number n, int flags);
+bool		ar_add_si(Number n, long add);
+bool		valueExpression(term_t p, Number n);
+bool		evalExpression(term_t p, Number n);
+bool		toIntegerNumber(Number n, int flags);
 int		arithChar(Word p);
 int		getCharExpression(Word p, Number r);
 Number		growArithStack(void);
 void		freeArithLocalData(PL_local_data_t *ld);
 int		ar_sign_i(Number n1);
 int		ar_signbit(Number n1);
-int		check_float(Number n);
-int		ar_rdiv_mpz(Number n1, Number n2, Number r);
+bool		check_float(Number n);
+bool		ar_rdiv_mpz(Number n1, Number n2, Number r);
 int		PL_eval_expression_to_int64_ex(term_t t, int64_t *val);
 int		is_arith_flag(atom_t k);
 int		get_arith_flag(term_t val, atom_t k);
@@ -99,6 +99,16 @@ double		PL_nan(void);
 		 /*******************************
 		 *	 INLINE FUNCTIONS	*
 		 *******************************/
+
+static inline bool
+isIntegerNumber(const Number n)
+{
+#if O_BIGNUM
+  return n->type <= V_MPZ;
+#else
+  return n->type <= V_INTEGER;
+#endif
+}
 
 #define allocArithStack(_) LDFUNC(allocArithStack, _)
 static inline Number
@@ -151,15 +161,11 @@ static inline int
 isMPQNum(DECL_LD word w)
 { if ( tagex(w) == (TAG_INTEGER|STG_GLOBAL) )
   { Word p = addressIndirect(w);
-    size_t wsize = wsizeofInd(*p);
-
-    if ( wsize == WORDS_PER_INT64 )
-      return FALSE;
 
     return p[1]&MP_RAT_MASK;
   }
 
-  return FALSE;
+  return false;
 }
 
 #define isMPZNum(w) LDFUNC(isMPZNum, w)
@@ -167,15 +173,11 @@ static inline int
 isMPZNum(DECL_LD word w)
 { if ( tagex(w) == (TAG_INTEGER|STG_GLOBAL) )
   { Word p = addressIndirect(w);
-    size_t wsize = wsizeofInd(*p);
-
-    if ( wsize == WORDS_PER_INT64 )
-      return FALSE;
 
     return !(p[1]&MP_RAT_MASK);
   }
 
-  return FALSE;
+  return false;
 }
 
 #endif /*PL_ARITH_H*/

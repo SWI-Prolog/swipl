@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org/projects/xpce/
-    Copyright (c)  2006-2023, University of Amsterdam
+    Copyright (c)  2006-2025, University of Amsterdam
                               VU University Amsterdam
                               CWI, Amsterdam
                               SWI-Prolog Solutions b.v.
@@ -74,7 +74,6 @@
 :- autoload(library(dialect),[expects_dialect/1]).
 :- autoload(library(error),[must_be/2,instantiation_error/1]).
 :- autoload(library(lists),[member/2,append/2,append/3,select/3]).
-:- autoload(library(modules),[in_temporary_module/3]).
 :- autoload(library(operators),[push_op/3]).
 :- autoload(library(option),[option/2,option/3]).
 :- autoload(library(ordsets),[ord_intersect/2,ord_intersection/3]).
@@ -83,7 +82,8 @@
 	    [ prolog_canonical_source/2,
 	      prolog_open_source/2,
 	      prolog_close_source/1,
-	      prolog_read_source_term/4
+	      prolog_read_source_term/4,
+              prolog_file_directives/3
 	    ]).
 
 :- if(exists_source(library(shlib))).
@@ -102,7 +102,8 @@
                        module(atom),
                        register_called(oneof([all,non_iso,non_built_in])),
                        comments(oneof([store,collect,ignore])),
-                       process_include(boolean)
+                       process_include(boolean),
+                       stream(stream)
                      ]).
 
 
@@ -220,13 +221,11 @@ module defined by `Source`.
     prolog:meta_goal/2,             % +Goal, -Pattern
     prolog:hook/1,                  % +Callable
     prolog:generated_predicate/1,   % :PI
-    prolog:no_autoload_module/1.    % Module is not suitable for autoloading.
+    prolog:no_autoload_module/1,    % Module is not suitable for autoloading.
+    prolog:xref_source_time/2.      % +Source, =Modified
 
 :- meta_predicate
     prolog:generated_predicate(:).
-
-:- dynamic
-    meta_goal/2.
 
 :- meta_predicate
     process_predicates(2, +, +).
@@ -239,7 +238,7 @@ module defined by `Source`.
 %
 %   True when the cross-referencer should   not  include Callable as
 %   being   called.   This   is    determined     by    the   option
-%   =register_called=.
+%   `register_called`.
 
 hide_called(Callable, Src) :-
     xoption(Src, register_called(Which)),
@@ -291,23 +290,25 @@ verbose(Src) :-
 %   done and the source is not modified.  Checking for modifications
 %   is only done for files.  Options processed:
 %
-%     * silent(+Boolean)
-%     If =true= (default =false=), emit warning messages.
-%     * module(+Module)
-%     Define the initial context module to work in.
-%     * register_called(+Which)
-%     Determines which calls are registerd.  Which is one of
-%     =all=, =non_iso= or =non_built_in=.
-%     * comments(+CommentHandling)
-%     How to handle comments.  If =store=, comments are stored into
-%     the database as if the file was compiled. If =collect=,
-%     comments are entered to the xref database and made available
-%     through xref_mode/2 and xref_comment/4.  If =ignore=,
-%     comments are simply ignored. Default is to =collect= comments.
-%     * process_include(+Boolean)
-%     Process the content of included files (default is `true`).
+%     - silent(+Boolean)
+%       If `true` (default `false`), emit warning messages.
+%     - module(+Module)
+%       Define the initial context module to work in.
+%     - register_called(+Which)
+%       Determines which calls are registerd.  Which is one of
+%       `all`, `non_iso` or `non_built_in` (default).
+%     - comments(+CommentHandling)
+%       How to handle comments. If `store`, comments are stored into the
+%       database as if the file was compiled. If `collect`, comments are
+%       entered  to  the  xref  database   and  made  available  through
+%       xref_mode/2 and xref_comment/4. If `ignore`, comments are simply
+%       ignored. Default is to `collect` comments.
+%     - process_include(+Boolean)
+%       Process the content of included files (default is `true`).
+%     - stream(+Stream)
+%       Process the input from Stream rather than opening Source.
 %
-%   @param Source   File specification or XPCE buffer
+%   @arg Source   File specification or XPCE buffer
 
 xref_source(Source) :-
     xref_source(Source, []).
@@ -351,11 +352,16 @@ is_global_url(File) :-
     atom_codes(Scheme, Codes),
     maplist(between(0'a, 0'z), Codes).
 
-xref_setup(Src, In, Options, state(In, Dialect, Xref, [SRef|HRefs])) :-
+xref_setup(Src, In, Options, state(CleanIn, Dialect, Xref, [SRef|HRefs])) :-
     maplist(assert_option(Src), Options),
     assert_default_options(Src),
     current_prolog_flag(emulated_dialect, Dialect),
-    prolog_open_source(Src, In),
+    (   option(stream(Stream), Options)
+    ->  In = Stream,
+        CleanIn = true
+    ;   prolog_open_source(Src, In),
+        CleanIn = prolog_close_source(In)
+    ),
     set_initial_mode(In, Options),
     asserta(xref_input(Src, In), SRef),
     set_xref(Xref),
@@ -395,6 +401,7 @@ assert_option(Src, process_include(Boolean)) :-
     !,
     must_be(boolean, Boolean),
     assert(xoption(Src, process_include(Boolean))).
+assert_option(_, _).
 
 assert_default_options(Src) :-
     (   xref_option_default(Opt),
@@ -416,8 +423,8 @@ xref_option_default(process_include(true)).
 %
 %   Restore processing state according to the saved State.
 
-xref_cleanup(state(In, Dialect, Xref, Refs)) :-
-    prolog_close_source(In),
+xref_cleanup(state(CleanIn, Dialect, Xref, Refs)) :-
+    call(CleanIn),
     set_prolog_flag(emulated_dialect, Dialect),
     set_prolog_flag(xref, Xref),
     maplist(erase, Refs).
@@ -783,6 +790,7 @@ collect(Src, File, In, Options) :-
     ;   CommentOptions = [ comments(Comments) ]
     ),
     repeat,
+        E = error(_,_),
         catch(prolog_read_source_term(
                   In, Term, Expanded,
                   [ term_position(TermPos)
@@ -800,9 +808,6 @@ collect(Src, File, In, Options) :-
     !,
     set_prolog_flag(xref_store_comments, OldStore).
 
-report_syntax_error(E, _, _) :-
-    fatal_error(E),
-    throw(E).
 report_syntax_error(_, _, Options) :-
     option(silent(true), Options),
     !,
@@ -813,9 +818,6 @@ report_syntax_error(E, Src, _Options) :-
     ;   true
     ),
     fail.
-
-fatal_error(time_limit_exceeded).
-fatal_error(error(resource_error(_),_)).
 
 %!  update_condition(+Term) is det.
 %
@@ -1130,7 +1132,7 @@ process_directive(style_check(X), _) :-
     style_check(X).
 process_directive(encoding(Enc), _) :-
     (   xref_input_stream(Stream)
-    ->  catch(set_stream(Stream, encoding(Enc)), _, true)
+    ->  catch(set_stream(Stream, encoding(Enc)), error(_,_), true)
     ;   true                        % can this happen?
     ).
 process_directive(pce_expansion:push_compile_operators, _) :-
@@ -1182,10 +1184,12 @@ process_meta_head(Src, Decl) :-         % swapped arguments for maplist
     (   (   prolog:meta_goal(Head, _)
         ;   prolog:called_by(Head, _, _, _)
         ;   prolog:called_by(Head, _)
-        ;   meta_goal(Head, _)
+        ;   meta_goal(Head, Meta, _Src)
         )
     ->  true
-    ;   assert(meta_goal(Head, Meta, Src))
+    ;   warn_late_meta_predicate(Decl, Src),
+        retractall(meta_goal(Head, _, Src)),
+        assert(meta_goal(Head, Meta, Src))
     ).
 
 meta_args(I, Arity, _, _, []) :-
@@ -1220,6 +1224,13 @@ meta_args(I, Arity, Decl, Head, [H+A|T]) :-             % I --> H+I
 meta_args(I, Arity, Decl, Head, Meta) :-
     I2 is I + 1,
     meta_args(I2, Arity, Decl, Head, Meta).
+
+
+warn_late_meta_predicate(Decl, Src) :-
+    xref_called(Src, Decl, By),
+    !,
+    print_message(warning, meta_predicate_after_call(Decl, By)).
+warn_late_meta_predicate(_, _).
 
 
               /********************************
@@ -1404,7 +1415,7 @@ xref_meta(in_pce_thread(G),     [G]).
 xref_meta(G, Meta) :-                   % call user extensions
     prolog:meta_goal(G, Meta).
 xref_meta(G, Meta) :-                   % Generated from :- meta_predicate
-    meta_goal(G, Meta).
+    meta_goal(G, Meta, _Src).
 
 setof_goal(EG, G) :-
     var(EG), !, G = EG.
@@ -1447,8 +1458,11 @@ hook(attr_unify_hook(_,_)).
 hook(attribute_goals(_,_,_)).
 hook(goal_expansion(_,_)).
 hook(term_expansion(_,_)).
+hook(goal_expansion(_,_,_,_)).
+hook(term_expansion(_,_,_,_)).
 hook(resource(_,_,_)).
 hook('$pred_option'(_,_,_,_)).
+hook('$nowarn_autoload'(_,_)).
 
 hook(emacs_prolog_colours:goal_classification(_,_)).
 hook(emacs_prolog_colours:goal_colours(_,_)).
@@ -1492,6 +1506,7 @@ hook(user:expand_query(_,_,_,_)).
 hook(user:file_search_path(_,_)).
 hook(user:library_directory(_)).
 hook(user:message_hook(_,_,_)).
+hook(prolog:message_action(_,_)).
 hook(user:portray(_)).
 hook(user:prolog_clause_name(_,_)).
 hook(user:prolog_list_goal(_)).
@@ -1936,17 +1951,20 @@ process_pce_import(op(P,T,N), Src, _, _) :-
 
 process_use_module2(File, Import, Src, Reexport) :-
     load_module_if_needed(File),
-    (   xref_source_file(File, Path, Src)
-    ->  assert(uses_file(File, Src, Path)),
-        (   catch(public_list(Path, _, Meta, Export, _Public, []), _, fail)
-        ->  assert_import(Src, Import, Export, Path, Reexport),
-            forall((  member(Head, Meta),
-                      imported(Head, _, Path)
-                   ),
-                   process_meta_head(Src, Head))
-        ;   true
-        )
-    ;   assert(uses_file(File, Src, '<not_found>'))
+    (   catch(xref_public_list(File, Src,
+                               [ path(Path),
+                                 exports(Export),
+                                 meta(Meta)
+                               ]),
+              error(_,_),
+              fail)
+    ->  assertz(uses_file(File, Src, Path)),
+        assert_import(Src, Import, Export, Path, Reexport),
+        forall((  member(Head, Meta),
+                  imported(Head, _, Path)
+               ),
+               process_meta_head(Src, Head))
+    ;   assertz(uses_file(File, Src, '<not_found>'))
     ).
 
 
@@ -2011,40 +2029,45 @@ requires(PI, Src) :-
 
 %!  xref_public_list(+Spec, +Source, +Options) is semidet.
 %
-%   Find meta-information about File. This predicate reads all terms
-%   upto the first term that is not  a directive. It uses the module
-%   and  meta_predicate  directives  to   assemble  the  information
-%   in Options.  Options processed:
+%   Find meta-information about File.  If  Spec   resolves  to  a Prolog
+%   source file, this predicate reads all terms upto the first term that
+%   is not a directive. If Spec resolves to a SWI-Prolog `.qlf` file, it
+%   extracts part of the information from  the   QLF  file.  It uses the
+%   module and meta_predicate directives to  assemble the information in
+%   Options. Options processed:
 %
-%     * path(-Path)
-%     Path is the full path name of the referenced file.
-%     * module(-Module)
-%     Module is the module defines in Spec.
-%     * exports(-Exports)
-%     Exports is a list of predicate indicators and operators
-%     collected from the module/2 term and reexport declarations.
-%     * public(-Public)
-%     Public declarations of the file.
-%     * meta(-Meta)
-%     Meta is a list of heads as they appear in meta_predicate/1
-%     declarations.
-%     * silent(+Boolean)
-%     Do not print any messages or raise exceptions on errors.
+%     - path(-Path)
+%       Path is the full path name of the referenced file.  If Spec
+%       resolves to a .qlf file, Path is the name of the embedded
+%       Prolog file.
+%     - module(-Module)
+%       Module is the module defines in Spec.
+%     - exports(-Exports)
+%       Exports is a list of predicate indicators and operators
+%       collected from the module/2 term and reexport declarations.
+%     - public(-Public)
+%       Public declarations of the file.  Currently always `[]` for
+%       .qlf files.
+%     - meta(-Meta)
+%       Meta is a list of heads as they appear in meta_predicate/1
+%       declarations. Currently always `[]` for .qlf files.
+%     - silent(+Boolean)
+%       Do not print any messages or raise exceptions on errors.
 %
 %   The information collected by this predicate   is  cached. The cached
 %   data is considered valid as long  as   the  modification time of the
 %   file does not change.
 %
-%   @param Source is the file from which Spec is referenced.
+%   @arg Source is the file from which Spec is referenced.
 
 xref_public_list(File, Src, Options) :-
-    option(path(Path), Options, _),
+    option(path(Source), Options, _),
     option(module(Module), Options, _),
     option(exports(Exports), Options, _),
     option(public(Public), Options, _),
     option(meta(Meta), Options, _),
     xref_source_file(File, Path, Src, Options),
-    public_list(Path, Module, Meta, Exports, Public, Options).
+    public_list(Path, Source, Module, Meta, Exports, Public, Options).
 
 %!  xref_public_list(+File, -Path, -Export, +Src) is semidet.
 %!  xref_public_list(+File, -Path, -Module, -Export, -Meta, +Src) is semidet.
@@ -2057,26 +2080,27 @@ xref_public_list(File, Src, Options) :-
 %
 %   These predicates fail if File is not a module-file.
 %
-%   @param  Path is the canonical path to File
-%   @param  Module is the module defined in Path
-%   @param  Export is a list of predicate indicators.
-%   @param  Meta is a list of heads as they appear in
-%           meta_predicate/1 declarations.
-%   @param  Src is the place from which File is referenced.
+%   @arg  Path is the canonical path to File
+%   @arg  Module is the module defined in Path
+%   @arg  Export is a list of predicate indicators.
+%   @arg  Meta is a list of heads as they appear in
+%         meta_predicate/1 declarations.
+%   @arg  Src is the place from which File is referenced.
 %   @deprecated New code should use xref_public_list/3, which
-%           unifies all variations using an option list.
+%         unifies all variations using an option list.
 
-xref_public_list(File, Path, Export, Src) :-
+xref_public_list(File, Source, Export, Src) :-
     xref_source_file(File, Path, Src),
-    public_list(Path, _, _, Export, _, []).
-xref_public_list(File, Path, Module, Export, Meta, Src) :-
+    public_list(Path, Source, _, _, Export, _, []).
+xref_public_list(File, Source, Module, Export, Meta, Src) :-
     xref_source_file(File, Path, Src),
-    public_list(Path, Module, Meta, Export, _, []).
-xref_public_list(File, Path, Module, Export, Public, Meta, Src) :-
+    public_list(Path, Source, Module, Meta, Export, _, []).
+xref_public_list(File, Source, Module, Export, Public, Meta, Src) :-
     xref_source_file(File, Path, Src),
-    public_list(Path, Module, Meta, Export, Public, []).
+    public_list(Path, Source, Module, Meta, Export, Public, []).
 
-%!  public_list(+Path, -Module, -Meta, -Export, -Public, +Options)
+%!  public_list(+Path, -Source, -Module, -Meta, -Export, -Public,
+%!              +Options) is det.
 %
 %   Read the public information for Path.  Options supported are:
 %
@@ -2084,106 +2108,47 @@ xref_public_list(File, Path, Module, Export, Public, Meta, Src) :-
 %       If `true`, ignore (syntax) errors.  If not specified the default
 %       is inherited from xref_source/2.
 
-:- dynamic  public_list_cache/6.
-:- volatile public_list_cache/6.
+:- dynamic  public_list_cache/7.
+:- volatile public_list_cache/7.
 
-public_list(Path, Module, Meta, Export, Public, _Options) :-
-    public_list_cache(Path, Modified,
+public_list(Path, Source, Module, Meta, Export, Public, _Options) :-
+    public_list_cache(Path, Source, Modified,
                       Module0, Meta0, Export0, Public0),
     time_file(Path, ModifiedNow),
     (   abs(Modified-ModifiedNow) < 0.0001
     ->  !,
         t(Module,Meta,Export,Public) = t(Module0,Meta0,Export0,Public0)
-    ;   retractall(public_list_cache(Path, _, _, _, _, _)),
+    ;   retractall(public_list_cache(Path, _, _, _, _, _, _)),
         fail
     ).
-public_list(Path, Module, Meta, Export, Public, Options) :-
-    public_list_nc(Path, Module0, Meta0, Export0, Public0, Options),
+public_list(Path, Source, Module, Meta, Export, Public, Options) :-
+    public_list_nc(Path, Source, Module0, Meta0, Export0, Public0, Options),
     (   Error = error(_,_),
         catch(time_file(Path, Modified), Error, fail)
-    ->  asserta(public_list_cache(Path, Modified,
+    ->  asserta(public_list_cache(Path, Source, Modified,
                                   Module0, Meta0, Export0, Public0))
     ;   true
     ),
     t(Module,Meta,Export,Public) = t(Module0,Meta0,Export0,Public0).
 
-public_list_nc(Path, Module, Meta, Export, Public, Options) :-
-    in_temporary_module(
-        TempModule,
-        true,
-        public_list_diff(TempModule, Path, Module,
-                         Meta, [], Export, [], Public, [], Options)).
-
-
-public_list_diff(TempModule,
-                 Path, Module, Meta, MT, Export, Rest, Public, PT, Options) :-
-    setup_call_cleanup(
-        public_list_setup(TempModule, Path, In, State),
-        phrase(read_directives(In, Options, [true]), Directives),
-        public_list_cleanup(In, State)),
-    public_list(Directives, Path, Module, Meta, MT, Export, Rest, Public, PT).
-
-public_list_setup(TempModule, Path, In, state(OldM, OldXref)) :-
-    prolog_open_source(Path, In),
-    '$set_source_module'(OldM, TempModule),
-    set_xref(OldXref).
-
-public_list_cleanup(In, state(OldM, OldXref)) :-
-    '$set_source_module'(OldM),
-    set_prolog_flag(xref, OldXref),
-    prolog_close_source(In).
-
-
-read_directives(In, Options, State) -->
-    {  repeat,
-       catch(prolog_read_source_term(In, Term, Expanded,
-                                     [ process_comment(true),
-                                       syntax_errors(error)
-                                     ]),
-             E, report_syntax_error(E, -, Options))
-    -> nonvar(Term),
-       Term = (:-_)
-    },
+public_list_nc(Path, Source, Module, Meta, Export, Public, _Options) :-
+    public_list_from_index(Path, Module, Meta, Export, Public),
     !,
-    terms(Expanded, State, State1),
-    read_directives(In, Options, State1).
-read_directives(_, _, _) --> [].
-
-terms(Var, State, State) --> { var(Var) }, !.
-terms([H|T], State0, State) -->
+    qlf_pl_file(Path, Source).
+public_list_nc(Path, Source, Module, [], Export, [], _Options) :-
+    is_qlf_file(Path),
     !,
-    terms(H, State0, State1),
-    terms(T, State1, State).
-terms((:-if(Cond)), State0, [True|State0]) -->
+    '$qlf_module'(Path, Info),
+    _{module:Module, exports:Export, file:Source} :< Info.
+public_list_nc(Path, Path, Module, Meta, Export, Public, Options) :-
+    exists_file(Path),
     !,
-    { eval_cond(Cond, True) }.
-terms((:-elif(Cond)), [True0|State], [True|State]) -->
-    !,
-    { eval_cond(Cond, True1),
-      elif(True0, True1, True)
-    }.
-terms((:-else), [True0|State], [True|State]) -->
-    !,
-    { negate(True0, True) }.
-terms((:-endif), [_|State], State) -->  !.
-terms(H, State, State) -->
-    (   {State = [true|_]}
-    ->  [H]
-    ;   []
-    ).
-
-eval_cond(Cond, true) :-
-    catch(Cond, _, fail),
-    !.
-eval_cond(_, false).
-
-elif(true,  _,    else_false) :- !.
-elif(false, true, true) :- !.
-elif(True,  _,    True).
-
-negate(true,       false).
-negate(false,      true).
-negate(else_false, else_false).
+    prolog_file_directives(Path, Directives, Options),
+    public_list(Directives, Path, Module, Meta, [], Export, [], Public, []).
+public_list_nc(Path, Path, Module, [], Export, [], _Options) :-
+    qlf_pl_file(QlfFile, Path),
+    '$qlf_module'(QlfFile, Info),
+    _{module:Module, exports:Export} :< Info.
 
 public_list([(:- module(Module, Export0))|Decls], Path,
             Module, Meta, MT, Export, Rest, Public, PT) :-
@@ -2222,14 +2187,14 @@ reexport_files([], _, Meta, Meta, Export, Export, Public, Public) :- !.
 reexport_files([H|T], Src, Meta, MT, Export, ET, Public, PT) :-
     !,
     xref_source_file(H, Path, Src),
-    public_list(Path, _Module, Meta0, Export0, Public0, []),
+    public_list(Path, _Source, _Module, Meta0, Export0, Public0, []),
     append(Meta0, MT1, Meta),
     append(Export0, ET1, Export),
     append(Public0, PT1, Public),
     reexport_files(T, Src, MT1, MT, ET1, ET, PT1, PT).
 reexport_files(Spec, Src, Meta, MT, Export, ET, Public, PT) :-
     xref_source_file(Spec, Path, Src),
-    public_list(Path, _Module, Meta0, Export0, Public0, []),
+    public_list(Path, _Source, _Module, Meta0, Export0, Public0, []),
     append(Meta0, MT, Meta),
     append(Export0, ET, Export),
     append(Public0, PT, Public).
@@ -2308,6 +2273,69 @@ public_decls((A,B)) -->
     public_decls(B).
 public_decls(A) -->
     [A].
+
+%!  public_list_from_index(+Path, -Module, -Meta, -Exports, -Public) is semidet.
+%
+%   Read the exports for  Path  from  the   INDEX.pl  file  in  the same
+%   directory.
+
+public_list_from_index(Path, Module, Meta, Export, Public) :-
+    file_name_extension(BasePath, _Ext, Path),
+    file_directory_name(BasePath, Dir),
+    atom_concat(Dir, '/INDEX.pl', IndexFile),
+    exists_file(IndexFile),
+    file_base_name(BasePath, Base),
+    setup_call_cleanup(
+        '$push_input_context'(autoload_index),
+        setup_call_cleanup(
+            open(IndexFile, read, In),
+            index_public_list(In, Base, Module, Meta, Export, Public),
+            close(In)),
+        '$pop_input_context').
+
+index_public_list(In, Base, Module, Meta, Export, Public) :-
+    read_term(In, Term, []),
+    index_public_list(Term, In, Base, Module, Meta, Export, Public).
+
+index_public_list(end_of_file, _In, _Base, _Module, [], [], []).
+index_public_list(index(op:Op, Module, Base), In, Base, Module, Meta, [Op|Export], Public) :-
+    !,
+    read_term(In, Term, []),
+    index_public_list(Term, In, Base, Module, Meta, Export, Public).
+index_public_list(index((public):Head, Module, Base), In, Base, Module, Meta, Export, [PI|Public]) :-
+    !,
+    pi_head(PI, Head),
+    read_term(In, Term, []),
+    index_public_list(Term, In, Base, Module, Meta, Export, Public).
+index_public_list(index(Head, Module, Base), In, Base, Module, Meta, [PI|Export], Public) :-
+    !,
+    pi_head(PI, Head),
+    (   meta_mode(Head)
+    ->  Meta = [Head|MetaT]
+    ;   Meta = MetaT
+    ),
+    read_term(In, Term, []),
+    index_public_list(Term, In, Base, Module, MetaT, Export, Public).
+index_public_list(index(Name, Arity, Module, Base), In, Base, Module, Meta, [Name/Arity|Export], Public) :-
+    !,
+    read_term(In, Term, []),
+    index_public_list(Term, In, Base, Module, Meta, Export, Public).
+index_public_list(_, In, Base, Module, Meta, Export, Public) :-
+    read_term(In, Term, []),
+    index_public_list(Term, In, Base, Module, Meta, Export, Public).
+
+meta_mode(H) :-
+    compound(H),
+    arg(_, H, A),
+    meta_arg(A),
+    !.
+
+meta_arg(I) :-
+    integer(I),
+    !.
+meta_arg(:).
+meta_arg(^).
+meta_arg(//).
 
                  /*******************************
                  *             INCLUDE          *
@@ -2955,11 +2983,53 @@ xref_source_file(Spec, _, Src, _Options) :-
 do_xref_source_file(Spec, File, Options) :-
     nonvar(Spec),
     option(file_type(Type), Options, prolog),
-    absolute_file_name(Spec, File,
+    absolute_file_name(Spec, File0,
                        [ file_type(Type),
                          access(read),
                          file_errors(fail)
                        ]),
+    !,
+    qlf_pl_file(File0, File).
+do_xref_source_file(Spec, File, Options) :-
+    atom(Spec), % handle absolute /file/to/source.pl without sources
+    file_name_extension(Base, Ext, Spec),
+    user:prolog_file_type(Ext, source),
+    option(file_type(prolog), Options, prolog),
+    absolute_file_name(Base, File0,
+                       [ file_type(prolog),
+                         access(read),
+                         file_errors(fail)
+                       ]),
+    qlf_pl_file(File0, File).
+
+%!  qlf_pl_file(?QlfFile, ?PlFile) is semidet.
+
+qlf_pl_file(QlfFile, PlFile) :-
+    nonvar(QlfFile),
+    is_qlf_file(QlfFile),
+    !,
+    '$qlf_module'(QlfFile, Info),
+    #{file:PlFile} :< Info.
+qlf_pl_file(QlfFile, PlFile) :-
+    nonvar(PlFile),
+    !,
+    (   file_name_extension(Base, Ext, PlFile),
+        user:prolog_file_type(Ext, source)
+    ->  true
+    ),
+    (   user:prolog_file_type(QlfExt, qlf),
+        file_name_extension(Base, QlfExt, QlfFile),
+        exists_file(QlfFile)
+    ->  true
+    ),
+    '$qlf_module'(QlfFile, Info),
+    #{file:PlFile} :< Info,
+    !.
+qlf_pl_file(PlFile, PlFile).
+
+is_qlf_file(QlfFile) :-
+    file_name_extension(_, Ext, QlfFile),
+    user:prolog_file_type(Ext, qlf),
     !.
 
 %!  canonical_source(?Source, ?Src) is det.
@@ -3004,3 +3074,17 @@ rename_goal(Goal0, Name, Goal) :-
         compound_name_arity(Goal, Name, Arity)
     ;   Goal = Name
     ).
+
+
+                /*******************************
+                *           MESSAGES           *
+                *******************************/<
+
+:- multifile prolog:message//1.
+
+prolog:message(meta_predicate_after_call(Decl, By)) -->
+    { pi_head(ByPI, By) },
+    [ ansi(code, ':- meta_predicate(~p)', [Decl]),
+      ' declaration appears after call from '-[],
+      ansi(code, '~p', [ByPI])
+    ].

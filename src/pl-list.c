@@ -3,8 +3,9 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2020, University of Amsterdam
+    Copyright (c)  1985-2024, University of Amsterdam
                               VU University Amsterdam
+                              SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -46,7 +47,7 @@
 
 static
 PRED_IMPL("is_list", 1, is_list, 0)
-{ if ( lengthList(A1, FALSE) >= 0 )
+{ if ( lengthList(A1, false) >= 0 )
     succeed;
 
   fail;
@@ -71,7 +72,7 @@ PRED_IMPL("$length", 2, dlength, 0)
       if ( !hasGlobalSpace(len*3) )
       { int rc;
 
-	if ( (rc=ensureGlobalSpace(len*3, ALLOW_GC)) != TRUE )
+	if ( (rc=ensureGlobalSpace(len*3, ALLOW_GC)) != true )
 	  return raiseStackOverflow(rc);
       }
 
@@ -90,7 +91,7 @@ PRED_IMPL("$length", 2, dlength, 0)
     } else if ( len == 0 )
     { return PL_unify_nil(A1);
     } else
-    { return FALSE;
+    { return false;
     }
   } else if ( PL_is_integer(A2) )
   { number i;
@@ -99,7 +100,7 @@ PRED_IMPL("$length", 2, dlength, 0)
     deRef(p);
     get_integer(*p, &i);
     if ( ar_sign_i(&i) < 0 )
-      return FALSE;
+      return false;
 
     return outOfStack((Stack)&LD->stacks.global, STACK_OVERFLOW_RAISE);
   }
@@ -118,12 +119,12 @@ PRED_IMPL("$memberchk", 3, memberchk, 0)
   fid_t fid;
 
   if ( !(fid=PL_open_foreign_frame()) )
-    return FALSE;
+    return false;
 
   for(;;)
   { if ( ++done % 10000 == 0 )
     { if ( PL_handle_signals() < 0 )
-	return FALSE;
+	return false;
       if ( done > usedStack(global)/(sizeof(word)*2) )
 	return PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_list, A2);
     }
@@ -136,7 +137,7 @@ PRED_IMPL("$memberchk", 3, memberchk, 0)
     if ( !PL_unify_list(l, h, l) )
     { PL_close_foreign_frame(fid);
       PL_unify_nil_ex(l);
-      return FALSE;
+      return false;
     }
 
     if ( PL_unify(A1, h) )
@@ -215,27 +216,38 @@ typedef enum
     FREE	Frees a List_Record including its ITEM.
 */
 
+typedef union
+{ Word as_ptr;
+  word as_word;
+} m64_kv;
+
 typedef struct
-{ Word term;
-  Word key;
+{ m64_kv term;
+  m64_kv key;
 } ITEM;
 
 					/* TBD: handle CMP_ERROR */
 #ifndef COMPARE_KEY
-#define COMPARE_KEY(x,y) compareStandard((x)->key, (y)->key, FALSE)
+#define COMPARE_KEY(x,y) compareStandard((x)->key.as_ptr, (y)->key.as_ptr, false)
 #endif
 #ifndef FREE
+/* FREE() leaves the struct as three variables on the global stack */
 #define FREE(x) \
-	{ x->next = NULL; \
-	  x->item.term = NULL; \
-	  x->item.key = NULL; \
-	}
+  { setVar(x->next.as_word);	    \
+    setVar(x->item.term.as_word);   \
+    setVar(x->item.key.as_word);    \
+  }
 #endif
 
 typedef struct List_Record *list;
-struct List_Record {
-    list next;
-    ITEM item;
+typedef union
+{ list  as_ptr;
+  word  as_word;
+} m64_list;
+
+struct List_Record
+{ m64_list next;
+  ITEM     item;
 };
 
 #define NIL (list)0
@@ -259,16 +271,16 @@ nat_sort(list data, int remove_dups, sort_order order)
   while ((p = data) != NIL)
   { /* pick up a run from the front of data, setting */
     /* p = (pointer to beginning of run), data = (rest of data) */
-    if ((q = p->next) != NIL)
+    if ((q = p->next.as_ptr) != NIL)
     { compare(c, p, q);
 
-      data = q->next;
+      data = q->next.as_ptr;
       if (c > 0)
       { r = q, q = p, p = r;
-	p->next = q;
+	p->next.as_ptr = q;
       } else if (c == remove_dups)
       {	/* c < 0 or = 0, so c = 1 impossible */
-	p->next = q->next;
+	p->next.as_ptr = q->next.as_ptr;
 	FREE(q);
 	q = p;
       }
@@ -279,15 +291,15 @@ nat_sort(list data, int remove_dups, sort_order order)
 	if (c > 0)
 	  break;
 	if (c == remove_dups)
-	{ s = r->next;
+	{ s = r->next.as_ptr;
 	  FREE(r);
 	  r = s;
 	} else
-	{ q->next = r, q = r, r = r->next;
+	{ q->next.as_ptr = r, q = r, r = r->next.as_ptr;
 	}
       }
 
-      q->next = NIL;
+      q->next.as_ptr = NIL;
       data = r;
     } else
     { data = NIL;
@@ -303,18 +315,18 @@ nat_sort(list data, int remove_dups, sort_order order)
 	compare(c, q, p);
 
 	if (c <= 0)
-	{ r->next = q, r = q, q = q->next;
+	{ r->next.as_ptr = q, r = q, q = q->next.as_ptr;
 	  if (c == remove_dups)
-	  { s = p->next;
+	  { s = p->next.as_ptr;
 	    FREE(p);
 	    p = s;
 	  }
 	} else
-	{ r->next = p, r = p, p = p->next;
+	{ r->next.as_ptr = p, r = p, p = p->next.as_ptr;
 	}
       }
-      r->next = q ? q : p;
-      p = header.next;
+      r->next.as_ptr = q ? q : p;
+      p = header.next.as_ptr;
     }
 
 	 /* push the merged run onto the stack */
@@ -334,18 +346,18 @@ nat_sort(list data, int remove_dups, sort_order order)
       compare(c, q, p);
 
       if (c <= 0)
-      { r->next = q, r = q, q = q->next;
+      { r->next.as_ptr = q, r = q, q = q->next.as_ptr;
 	if (c == remove_dups)
-	{ s = p->next;
+	{ s = p->next.as_ptr;
 	  FREE(p);
 	  p = s;
 	}
       } else
-      { r->next = p, r = p, p = p->next;
+      { r->next.as_ptr = p, r = p, p = p->next.as_ptr;
       }
     }
-    r->next = q ? q : p;
-    p = header.next;
+    r->next.as_ptr = q ? q : p;
+    p = header.next.as_ptr;
   }
 
   return p;
@@ -376,15 +388,15 @@ extract_key(DECL_LD Word p1, int argc, const word *argv, int pair)
       { if ( termIsDict(*p1) )
 	{ Word vp;
 
-	  if ( (vp = dict_lookup_ptr(*p1, argv[0])) )
+	  if ( (vp = dict_lookup_ptr(*p1, argv[0], NULL)) )
 	  { p1 = vp;
 	    goto next;
 	  }
 	  existence = ATOM_key;
 	  goto err_exists;
 	} else if ( isInteger(argv[0]) )
-	{ int arity = arityTerm(*p1);
-	  int an = valInt(argv[0]);
+	{ size_t arity = arityTerm(*p1);
+	  sword an = valInt(argv[0]);
 
 	  if ( an <= arity )
 	  { p1 = argTermP(*p1, an-1);
@@ -428,7 +440,9 @@ typedef enum
   SORT_NOSORT
 } list_sort;
 
-#define prolog_list_to_sort_list(t, remove_dups, argc, argv, pair, lp, end) LDFUNC(prolog_list_to_sort_list, t, remove_dups, argc, argv, pair, lp, end)
+#define prolog_list_to_sort_list(t, remove_dups, argc, argv, pair, lp, end) \
+	LDFUNC(prolog_list_to_sort_list, t, remove_dups, argc, argv, pair, lp, end)
+
 static list_sort
 prolog_list_to_sort_list(DECL_LD term_t t,		/* input list */
 			 int remove_dups,	/* allow to be cyclic */
@@ -457,7 +471,7 @@ prolog_list_to_sort_list(DECL_LD term_t t,		/* input list */
     return SORT_NOSORT;
 
   if ( !hasGlobalSpace(len*3) )
-  { if ( (rc=ensureGlobalSpace(len*3, ALLOW_GC)) != TRUE )
+  { if ( (rc=ensureGlobalSpace(len*3, ALLOW_GC)) != true )
     { raiseStackOverflow(rc);
       return SORT_ERR;
     }
@@ -469,23 +483,23 @@ prolog_list_to_sort_list(DECL_LD term_t t,		/* input list */
 
   deRef(l);
   while(len-- > 0)
-  { p->item.term = HeadList(l);
-    deRef(p->item.term);
-    p->item.key = extract_key(p->item.term, argc, argv, pair);
+  { p->item.term.as_ptr = HeadList(l);
+    deRef(p->item.term.as_ptr);
+    p->item.key.as_ptr = extract_key(p->item.term.as_ptr, argc, argv, pair);
 
-    if ( unlikely(!p->item.key) )
+    if ( unlikely(!p->item.key.as_ptr) )
       return SORT_ERR;
 
     l = TailList(l);
     deRef(l);
     if ( len > 0 )
     { assert(isList(*l));
-      p->next = p+1;
+      p->next.as_ptr = p+1;
       p++;
     }
   }
 
-  p->next = NULL;
+  p->next.as_ptr = NULL;
   *end = (Word)(p+1);
 
   return SORT_SORT;
@@ -496,16 +510,17 @@ static void
 put_sort_list(term_t l, list sl)
 { GET_LD
 
+  IS_WORD_ALIGNED(sl);
   *valTermRef(l) = consPtr(sl, TAG_COMPOUND|STG_GLOBAL);
 
   for(;;)
-  { list n = sl->next;
+  { list n = sl->next.as_ptr;
     Word p = (Word)sl;
 
-    n = sl->next;
+    n = sl->next.as_ptr;
 					/* see also linkVal() */
-    p[1] = (needsRef(*sl->item.term) ? makeRefG(sl->item.term)
-				     : *sl->item.term);
+    p[1] = (needsRef(*sl->item.term.as_ptr) ? makeRefG(sl->item.term.as_ptr)
+					    : *sl->item.term.as_ptr);
     p[0] = FUNCTOR_dot2;
     if ( n )
     { p[2] = consPtr(n, TAG_COMPOUND|STG_GLOBAL);
@@ -518,7 +533,9 @@ put_sort_list(term_t l, list sl)
 }
 
 
-#define pl_nat_sort(in, out, remove_dups, order, argc, argv, pair) LDFUNC(pl_nat_sort, in, out, remove_dups, order, argc, argv, pair)
+#define pl_nat_sort(in, out, remove_dups, order, argc, argv, pair) \
+	LDFUNC(pl_nat_sort, in, out, remove_dups, order, argc, argv, pair)
+
 static int
 pl_nat_sort(DECL_LD term_t in, term_t out,
 	    int remove_dups, sort_order order,
@@ -527,16 +544,19 @@ pl_nat_sort(DECL_LD term_t in, term_t out,
   Word top = NULL;
 
   if ( !ensureLocalSpace(sizeof(word)) )
-    return FALSE;
+    return false;
+
+  static_assertion(sizeof(*l) == 3*sizeof(word));
 
   switch( prolog_list_to_sort_list(in, remove_dups,
 				   argc, argv, pair,
 				   &l, &top) )
   { case SORT_ERR:
-      return FALSE;
+      return false;
     case SORT_NIL:
       return PL_unify_nil(out);
     case SORT_NOSORT:
+      DEBUG(CHK_SECURE, checkStacks(NULL));
       return PL_unify(in, out);
     case SORT_SORT:
     default:
@@ -544,6 +564,7 @@ pl_nat_sort(DECL_LD term_t in, term_t out,
       l = nat_sort(l, remove_dups, order);
       put_sort_list(tmp, l);
       gTop = top;
+      DEBUG(CHK_SECURE, checkStacks(NULL));
 
       return PL_unify(out, tmp);
     }
@@ -556,8 +577,8 @@ PRED_IMPL("sort", 2, sort, PL_FA_ISO)
 { PRED_LD
 
   return pl_nat_sort(A1, A2,
-		     TRUE, SORT_ASC,
-		     0, NULL, FALSE);
+		     true, SORT_ASC,
+		     0, NULL, false);
 }
 
 
@@ -566,8 +587,8 @@ PRED_IMPL("msort", 2, msort, 0)
 { PRED_LD
 
   return pl_nat_sort(A1, A2,
-		     FALSE, SORT_ASC,
-		     0, NULL, FALSE);
+		     false, SORT_ASC,
+		     0, NULL, false);
 }
 
 
@@ -576,8 +597,8 @@ PRED_IMPL("keysort", 2, keysort, PL_FA_ISO)
 { PRED_LD
 
   return pl_nat_sort(A1, A2,
-		     FALSE, SORT_ASC,
-		     0, NULL, TRUE);
+		     false, SORT_ASC,
+		     0, NULL, true);
 }
 
 /** sort(+Key, +Order, +Random, -Sorted)
@@ -594,22 +615,22 @@ get_key_arg_ex(DECL_LD term_t t, word *k, int zero_ok)
 
   deRef(p);
   if ( isTaggedInt(*p) )
-  { intptr_t v = valInt(*p);
+  { intptr_t v = (intptr_t)valInt(*p);
 
     if ( v > 0 )
     { *k = *p;
-      return TRUE;
+      return true;
     }
     if ( v == 0 )
     { *k = *p;
       if ( zero_ok )
-	return TRUE;
+	return true;
     }
   }
 
   if ( isAtom(*p) )
   { *k = *p;
-    return TRUE;
+    return true;
   }
 
   if ( isInteger(*p) )
@@ -619,7 +640,7 @@ get_key_arg_ex(DECL_LD term_t t, word *k, int zero_ok)
     if ( ar_sign_i(&n) <= 0 )
       PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_not_less_than_one, t);
 
-    return FALSE;
+    return false;
   }
 
   return -1;
@@ -632,14 +653,14 @@ typedef struct order_def
 } order_def;
 
 static const order_def order_defs[] =
-{ { ATOM_smaller,	SORT_ASC,  TRUE	 },
-  { ATOM_at_smaller,	SORT_ASC,  TRUE	 },
-  { ATOM_smaller_equal,	SORT_ASC,  FALSE },
-  { ATOM_at_smaller_eq,	SORT_ASC,  FALSE },
-  { ATOM_larger,	SORT_DESC, TRUE	 },
-  { ATOM_at_larger,	SORT_DESC, TRUE	 },
-  { ATOM_larger_equal,	SORT_DESC, FALSE },
-  { ATOM_at_larger_eq,	SORT_DESC, FALSE },
+{ { ATOM_smaller,	SORT_ASC,  true	 },
+  { ATOM_at_smaller,	SORT_ASC,  true	 },
+  { ATOM_smaller_equal,	SORT_ASC,  false },
+  { ATOM_at_smaller_eq,	SORT_ASC,  false },
+  { ATOM_larger,	SORT_DESC, true	 },
+  { ATOM_at_larger,	SORT_DESC, true	 },
+  { ATOM_larger_equal,	SORT_DESC, false },
+  { ATOM_at_larger_eq,	SORT_DESC, false },
   { 0 }
 };
 
@@ -654,9 +675,9 @@ PRED_IMPL("sort", 4, sort, 0)
   atom_t order_name;
   const order_def *od;
 
-  if ( (rc=get_key_arg_ex(A1, argv, TRUE)) == FALSE )
-    return FALSE;
-  if ( rc == TRUE )				/* Key is integer */
+  if ( (rc=get_key_arg_ex(A1, argv, true)) == false )
+    return false;
+  if ( rc == true )				/* Key is integer */
   { if ( argv[0] == consInt(0) )
     { argc = 0;
       argv = NULL;
@@ -676,8 +697,8 @@ PRED_IMPL("sort", 4, sort, 0)
 	    return PL_no_memory();
 	}
         for(argc=0; PL_get_list(tail, head, tail); argc++)
-	{ if ( get_key_arg_ex(head, &argv[argc], FALSE) != TRUE )
-	  { rc = FALSE;
+	{ if ( get_key_arg_ex(head, &argv[argc], false) != true )
+	  { rc = false;
 	    goto out;
 	  }
 	}
@@ -703,7 +724,7 @@ PRED_IMPL("sort", 4, sort, 0)
 
   rc = pl_nat_sort(A3, A4,
 		   od->remove_dups, od->order,
-		   argc, argv, FALSE);
+		   argc, argv, false);
 
 out:
   if ( argv && argv != tmp )

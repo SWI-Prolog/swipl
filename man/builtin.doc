@@ -376,16 +376,15 @@ Specify what to import from the loaded module. The default for
 use_module/1 is \const{all}. \arg{Import} is passed from the second
 argument of use_module/2. Traditionally it is a list of predicate
 indicators to import. As part of the SWI-Prolog/YAP integration, we also
-support \arg{Pred} as \arg{Name} to import a predicate under another
-name. Finally, \arg{Import} can be the term \term{except}{Exceptions},
-where \arg{Exceptions} is a list of predicate indicators that specify
-predicates that are \emph{not} imported or \arg{Pred} as \arg{Name}
-terms to denote renamed predicates. See also reexport/2 and
-use_module/2.%
-	\bug{\arg{Name}/\arg{Arity} as \arg{NewName} is currently
-	     implemented using a \jargon{link clause}.  This harms
-	     efficiency and does not allow for querying the relation
-	     through predicate_property/2.}
+support ``\arg{Pred} \const{as} \arg{Name}'' to import a predicate under
+another name. Finally, \arg{Import} can be the term
+\term{except}{Exceptions}, where \arg{Exceptions} is a list of predicate
+indicators that specify predicates that are \emph{not} imported or
+\arg{Pred} as \arg{Name} terms to denote renamed predicates. See also
+reexport/2 and use_module/2.\bug{\arg{Name}/\arg{Arity} as
+\arg{NewName} is currently implemented using a \jargon{link clause}.
+This harms efficiency and does not allow for querying the relation
+through predicate_property/2.}
 
 If \arg{Import} equals \const{all}, all operators are imported as well.
 Otherwise, operators are \emph{not} imported. Operators can be imported
@@ -695,6 +694,8 @@ user:file_search_path(app_config, user_app_config('.')).
 user:file_search_path(app_config, common_app_config('.')).
 user:file_search_path(app, swi(app)).
 user:file_search_path(app, app_data(app)).
+user:file_search_path(working_directory, CWD) :-
+    working_directory(CWD, CWD).
 \end{code}
 
 \index{XDG,directories}%
@@ -1306,7 +1307,7 @@ suffix(Suffix, List) :-
 \end{code}
 
 Note that these directives can only appear as separate terms in the
-input. SWI-Prolog accomodates syntax extensions under conditional
+input. SWI-Prolog accommodates syntax extensions under conditional
 compilation by silently ignoring syntax errors when in the
 \jargon{false} branch. This allow, for example, for the code below. With
 rational number support \exam{1r3} denotes the rational number 1/3 while
@@ -1524,13 +1525,13 @@ messages from (initialization) directives.
 
 This allows the user to fine tune the behaviour on errors and, for
 example, halt the process on a non-zero error count right after
-loading the file wth errors using the code below.
+loading the file with errors using the code below.
 
 \begin{code}
-:- multifile user:message_hook/3.
+:- multifile prolog:message_action/2.
 
-user:message_hook(load_file_errors(_File, Errors, _Warnings),
-		  _Level, _Lines) :-
+prolog:message_action(load_file_errors(_File, Errors, _Warnings),
+		      _Level) :-
     Errors > 0,
     halt(1).
 \end{code}
@@ -1639,7 +1640,7 @@ value: the atom \const{user}. When specified, files loaded indirectly
 from \arg{File} that to not come from the Prolog library are included
 into the \fileext{qlf} file. This may be used to generate a single file
 from an application. The result is comparable to a \jargon{save state}
-(see qsave_program/2) with the folowing differences:
+(see qsave_program/2) with the following differences:
 
 	\begin{itemize}
 	\item Only your application code is included.  The Prolog
@@ -2015,11 +2016,11 @@ Clearly, \arg{A} and \arg{B} are not identical, so either
 
 \item
 Assume \exam{A @< B}.  But then, \exam{s(A,1) @> s(B,0)} i.e.,
-\exam{B @< A}. Contradicton.
+\exam{B @< A}. Contradiction.
 
 \item
 Assume \exam{A @> B}.  But then, \exam{s(A,1) @< s(B,0)} i.e.,
-\exam{B @< A}. Contradicton.
+\exam{B @< A}. Contradiction.
 \end{itemize}
 \end{quote}
 
@@ -2417,7 +2418,7 @@ ignore(_).
 
 Note that a plain variable as a body term acts as call/1 and the above
 is equivalent to the code below.  SWI-Prolog produces the same code for
-these two progams and listing/1 prints the program above.
+these two programs and listing/1 prints the program above.
 
 \begin{code}
 ignore(Goal) :- Goal, !.
@@ -2442,6 +2443,13 @@ inspection.\footnote{Future versions of the reflective predicate may
 fake the presence of \nopredref{call}{9..}. Full logical behaviour,
 generating all these pseudo predicates, is probably undesirable and will
 become impossible if \jargon{max_arity} is removed.}
+
+    \predicate{autoload_call}{1}{:Goal}
+As call/1, but first trigger the autoloader if \arg{Goal} is not
+defined. The autoloader is used, even if the flag \prologflag{autoload}
+is \const{false}. In addition, using this predicate causes the
+dependency checker, e.g., list_undefined/0, to ignore the argument.
+This predicate is particularly used to call into the development tools.
 
     \predicate[deprecated]{apply}{2}{:Goal, +List}
 Append the members of \arg{List} to the arguments of \arg{Goal} and call
@@ -2880,11 +2888,18 @@ with the argument of throw/1, all choice points generated by \arg{Goal}
 are cut, the system backtracks to the start of catch/3 while preserving
 the thrown exception term, and \arg{Recover} is called as in call/1.
 
+As of version 9.3.13, constraints (attributed variables) in
+\arg{Catcher} are respected.  If evaluating the constraint raises an
+exception, the most urgent exception is preserved (see
+\secref{urgentexceptions}) and searching for a matching catch/3 call
+is continued.  If both exceptions are equally urgent, the exception
+raised by the constraint evaluation is preserved.
+
 The overhead of calling a goal through catch/3 is comparable to
 call/1.  Recovery from an exception is much slower, especially if the
 exception term is large due to the copying thereof or is decorated with
 a stack trace using, e.g., the library \pllib{prolog_stack} based on the
-prolog_exception_hook/4 hook predicate to rewrite exceptions.
+prolog_exception_hook/5 hook predicate to rewrite exceptions.
 
     \predicate[ISO]{throw}{1}{+Exception}
 Raise an exception. The system looks for the innermost catch/3
@@ -2938,6 +2953,52 @@ This is good practice for a \jargon{catch-all} wrapper around an
 application.  See also main/0 from library \pllib{main}.
 \end{description}
 
+\subsection{Unwind exceptions}
+\label{sec:unwind-exceptions}
+
+Starting with SWI-Prolog 9.3.13, SWI-Prolog introduces a new class of
+reserved exceptions.  An exception of the shape \term{unwind}{Term} is
+handled special by catch/3 and friends.  Rather than simply calling the
+\arg{Recover} goal (third argument), catch/3 acts as if called as
+
+\begin{code}
+    catch(Goal, Ball, call_cleanup(once(Recover), throw(Ball)))
+\end{code}
+
+The above implies that cleanup that may be required on exceptions should
+use call_cleanup/2 (or one of its variations) or should perform the
+cleanup in the \arg{Recover} goal.  For example, the following does
+\textbf{not properly cleanup after an exception}:
+
+\begin{code}
+    (   catch(Goal, Error, true)
+    ->  (   var(Error)
+        ->  <no exception>
+        ;   <cleanup>	   % NOT called on throw(unwind(...))
+            ...
+\end{code}
+
+This implies that, unless the user ensures \arg{Recover} does not
+terminate, the exception will unwind the entire Prolog stack. While
+foreign code that catches these exceptions should propagate them to
+the parent environment, we cannot enforce this behaviour.
+
+Currently, this mechanism defines these values for \arg{Term}:
+
+\begin{description}
+    \termitem{abort}{}
+Abort the current Prolog thread.   This exception is raised by abort/0.
+Previous versions raised \verb|'$aborted'| using the same
+\jargon{unwind} semantics.
+    \termitem{halt}{Status}
+In the standard setup, if \term{unwind}{\term{halt}{Status}} is
+raised in the \const{main} thread, this system halts with exit code
+\arg{Status}
+    \termitem{thread_exit}{ExitValue}
+This exception is raised by thread_exit/1.  See this predicate for
+details.
+\end{description}
+
 
 \subsection{Urgency of exceptions}
 \label{sec:urgentexceptions}
@@ -2956,15 +3017,13 @@ Raising an exception fails due to lack of resources, e.g., lack of
 stack space to store the exception. In this case a resource exception is
 raised. If that too fails the system tries to raise a resource exception
 without (stack) context. If that fails it will raise the exception
-\verb='$aborted'=, also raised by abort/0. As no stack space is
-required for processing this atomic exception, this should always
-succeed.
+\term{unwind}{abort}, also raised by abort/0.
     \item
 Certain \jargon{callback} operations raise an exception while processing
 another exception or a previous callback already raised an exception
 before there was an opportunity to process the exception. The most
 notable \jargon{callback} subject to this issue are prolog_event_hook/1
-(supporting e.g., the graphical debugger), prolog_exception_hook/4
+(supporting e.g., the graphical debugger), prolog_exception_hook/5
 (rewriting exceptions, e.g., by adding context) and print_message/2 when
 called from the core facilities such as the internal debugger. As with
 setup_call_cleanup/3, the most \jargon{urgent} exception is preserved.
@@ -2974,7 +3033,9 @@ If the most urgent exceptions needs to be preserved, the following
 exception ordering is respected, preserving the topmost matching error.
 
 \begin{enumerate}
-    \item \verb='$aborted'= (abort/0)
+    \item \verb=unwind(halt(_))= (halt/1)
+    \item \verb=unwind(thread_exit(_))= (thread_exit/1)
+    \item \verb=unwind(abort)= (abort/0)
     \item \verb$time_limit_exceeded$ (call_with_time_limit/2)
     \item \term{error}{\term{resource_error}{Resource}, Context}
     \item \term{error}{Formal, Context}
@@ -3035,8 +3096,8 @@ trap the tracer to help analyse the context of the error.
 
 While looking for the context in which an exception takes place, it is
 advised to switch on debug mode using the predicate debug/0. The hook
-prolog_exception_hook/4 can be used to add more debugging facilities to
-exceptions. An example is the library \pllib{http/http_error},
+prolog_exception_hook/5 can be used to add more debugging facilities
+to exceptions. An example is the library \pllib{http/http_error},
 generating a full stack trace on errors in the HTTP server library.
 
 \subsection{The exception term}         \label{sec:exceptterm}
@@ -3298,6 +3359,16 @@ the same as passed to print_message/2. \arg{Lines} is a list of format
 statements as described with print_message_lines/3.  See also
 message_to_string/2.
 
+If calling this hook succeeds, the message is considered printed and no
+further action is taken. Version 9.3.34 introduced
+prolog:message_action/2 to allow modules to act on certain actions.
+Before prolog:message_action/2 was introduced a program could associate
+an action with a message by adding a clause for message_hook/3 that
+realises the desired action and then fails. The problem with this
+approach for actions is that the order of clauses for a multi-file
+predicate is poorly defined.  If the application defines a hook that
+succeeds, this hook may cause intended actions not to take place.
+
 This predicate must be defined dynamic and multifile to allow other
 modules defining clauses for it too.
 
@@ -3306,6 +3377,17 @@ As message_hook/3, but this predicate is local to the calling thread
 (see thread_local/1).  This hook is called \emph{before} message_hook/3.
 The `pre-hook' is indented to catch messages they may be produced by
 calling some goal without affecting other threads.
+
+    \predicate[nondet]{prolog:message_action}{2}{+Term, +Kind}
+This hook is called before message_hook/3 as below.  This hook
+appeared in 9.3.34.  It allows to associate side-effects with
+messages in a reliable way by decoupling printing (or reporting
+some other way) from associated side effects.  See also broadcast/1
+from library \pllib{broadcast}.
+
+\begin{code}
+    forall(prolog:message_action(Term, Kind), true).
+\end{code}
 
     \predicate{message_property}{2}{+Kind, ?Property}
 This hook can be used to define additional message kinds and the way
@@ -3881,11 +3963,15 @@ multiple threads may retract the same clause as both threads respect the
 logical update view.
 
     \predicate[ISO,det]{retractall}{1}{+Head}
-All facts or clauses in the database for which the \arg{head}
-unifies with \arg{Head} are removed. If \arg{Head} refers to a predicate
-that is not defined, it is implicitly created as a dynamic predicate.
-See also dynamic/1.\footnote{The ISO standard only allows using
-dynamic/1 as a \jargon{directive}.}
+All facts or clauses in the database for which the \arg{head} unifies
+with \arg{Head} are removed.  If all arguments of \arg{Head} are
+non-sharing variables (see is_most_general_term/1), all clauses are
+removed without inspecting the clauses.  Cleaning all clauses of a
+dynamic predicate must use retractall/1 rather than abolish/1 as the
+latter completely wipes the predicate, including its properties.  If
+\arg{Head} refers to a predicate that is not defined, it is implicitly
+created as a dynamic predicate.  See also dynamic/1.\footnote{The ISO
+standard only allows using dynamic/1 as a \jargon{directive}.}
 
     \predicate[ISO]{asserta}{1}{+Term}
 \nodescription
@@ -3918,6 +4004,125 @@ Equivalent to asserta/1, assertz/1, assert/1, but in addition unifies
 \arg{Reference} with a handle to the asserted clauses. The handle can be
 used to access this clause with clause/3 and erase/1.
 \end{description}
+
+\subsubsection{Update view}			\label{sec:update}
+
+\index{logical,update view}%
+\index{immediate, update view}%
+\index{update view}%
+SWI-Prolog adheres to the \jargon{logical update view}, where
+backtrackable predicates that enter the definition of a predicate will
+not see any changes (either caused by assert/1 or retract/1) to the
+predicate.  This view is the ISO standard.  Logical updates are
+realised by keeping \jargon{generation} information on clauses.  Each
+change to the database causes an increment of the generation of the
+database.  Each goal is tagged with the generation in which it was
+started.  Each clause is flagged with the generation it was created in
+as well as the generation it was erased.  Only clauses with a
+`created' \ldots `erased' interval that encloses the generation of the
+current goal are considered visible.  The generation mechanism is also
+used to implement \jargon{transactions} See \secref{transactions}.
+
+Erased clauses are (eventually) reclaimed by the clause garbage
+collector implemented by garbage_collect_clauses/0.  By default, the
+clause garbage collector runs in a thread named \const{gc}, together
+with the atom garbage collector (garbage_collect_atoms/0).  See also
+the Prolog flag \prologflag{gc_thread}.
+
+
+\subsubsection{Indexing databases}			\label{sec:hashterm}
+
+\index{indexing,term-hashes}%
+
+The indexing capabilities of SWI-Prolog are described in
+\secref{jitindex}. Summarizing, SWI-Prolog creates indexes for any
+applicable argument, pairs of arguments and indexes on the arguments of
+compound terms when applicable. Extended JIT indexing is not widely
+supported among Prolog implementations. Programs that aim at
+portability should consider using term_hash/2 and term_hash/4 to design
+their database such that indexing on constant or functor (name/arity
+reference) on the first argument is sufficient. In some cases, using the
+predicates below to add one or more additional columns (arguments) to a
+database predicate may improve performance. The overall design of code
+using these predicates is given below. Note that as term_hash/2 leaves
+the hash unbound if \arg{Term} is not ground. This causes the lookup to
+be fast if \arg{Term} is ground and correct (but slow) otherwise.
+
+\begin{code}
+:- dynamic
+    x/2.
+
+assert_x(Term) :-
+    term_hash(Term, Hash),
+    assertz(x(Hash, Term)).
+
+x(Term) :-
+    term_hash(Term, Hash),
+    x(Hash, Term).
+\end{code}
+
+
+\begin{description}
+    \predicate[det]{term_hash}{2}{+Term, -HashKey}
+If \arg{Term} is a ground term (see ground/1), \arg{HashKey} is
+unified with a positive integer value that may be used as a hash key
+to the value. If \arg{Term} is not ground, the predicate leaves
+\arg{HashKey} an unbound variable.  Hash keys are in the range $0
+\ldots 72,057,594,037,927,935$ ($2^56$), the maximal integer that can be
+stored efficiently (see \prologflag{max_tagged_integer}.
+
+This predicate may be used to build hash tables as well as to exploit
+argument indexing to find complex terms more quickly.
+
+The hash key does not rely on temporary information like addresses of
+atoms and may be assumed constant over different invocations and
+versions of SWI-Prolog.\footnote{Last change: version 9.3.28} The
+term_hash/2 predicate is cycle-safe.\bug{All arguments that (indirectly)
+lead to a cycle have the same hash key.}
+\bug{Hashes differ between big and little endian machines and hashes for
+big integers (currently $> 2^56$) differ depending on the big integer
+\jargon{backend} (GMP or LibBF).  See \prologflag{gmp_version}.}
+
+    \predicate[det]{term_hash}{4}{+Term, +Depth, +Range, -HashKey}
+As term_hash/2, but only considers \arg{Term} to the specified
+\arg{Depth}.   The top-level term has depth 1, its arguments have
+depth 2, etc.  That is, $\arg{Depth} = 0$ hashes nothing; $\arg{Depth} = 1$
+hashes atomic values or the functor and arity of a compound term,
+not its arguments; $\arg{Depth} = 2$ also indexes the immediate
+arguments, etc.
+
+\arg{HashKey} is in the range $[0 \ldots \arg{Range}-1]$.  \arg{Range}
+must be in the range $[1 \ldots 2147483647]$.
+
+    \predicate[det]{variant_sha1}{2}{+Term, -SHA1}
+Compute a SHA1-hash from \arg{Term}. The hash is represented as a
+40-byte hexadecimal atom. Unlike term_hash/2 and friends, this predicate
+produces a hash key for non-ground terms. The hash is invariant over
+variable-renaming (see \predref{=@=}{2}) and constants over different
+invocations of Prolog.\bug{The hash depends on word order
+(big/little-endian) and the wordsize (32/64 bits).}
+
+This predicate raises an exception when trying to compute the hash on
+a cyclic term or attributed term.  Attributed terms are not handled
+because subsumes_chk/2 is not considered well defined for attributed
+terms.  Cyclic terms are not supported because this would require
+establishing a canonical cycle.  That is, given A=[a|A] and B=[a,a|B],
+\arg{A} and \arg{B} should produce the same hash.  This is not
+(yet) implemented.
+
+This hash was developed for lookup of solutions to a goal stored in a
+table.  By using a cryptographic hash, heuristic algorithms can often
+ignore the possibility of hash collisions and thus avoid storing the
+goal term itself as well as testing using \predref{=@=}{2}.
+
+    \predicate[det]{variant_hash}{2}{+Term, -HashKey}
+Similar to variant_sha1/2, but using a non-cryptographic hash and
+produces an integer result like term_hash/2. This version does deal with
+attributed variables, processing them as normal variables.  This hash is
+primarily intended to speedup finding variant terms in a set of terms.
+\bug{As variant_sha1/2, cyclic terms result in an exception.}
+\end{description}
+
 
 \subsubsection{Transactions}
 \label{sec:transactions}
@@ -4288,13 +4493,19 @@ implementation is rather immature.   In particular, the following
 limitations currently apply:
 
 \begin{shortlist}
-    \item Tries are not thread-safe.
+    \item Tries only offer partial thread-safety.  Multiple threads
+          may concurrently insert values in a trie.  Concurrent
+          deletion and concurrent non-deterministic access is
+          not supported.
     \item Tries should not be modified while non-deterministic
           predicates such as trie_gen/3 are running on the trie.
-    \item Terms cannot have \jargon{attributed variables}.
     \item Terms cannot be \jargon{cyclic}.  Possibly this will
 	  not change because cyclic terms can only be supported
           after creating a canonical form of the term.
+    \item Starting with SWI-Prolog 9.3.23, tries support attributed
+          variables both in for keys and values.  Tries holding
+          attributed variables can also be \jargon{compiled} using
+          trie_gen_compiled/2 or trie_gen_compiled/3.
 \end{shortlist}
 
 \textbf{We give the definition of these predicates for reference and
@@ -4430,125 +4641,6 @@ In addition, a number of additional properties are defined on
     \end{description}
 \end{description}
 
-
-\subsection{Update view}			\label{sec:update}
-
-\index{logical,update view}%
-\index{immediate, update view}%
-\index{update view}%
-Traditionally, Prolog systems used the \jargon{immediate update view}:
-new clauses became visible to predicates backtracking over dynamic
-predicates immediately, and retracted clauses became invisible
-immediately.
-
-Starting with SWI-Prolog 3.3.0 we adhere to the \jargon{logical update
-view}, where backtrackable predicates that enter the definition of a
-predicate will not see any changes (either caused by assert/1 or
-retract/1) to the predicate.  This view is the ISO standard, the
-most commonly used and the most `safe'.%
-    \footnote{For example, using the immediate update view, no call to a
-	      dynamic predicate is deterministic.}
-Logical updates are realised by keeping reference counts on predicates
-and \jargon{generation} information on clauses.  Each change to the
-database causes an increment of the generation of the database.  Each
-goal is tagged with the generation in which it was started.  Each clause
-is flagged with the generation it was created in as well as the generation
-it was erased from.  Only clauses with a `created' \ldots `erased' interval
-that encloses the generation of the current goal are considered visible.
-
-
-\subsection{Indexing databases}			\label{sec:hashterm}
-
-\index{indexing,term-hashes}%
-
-The indexing capabilities of SWI-Prolog are described in
-\secref{jitindex}. Summarizing, SWI-Prolog creates indexes for any
-applicable argument, pairs of arguments and indexes on the arguments of
-compound terms when applicable. Extended JIT indexing is not widely
-supported among Prolog implementations. Programs that aim at
-portability should consider using term_hash/2 and term_hash/4 to design
-their database such that indexing on constant or functor (name/arity
-reference) on the first argument is sufficient. In some cases, using the
-predicates below to add one or more additional columns (arguments) to a
-database predicate may improve performance. The overall design of code
-using these predicates is given below. Note that as term_hash/2 leaves
-the hash unbound if \arg{Term} is not ground. This causes the lookup to
-be fast if \arg{Term} is ground and correct (but slow) otherwise.
-
-\begin{code}
-:- dynamic
-    x/2.
-
-assert_x(Term) :-
-    term_hash(Term, Hash),
-    assertz(x(Hash, Term)).
-
-x(Term) :-
-    term_hash(Term, Hash),
-    x(Hash, Term).
-\end{code}
-
-
-\begin{description}
-    \predicate[det]{term_hash}{2}{+Term, -HashKey}
-If \arg{Term} is a ground term (see ground/1), \arg{HashKey} is unified
-with a positive integer value that may be used as a hash key to the
-value. If \arg{Term} is not ground, the predicate leaves \arg{HashKey}
-an unbound variable.  Hash keys are in the range $0 \ldots 16,777,215$,
-the maximal integer that can be stored efficiently on both 32 and 64
-bit platforms.
-
-This predicate may be used to build hash tables as well as to exploit
-argument indexing to find complex terms more quickly.
-
-The hash key does not rely on temporary information like addresses of
-atoms and may be assumed constant over different invocations and
-versions of SWI-Prolog.\footnote{Last change: version 5.10.4} Hashes
-differ between big and little endian machines. The term_hash/2 predicate
-is cycle-safe.\bug{All arguments that (indirectly) lead to a cycle
-have the same hash key.}
-
-    \predicate[det]{term_hash}{4}{+Term, +Depth, +Range, -HashKey}
-As term_hash/2, but only considers \arg{Term} to the specified
-\arg{Depth}.   The top-level term has depth 1, its arguments have
-depth 2, etc.  That is, $\arg{Depth} = 0$ hashes nothing; $\arg{Depth} = 1$
-hashes atomic values or the functor and arity of a compound term,
-not its arguments; $\arg{Depth} = 2$ also indexes the immediate
-arguments, etc.
-
-\arg{HashKey} is in the range $[0 \ldots \arg{Range}-1]$.  \arg{Range}
-must be in the range $[1 \ldots 2147483647]$.
-
-    \predicate[det]{variant_sha1}{2}{+Term, -SHA1}
-Compute a SHA1-hash from \arg{Term}. The hash is represented as a
-40-byte hexadecimal atom. Unlike term_hash/2 and friends, this predicate
-produces a hash key for non-ground terms. The hash is invariant over
-variable-renaming (see \predref{=@=}{2}) and constants over different
-invocations of Prolog.\bug{The hash depends on word order
-(big/little-endian) and the wordsize (32/64 bits).}
-
-This predicate raises an exception when trying to compute the hash on
-a cyclic term or attributed term.  Attributed terms are not handled
-because subsumes_chk/2 is not considered well defined for attributed
-terms.  Cyclic terms are not supported because this would require
-establishing a canonical cycle.  That is, given A=[a|A] and B=[a,a|B],
-\arg{A} and \arg{B} should produce the same hash.  This is not
-(yet) implemented.
-
-This hash was developed for lookup of solutions to a goal stored in a
-table.  By using a cryptographic hash, heuristic algorithms can often
-ignore the possibility of hash collisions and thus avoid storing the
-goal term itself as well as testing using \predref{=@=}{2}.
-
-    \predicate[det]{variant_hash}{2}{+Term, -HashKey}
-Similar to variant_sha1/2, but using a non-cryptographic hash and
-produces an integer result like term_hash/2. This version does deal with
-attributed variables, processing them as normal variables.  This hash is
-primarily intended to speedup finding variant terms in a set of terms.
-\bug{As variant_sha1/2, cyclic terms result in an exception.}
-\end{description}
-
-
 \section{Declaring predicate properties}	\label{ch:dynamic}
 \label{sec:declare}
 
@@ -4660,6 +4752,27 @@ See also thread_local/1.
 Set the corresponding property.  See multifile/1, discontiguous/1
 and volatile/1.
     \end{description}
+
+    \prefixop{mode}{+Head, \ldots}
+Define the \jargon{modes} for the predicates referenced by the
+comma-separated list \arg{Head}. Each argument of each head is a
+\jargon{mode specifier}. Defined specifiers are \chr{+}, \chr{-} and
+\chr{?}. Mode declarations have a long history in Prolog. This predicate
+uses the definitions derived from e.g., Quintus Prolog and used for
+documentation in the ISO standard. The specifiers declare whether or not
+an argument is \jargon{unbound} at \emph{call time}. The \chr{+}
+declares that the argument is nonvar/1, the \chr{-} declares the
+argument is var/1 and \chr{?} makes no claim.
+
+Several Prolog systems define \const{mode} as an operator using the
+declaration below.  Currently we do not define the operator.
+\begin{code}
+:- op(1150, fx, mode).
+\end{code}
+
+SWI-Prolog uses the mode information for its just-in-time clause
+indexing as described in \secref{jitindex}. JIT only uses the \chr{-}
+specifier to avoid examining that argument as a candidate for indexing.
 
     \predicate{compile_predicates}{1}{:ListOfPredicateIndicators}
 Compile a list of specified dynamic predicates (see dynamic/1 and
@@ -4866,28 +4979,39 @@ flag is not set to \const{fail} in the target module.
 
     \termitem{indexed}{Indexes}
 \arg{Indexes} is a list of additional (hash) indexes on the predicate.
-Each element of the list is a term \arg{ArgSpec}-\arg{Index}.
-\arg{ArgSpec} denotes the indexed argument(s) and is one of
+Each element of the list is a dict holding the following keys:
 
 \begin{description}
-    \termitem{single}{Argument}
-Hash on a single argument.  \arg{Argument} is the 1-based argument
-number.
-    \termitem{multi}{ArgumentList}
-Hash on a combination of arguments.
-    \termitem{deep}{Position}
-Index on a sub-argument.  Position is a list holding first the
-argument of the predicate then the argument into the compound
-and recursively into deeper compound terms.
+    \keyitem{arguments}{List}
+1-based argument numbers of the predicate or compound used for the
+index.
+    \keyitem{position}{List}
+1-based argument numbers to find the compound for a \jargon{deep}
+index.  Empty list (\verb$[]$) for predicate arguments.  A list
+\verb$[1,2]$ implies we index on the 2nd argument of the 1st
+argument of the predicate, i.e., on the \arg{I} in the
+head \exam{p(f(_,I))}
+    \keyitem{buckets}{Count}
+Number of buckets of the hash
+    \keyitem{list}{Boolean}
+The hash is a \jargon{deep} index, i.e., it points at compounds
+and there may be sub-indexes on these compounds.
+    \keyitem{realised}{Boolean}
+If \const{false}, the index is associated with the predicate but
+not filled.  It will be filled if the predicate is called such that
+this index is at least \prologflag{ci_min_speedup} times better than
+the best already realised index.
+    \keyitem{size}{Bytes}
+Memory usage in bytes of the index.
+    \keyitem{speedup}{Float}
+Estimated speedup.  The basic value is the number of unique values
+in the argument of the clauses to which this index applies.  The
+value is reduced when there are clauses with a variable in this
+position and when the standard deviation for the sets of clauses
+with the same value is high, i.e., we prefer indexes where the
+number of candidate clauses is similar, regardless of the value
+used in the call.
 \end{description}
-
-\arg{Index} is a term \term{hash}{Buckets, Speedup, Size, IsList}. Here
-\arg{Buckets} is the number of buckets in the hash and \arg{Speedup} is
-the expected speedup relative to trying all clauses linearly, \arg{Size}
-is the size of the index in memory in bytes and finally, \arg{IsList}
-indicates that a list is created for all clauses with the same key. This
-is used to create \jargon{deep indexes} for the arguments of compound
-terms.
 
 \textbf{Note:} This predicate property should be used for analysis and
 statistics only. The exact representation of \arg{Indexes} may change
@@ -4919,6 +5043,11 @@ unify \arg{Head} with the head-pattern.  The head-pattern is a
 compound term with the same name and arity as the predicate where each
 argument of the term is a meta-predicate specifier.  See meta_predicate/1
 for details.
+
+    \termitem{mode}{Head}
+If the mode for the predicate is defined using mode/1.  Head is a term
+as in the property \term{meta_predicate}{Head}, but the specifiers are
+limited to \const{+}, \const{-} and \const{?}.
 
     \termitem{monotonic}{}
 True if the predicate is tabled or dynamic using monotonic propagation.
@@ -5068,7 +5197,11 @@ clause/2 only promises \jargon{semantic equivalence}.
 Equivalent to clause/2, but unifies \arg{Reference} with a unique
 reference to the clause (see also assert/2, erase/1). If \arg{Reference}
 is instantiated to a reference the clause's head and body will be
-unified with \arg{Head} and \arg{Body}.
+unified with \arg{Head} and \arg{Body}.  The \arg{Reference} is a
+\jargon{blob} (see \secref{blob}), which implies it is subject to
+\jargon{atom garbage collection}.  The \arg{Reference} provides
+safe access to the clause while it exists and generates a reliable
+existence_error exception after the clause has been erased.
 
     \predicate{nth_clause}{3}{?Pred, ?Index, ?Reference}
 Provides access to the clauses of a predicate using their index number.
@@ -5801,14 +5934,8 @@ specifications.
 \end{tabular}\end{center}
 
 Another example of using the \functor{pipe}{1} construct is shown
-below.%
-	\footnote{As of version 5.3.15, the pipe construct is supported
-		  in the MS-Windows version, both for
-		  \program{swipl.exe} and \program{swipl-win.exe}. The
-		  implementation uses code from the LUA programming
-		  language (\url{http://www.lua.org}).}
-Note that the \functor{pipe}{1} construct is not part of
-Prolog's standard I/O repertoire.
+below.  Note that the \functor{pipe}{1} construct is not part of
+Prolog's standard I/O repertoire.  See also process_create/3.
 
 \begin{code}
 getwd(Wd) :-
@@ -6447,7 +6574,7 @@ Default is taken from the reference module (see below).
 
     \termitem{character_escapes_unicode}{Bool}
 If \const{true} and \term{character_escapes}{true} and
-\term{quoted}{true} are active escapted characters are written using
+\term{quoted}{true} are active escaped characters are written using
 \verb$\uXXXX$ or \verb$\UXXXXXXXX$ syntax.  The default depends on the
 Prolog flag \prologflag{character_escapes_unicode}
 
@@ -6480,6 +6607,12 @@ a space (default) or newline if the \term{nl}{true} option is also
 given.\footnote{Compatible with
 \href{http://eclipseclp.org/doc/bips/kernel/ioterm/write_term-3.html}{ECLiPSe}}
 
+    \termitem{float_format}{+Atom}
+Print floating point numbers using format/2 as \term{format}{Atom,
+[Float]}. The default is \verb$~h$. This option is compatible with
+SICStus. See format/2 for valid format specifiers and the
+\const{integer_format} option for additional comments.
+
     \termitem{ignore_ops}{Bool}
 If \const{true}, the generic term representation (<functor>(<args>
 \ldots)) will be used for all terms.  Otherwise (default), operators
@@ -6487,6 +6620,16 @@ will be used where appropriate.\footnote{In traditional systems this
 flag also stops the syntactic sugar notation for lists and brace terms.
 In SWI-Prolog, these are controlled by the separate options
 \const{dotlists} and \const{brace_terms}}.
+
+    \termitem{integer_format}{+Atom}
+Print integers using format/2 as \term{format}{Atom, [Int]}.  The
+default is \verb$~d$. This allows to print integers using an
+alternative \jargon{radix}, using e.g.\, \verb$~16r$ or \verb$0x~16r$
+or to use digit grouping using e.g.\ \verb$~D$. Note that the user
+is responsible to provide a format that produces valid Prolog syntax if
+the term must be readable by Prolog.  The format must accept exactly
+one argument.  If that is not satisfied, printing an integer results
+in an exception.  See format/2 for for valid format specifiers.
 
     \termitem{max_depth}{Integer}
 If the term is nested deeper than \arg{Integer}, print the remainder
@@ -6551,7 +6694,7 @@ write_value(Value) :-
 \end{code}
 
 In addition, if the priority is not 1200 or 999 this assumes we are
-printing an operant of an operator.  If \arg{Term} is an atom that is
+printing an operand of an operator.  If \arg{Term} is an atom that is
 also an operator it will always be embraced.\footnote{If the priority
 is 1200 it is assumed to be a toplevel term and if the priority is
 999 it is assumed to be a list element or argument of a compound term.}
@@ -6981,8 +7124,10 @@ Read term with options from \arg{Stream}.  See read_term/2.
     \predicate{read_term_from_atom}{3}{+Atom, -Term, +Options}
 Use read_term/3 to read the next term from \arg{Atom}.  \arg{Atom} is
 either an atom or a string object (see \secref{string}).  It is not
-required for \arg{Atom} to end with a full-stop.  This predicate
-supersedes atom_to_term/3.
+required for \arg{Atom} to end with a full-stop. If \arg{Atom} only
+contains white space and/or comments, an
+\term{syntax_error}{end_of_string} exception is raised.  This
+predicate supersedes atom_to_term/3.
 
     \predicate{read_term_with_history}{2}{-Term, +Options}
 Read a term while providing history substitutions.
@@ -7042,9 +7187,10 @@ prolog/0) sets the prompt for the first prompt (see prompt1/1) to
 the term, subsequent lines are prompted for using the prompt as defined
 by prompt/2.
 
-    \predicate{prompt1}{1}{+Prompt}
+    \predicate{prompt1}{1}{?Prompt}
 Sets the prompt for the next line to be read.  Continuation lines will
-be read using the prompt defined by prompt/2.
+be read using the prompt defined by prompt/2.  If \arg{Prompt} is
+unbound it is unified with the current first-line prompt.
 \end{description}
 
 \section{Analysing and Constructing Terms}	\label{sec:manipterm}
@@ -7071,7 +7217,7 @@ As functor/3, but designed to work with zero-arity terms (e.g.,
 \const{compound}, \const{callable} or \const{atomic}. \arg{Type}
 \emph{must} be instantiated if \arg{Name} is an atom and \arg{Arity} is
 0 (zero).  In other cases \arg{Type} may be a variable.  This predicate
-is true if \arg{Term} (either initially or after haveing been created
+is true if \arg{Term} (either initially or after having been created
 from \arg{Name} and \arg{Type}) and \arg{Type} are related as below
 
     \begin{itemize}
@@ -7337,18 +7483,17 @@ to attach information to attributed variables (see~\secref{attvar}).
 
     \predicate{nb_setarg}{3}{+Arg, +Term, +Value}
 Assigns the \arg{Arg}-th argument of the compound term \arg{Term} with
-the given \arg{Value} as setarg/3, but on backtracking the assignment
-is \emph{not} reversed.  If \arg{Value} is not atomic, it is duplicated
+the given \arg{Value} as setarg/3, but on backtracking the assignment is
+\emph{not} reversed. If \arg{Value} is not atomic, it is duplicated
 using duplicate_term/2. This predicate uses the same technique as
-nb_setval/2.  We therefore refer to the description of nb_setval/2
-for details on non-backtrackable assignment of terms.  This predicate
-is compatible with GNU-Prolog \term{setarg}{A,T,V,false}, removing the
-type restriction on \arg{Value}.  See also nb_linkarg/3.  Below
-is an example for counting the number of solutions of a goal.  Note
-that this implementation is thread-safe, reentrant and capable of
-handling exceptions.  Realising these features with a traditional
-implementation based on assert/retract or flag/3 is much more
-complicated.
+nb_setval/2. We therefore refer to the description of nb_setval/2 for
+details on non-backtrackable assignment of terms. This predicate is
+compatible with GNU-Prolog \term{setarg}{A,T,V,false}, removing the type
+restriction on \arg{Value}. Below is an example for counting the number
+of solutions of a goal. Note that this implementation is thread-safe,
+reentrant and capable of handling exceptions. Realising these features
+with a traditional implementation based on assert/retract or flag/3 is
+much more complicated.
 
 \begin{code}
 :- meta_predicate
@@ -7364,6 +7509,8 @@ succeeds_n_times(Goal, Times) :-
 	;   arg(1, Counter, Times)
 	).
 \end{code}
+
+See also nb_linkarg/3 and foldall/4.
 
     \predicate{nb_linkarg}{3}{+Arg, +Term, +Value}
 As nb_setarg/3, but like nb_linkval/2 it does \emph{not} duplicate
@@ -7536,9 +7683,11 @@ Use \arg{Atom} as input to read_term/2 using the option
 \const{variable_names} and return the read term in \arg{Term} and the
 variable bindings in \arg{Bindings}. \arg{Bindings} is a list of
 $\arg{Name} = \arg{Var}$ couples, thus providing access to the actual
-variable names. See also read_term/2. If \arg{Atom} has no valid syntax,
-a \except{syntax_error} exception is raised.  New code should use
-read_term_from_atom/3.
+variable names. See also read_term/2. If \arg{Atom} has no valid
+syntax, a \except{syntax_error} exception is raised.  If \arg{Atom}
+only contains white space and/or comments, an
+\term{syntax_error}{end_of_string} exception is raised.  New code
+should use read_term_from_atom/3.
 
     \predicate[ISO]{atom_concat}{3}{?Atom1, ?Atom2, ?Atom3}
 \arg{Atom3} forms the concatenation of \arg{Atom1} and \arg{Atom2}. At
@@ -7774,7 +7923,7 @@ in terms of code_type/2.
     \predicate{char_type}{2}{?Char, ?Type}
 Tests or generates alternative \arg{Type}s or \arg{Char}s. The character
 types are inspired by the standard C \file{<ctype.h>} primitives. The
-types are sensititve to the active \jargon{locale}, see setlocale/3.
+types are sensitive to the active \jargon{locale}, see setlocale/3.
 Most of the \arg{Type}s are mapped to the Unicode classification
 functions from \file{<wctype.h>}, e.g., \const{alnum} uses iswalnum().
 The types \const{prolog_var_start}, \const{prolog_atom_start},
@@ -8052,7 +8201,7 @@ and modules.
 \begin{center}
 \begin{tabular}{|r|D{f}{f}{-1}|p{4in}|}
 \hline
-1200 & xfx & \op{-->}, \op{:-}, \op{=>} \\
+1200 & xfx & \op{-->}, \op{:-}, \op{=>}, \op{==>} \\
 1200 & fx & \op{:-}, \op{?-} \\
 1150 & fx & \op{dynamic}, \op{discontiguous}, \op{initialization},
 	    \op{meta_predicate},
@@ -8347,7 +8496,7 @@ A = 17/6
 
 SWI-Prolog uses rational number arithmetic if the Prolog flag
 \prologflag{prefer_rationals} is \const{true} and if this is defined for
-a function on the given operants. This results in perfectly precise
+a function on the given operands. This results in perfectly precise
 answers. Unfortunately rational numbers can get really large and, if a
 precise answer is not needed, a big waste of memory and CPU time. In
 such cases one should use floating point arithmetic.  The Prolog flag
@@ -8361,7 +8510,7 @@ truncating functions such as \funcref{round}{1}, \funcref{rational}{1}
 or \funcref{float_integer_part}{1}.
 
 Float arithmetic is typically forced by using a floating point constant
-as initial value or operant. Alternatively, the \funcref{float}{1}
+as initial value or operand. Alternatively, the \funcref{float}{1}
 function forces conversion of the argument.
 
 \subsubsection{IEEE 754 floating point arithmetic}
@@ -8538,7 +8687,7 @@ precise results when possible. The pitfall is that in general rational
 arithmetic is slower and can become very slow and produce huge numbers
 that require a lot of (global stack) memory. Code for which the exact
 results provided by rational numbers is not needed should force float
-results by making one of the operants float, for example by dividing by
+results by making one of the operands float, for example by dividing by
 \exam{10.0} rather than \exam{10} or by using \funcref{float}{1}. Note
 that when one of the arguments is forced to a float the division is a
 float operation while if the result is forced to the float the division
@@ -8610,7 +8759,7 @@ if \arg{Expr1} < \arg{Expr2}, 0 if they are equal, and 1 if
 \arg{Expr1} > \arg{Expr2}.  Evaluates to NaN if either or both
 \arg{Expr1} and \arg{Expr2} are NaN and the Prolog flag
 \prologflag{float_undefined} is set to \const{nan}.  See also
-\funcref{minr}{2} amd \funcref{maxr}{2}.
+\funcref{minr}{2} and \funcref{maxr}{2}.
 
 This function relates to the Prolog numerical comparison predicates
 \predref{>}{2}, \predref{=:=}{2}, etc.  The Prolog numerical
@@ -8678,7 +8827,7 @@ flag \prologflag{float_undefined} is set to \const{nan} and one of the
 arguments evaluates to NaN, the result is NaN.
 
 The function \funcref{maxr}{2} is similar, but uses exact (rational)
-comparision if \arg{Expr1} and \arg{Expr2} have a different type,
+comparison if \arg{Expr1} and \arg{Expr2} have a different type,
 propagate the rational (integer) rather and the float if the two
 compare equal and propagate the non-NaN value in case one is NaN.
 
@@ -9317,8 +9466,8 @@ keysort(Pairs, Sorted) :- sort(1, @=<, Pairs, Sorted).
 \end{code}
 
 The following example sorts a list of rows, for example resulting from
-csv_read_file/2) ascending on the 3th column and descending on the 4th
-column:
+csv_read_file/2) ascending on the 3rd column and descending on the 4th
+column (for sets of rows where the 3rd column is equal):
 
 \begin{code}
     sort(4, @>=, Rows0, Rows1),
@@ -9641,12 +9790,12 @@ stream and uses the position information of the temporary stream to
 update its notion of the position.  Notable ansi_format/3 cooperates
 properly in callbacks.\footnote{As of version 8.3.30}.
 
-Numeric conversion (\chr{d}, \chr{D}, \chr{e}, \chr{E}, \chr{f}, \chr{g}
-and \chr{G}) accept an arithmetic expression as argument. This is
-introduced to handle rational numbers transparently (see
-\secref{rational}).  The floating point conversions allow for unlimited
-precision for printing rational numbers in decimal form.  E.g., the
-following will write as many 3's as you want by changing the `50'.
+Numeric conversion (\chr{d}, \chr{D}, \chr{e}, \chr{E}, \chr{f},
+\chr{g}, \chr{G}, \chr{h} and \chr{H}) accept an arithmetic expression
+as argument. This is introduced to handle rational numbers transparently
+(see \secref{rational}). The floating point conversions allow for
+unlimited precision for printing rational numbers in decimal form. E.g.,
+the following will write as many 3's as you want by changing the `50'.
 
 \begin{code}
 ?- format('~50f', [10 rdiv 3]).
@@ -9711,6 +9860,23 @@ Floating point in {\bf e} or {\bf f} notation, whichever is shorter.
 
     \fmtchar{G}
 Floating point in {\bf E} or {\bf f} notation, whichever is shorter.
+
+    \fmtchar{h}
+    \nodescription
+    \fmtchar{H}
+Print a floating point number with the minimal number of digits such
+that read/1 produces exactly (as in \predref{==}{2}) the same number.
+The argument specifies whether a number is written using exponential
+notation (using \textbf{e} (h) or \textbf{E} (H)) or fixed point
+notation (as \verb$~f$).  If the argument is -1, the number is always
+written using exponential notation.  Otherwise, number is written
+using exponential notation if the exponent is less than \arg{Arg}-1
+or greater than \arg{Arg}+\arg{d}, where \arg{d} is the number of
+digits emitted to establish the required precision.   Using an
+argument larger than the the maximum exponent such as \verb$~999h$
+never uses exponential notation.   The default argument is 3.  The
+predicate write/1 and friends act as if using the format \verb$~3h$.
+This option is compatible to SICStus Prolog.
 
     \fmtchar{i}
 Ignore next argument of the argument list. Produces no output.
@@ -9936,9 +10102,19 @@ the requested variable does not exist.
 
 \begin{description}
     \predicate{nb_setval}{2}{+Name, +Value}
-Associates a copy of \arg{Value} created with duplicate_term/2
-with the atom \arg{Name}.  Note that this can be used to set an
-initial value other than \const{[]} prior to backtrackable assignment.
+Associates a copy of \arg{Value} created with duplicate_term/2 with the
+atom \arg{Name}. Note that this can be used to set an initial value
+other than \const{[]} prior to backtrackable assignment. Starting with
+version 9.3.18, if the new \arg{Value} contains the old value, the old
+value is \textbf{not} copied.  This implies that \nopredref{push}{1}
+below has complexity O(1), regardless of the length of the list
+\arg{Old}.
+
+\begin{code}
+push(Var, Value) :-
+    nb_getval(Var, Old),
+    nb_setval(Var, [Value|Old]).
+\end{code}
 
     \predicate{nb_getval}{2}{+Name, -Value}
 The nb_getval/2 predicate is a synonym for b_getval/2, introduced for
@@ -10037,25 +10213,10 @@ and should be used to output these strings. \arg{Lines} is the
 number of lines affected by the operation, or 1 if not applicable (as
 in almost all cases).
     \predicate{tty_size}{2}{-Rows, -Columns}
-Determine the size of the terminal.  Platforms:
-
-\begin{description}
-    \item[Unix]
-If the system provides \jargon{ioctl} calls for this, these are
-used and tty_size/2 properly reflects the actual size after a user
-resize of the window.   The \jargon{ioctl} is issued on the file
-descriptor associated with the \const{user_input} stream. As a fallback,
-the system uses tty_get_capability/3 using \const{li} and \const{co}
-capabilities. In this case the reported size reflects the size at the
-first call and is not updated after a user-initiated resize of the
-terminal.
-
-    \item[Windows]
-Getting the size of the terminal is provided for \program{swipl-win.exe}.
-The requested value reflects the current size. For the
-multithreaded version the console that is associated with the
-\const{user_input} stream is used.
-\end{description}
+Determine the size of the terminal. This predicate is provided for POSIX
+terminals, Windows console and the \program{swipl-win} Prolog consoles.
+Portable code should wrap this into catch/3 and use some default in case
+the console window size cannot be determined.
 \end{description}
 
 \section{Operating System Interaction}	\label{sec:system}
@@ -10282,15 +10443,15 @@ the category \const{messages}.
 \subsection{Apple specific Operating System Interaction}
 \label{sec:apple}
 
-Non-portable Apple MacOS specific predicates are prefixed woth
+Non-portable Apple MacOS specific predicates are prefixed with
 \const{apple_}.
 
 \begin{description}
     \predicate{apple_current_locale_identifier}{1}{-Identifier}
 Unify \arg{Identifier} with the value for CFLocaleGetIdentifier() of the
 Apple current locale. The \arg{Identifier} is an atom that consists of
-the primary language identifier, e.g., \const{en} for english followed
-by an undercore and an identifier for the \jargon{Region} in the MacOS
+the primary language identifier, e.g., \const{en} for English followed
+by an underscore and an identifier for the \jargon{Region} in the MacOS
 \jargon{Language \& Region} preferences.  For example, with the primary
 language set to ``English (UK)'' and the \textit{Region} to ``United
 Kingdom'' we get \const{en_GB}.  This relates to the locale identifier
@@ -10686,73 +10847,75 @@ Days of the week are numbered from one to seven: Monday = 1, Tuesday =
 2, \ldots, Sunday = 7.
 \end{description}
 
-\subsection{Controlling the \program{swipl-win.exe} console window}
-\label{sec:plwin}
+\subsection{Controlling the \program{swipl-win} (Epilog) console window}
+\label{sec:epilog-api}
 
-The Windows executable \program{swipl-win.exe} console has a number of
-predicates to control the appearance of the console. Being totally
-non-portable, we do not advise using it for your own application, but
-use XPCE or another portable GUI platform instead. We give the
-predicates for reference here.
-
-\begin{description}
-    \predicate{window_title}{2}{-Old, +New}
-Unify \arg{Old} with the title displayed in the console and change the
-title to \arg{New}.%
-	\bug{This predicate should have been called
-	\const{win_window_title} for consistent naming.}
-
-    \predicate{win_window_pos}{1}{+ListOfOptions}
-Interface to the MS-Windows SetWindowPos() function, controlling
-size, position and stacking order of the window.  \arg{ListOfOptions}
-is a list that may hold any number of the terms below:
+\index{Epilog}%
+The SWI-Prolog package \const{xpce} provides the SWI-Prolog GUI
+capabilities. Part of it is a console window that provides a menu,
+called \jargon{Epilog}. If Prolog is started using \program{swipl-win},
+it starts as a GUI application running the Prolog REPL loop in an
+Epilog window.   SWI-Prolog allows opening multiple such console
+windows, each running the REPL loop in a new thread.  New Epilog
+windows can be started from several menus in the GUI as well as
+using the predicate epilog/0.
 
 \begin{description}
-    \termitem{size}{W, H}
-Change the size of the window.  \arg{W} and \arg{H} are expressed
-in character units.
-    \termitem{position}{X, Y}
-Change the top-left corner of the window.  The values are expressed
-in pixel units.
-    \termitem{zorder}{ZOrder}
-Change the location in the window stacking order.  Values are
-\const{bottom}, \const{top}, \const{topmost} and \const{notopmost}.
-\emph{Topmost} windows are displayed above all other windows.
-    \termitem{show}{Bool}
-If \const{true}, show the window, if \const{false} hide the window.
-    \termitem{activate}{}
-If present, activate the window.
+    \predicate{epilog}{0}
+Open a new Epilog console.  SWI-Prolog creates a new thread that runs
+the REPL loop and has its input and output connected to the new console.
+
+    \predicate{epilog}{1}{+Options}
+Open an Epilog console with additional \arg{Options}.
+
+\begin{description}
+    \termitem{title}{+String}
+Set the window title.
+    \termitem{rows}{+Integer}
+Height of the initial terminal in lines (default 25).
+    \termitem{cols}{+Integer}
+Width of the initial terminal in characters (default 80).
+    \termitem{init}{:Goal}
+Run Goal as initialization goal. Default calls version/0 for the
+first and true/0 for subsequent terminals.
+    \termitem{goal}{:Goal}
+Run Goal as REPL loop.  Default runs prolog/0.
+    \termitem{main}{+Bool}
+If \const{true}, act as application main window.   In this case epilog/1
+runs the main thread and returns after all windows have been closed.
 \end{description}
 
-    \predicate{win_window_color}{2}{+Which, +RGB}
-Change the color of the console window.  \arg{Which} is one of
-\const{foreground}, \const{background}, \const{selection_foreground} or
-\const{selection_background}. \arg{RGB} is a term
-\term{rgb}{Red,Green,Blue} where the components are values between 0
-and 255. The defaults are established using the Windows API
-GetSysColor().
+    \predicate{set_epilog}{1}{+Option}
+Modify the Epilog console attached to the calling thread. Option is one
+of:
 
-    \predicate{win_has_menu}{0}{}
-True if win_insert_menu/2 and win_insert_menu_item/4 are present.
+\begin{description}
+\termitem{title}{+Title}
+\termitem{foreground}{+Color}
+\termitem{background}{+Color}
+\termitem{selection_foreground}{+Color}
+\termitem{selection_background}{+Color}
+\termitem{menu}{+Label, +Before}
+Add a new popup to the Epilog menu. The popus is added before Before. If
+Before is `-`, the new popup is added to the right.
+\termitem{menu_item}{+PopupName, +Item, +Before, :Goal}
 
-    \predicate{win_insert_menu}{2}{+Label, +Before}
-Insert a new entry (pulldown) in the menu.  If the menu already contains
-this entry, nothing is done.  The \arg{Label} is the label and, using the
-Windows convention, a letter prefixed with \const{\&} is underlined and
-defines the associated accelerator key. \arg{Before} is the label before
-which this one must be inserted. Using \chr{-} adds the new entry at the
-end (right).  For example, the call below adds an {\sf Application}
-entry just before the {\sf Help} menu.
+Insert an item in the Epilog console menu. PopupName is the popup in
+which to insert the item. Item is the name for the new item. If Item is
+\const{--}, a \jargon{separator} is inserted. Before is the name of the
+item before which to insert the new item. If this is \const{-}, the item
+is appended.
 
-\begin{code}
-win_insert_menu('&Application', '&Help')
-\end{code}
+Goal is \jargon{injected} into  the  current   terminal  of  the Epilog
+window. This implies that we assume  that the console is waiting
+for the user. Eventually,  we  probably   want  a  more flexible
+solution.
 
-    \predicate{win_insert_menu_item}{4}{+Pulldown, +Label, +Before, :Goal}
-Add an item to the named \arg{Pulldown} menu. \arg{Label} and
-\arg{Before} are handled as in win_insert_menu/2, but the label \chr{-}
-inserts a \jargon{separator}.  \arg{Goal} is called if the user selects
-the item.
+This predicate raises \term{existence_error}{epilog, Thread} if the
+(calling) thread has no attached Epilog window.  Threads are started
+in an Epilog window have the Prolog flag \prologflag{console_menu}
+set to \const{true}.
+\end{description}
 \end{description}
 
 
@@ -10770,7 +10933,7 @@ mapped to Prolog exceptions using a generic function that receives the
 \const{directory}), the term that describes the object (name) of the
 file system and the \const{errno} value. Unfortunately, the resulting
 exceptions are often misleading. For example, calling make_directory/1
-such that it must create mutiple directories (e.g., \const{d1/d2/d3})
+such that it must create multiple directories (e.g., \const{d1/d2/d3})
 returns an existence error on the directory \const{d1/d2/d3} rather than
 the missing component. On Windows the situation is even worse because
 many of its runtime functions distinguish only a few error codes. For
@@ -10994,9 +11157,16 @@ specified both as \fileext{ext} or plain \const{ext}.
     \termitem{relative_to}{+FileOrDir}
 Resolve the path relative to the given directory or the directory
 holding the given file.  Without this option, paths are resolved
-relative to the working directory (see working_directory/2) or,
-if \arg{Spec} is atomic and absolute_file_name/[2,3] is executed
-in a directive, it uses the current source file as reference.
+relative to the working directory (see working_directory/2) or, if
+\arg{Spec} is atomic and absolute_file_name/[2,3] is executed in a
+directive, it uses the current source file as reference.  Note that a
+directive using initialization/1 is executed \emph{after} loading the
+file.  This implies that such paths are resolved relative to the
+working directory for the toplevel file and relative to the file
+loading the file holding the initialization/1 directive otherwise.
+
+Up to version 9.3.9, the system tried \emph{both} the directory
+holding the current source and the current working directory.
 
     \termitem{access}{Mode}
 Imposes the condition access_file(\arg{File}, \arg{Mode}). \arg{Mode} is
@@ -11207,7 +11377,7 @@ If the \argoption{-t}{toplevel} command line option is given, this goal
 is started instead of entering the default interactive top level
 (prolog/0).
 
-Notably the gui based versions (\program{swipl-win} on Windows and
+Notably the GUI based versions (\program{swipl-win} on Windows and
 MacOS) provide the menu \textsf{Run/New thread} that opens a new
 toplevel that runs concurrently with the initial toplevel. The
 concurrent toplevel can be used to examine the program, in particular
@@ -11221,11 +11391,11 @@ Abort the Prolog execution and restart the top level. If the
 restarted instead of entering the default interactive top level.
 
 Aborting is implemented by throwing the reserved exception
-\verb='$aborted'=. This exception can be caught using catch/3, but the
-recovery goal is wrapped with a predicate that prunes the choice points
-of the recovery goal (i.e., as once/1) and re-throws the exception.
-This is illustrated in the example below, where we press control-C
-and `a'.  See also \secref{urgentexceptions}.
+\term{unwind}{abort}. This exception can be caught using catch/3, but
+the recovery goal is wrapped with a predicate that prunes the choice
+points of the recovery goal (i.e., as once/1) and re-throws the
+exception. This is illustrated in the example below, where we press
+control-C and `a'. See also \secref{urgentexceptions}.
 
 \begin{code}
 ?- catch((repeat,fail), E, true).
@@ -11240,8 +11410,16 @@ flags \prologflag{on_error} or \prologflag{on_warning} is set to
 \const{status} and there have been errors or warnings.
 
     \predicate[ISO]{halt}{1}{+Status}
-Terminate Prolog execution with \arg{Status}. This predicate calls
-PL_halt() which preforms the following steps:
+Terminate Prolog execution with \arg{Status}.  When possible, raise
+the exception \term{unwind}{\term{halt}{Status}}.  Currently, this is
+used when halt/1 is called in the \const{main} thread and there is no
+intermediate C function on the stack that called PL_next_solution()
+without the \const{PL_Q_PASS_EXCEPTION} flag.  Future versions may
+also use signal based exit from threads.
+
+After the exception bubbled up to the top or if the halt exception could
+not be raised, system termination starts. System termination (see also
+PL_halt()) preforms the following steps:
 
     \begin{enumerate}
     \item Set the Prolog flag \prologflag{exit_status} to \arg{Status}.
@@ -11257,9 +11435,11 @@ PL_halt() which preforms the following steps:
     \item Perform the following system cleanup actions:
 
     \begin{itemize}
-    \item Cancel all threads, calling thread_at_exit/1 registered
-          termination hooks.  Threads not responding within 1 second
-	  are cancelled forcefully.
+    \item Raise \term{unwind}{\term{halt}{Status}} in all running threads.
+    \item Wait for a maximum of 1 second for all threads to respond to
+          this exception. Registered thread_at_exit/1 hooks are
+	  executed. Threads not responding within 1 second are cancelled
+	  forcefully.
     \item Flush I/O and close all streams except for standard I/O.
     \item Reset the terminal if its properties were changed.
     \item Remove temporary files and incomplete compilation output.
@@ -11633,7 +11813,7 @@ calling thread \emph{and} has been \jargon{joined} by the calling
 thread. The new keys \const{self_cputime} and \const{self_inferences}
 may be used to get statistics for the calling thread only. Both keys
 also exist in the single threaded version, where the ``self'' key
-always returns the same value as the onle without ``self''.
+always returns the same value as the one without ``self''.
 
 \begin{table}
 \begin{center}
@@ -11656,7 +11836,7 @@ cputime         & (User) {\sc cpu} time since thread was started in seconds.
 		  Includes {\sc cpu} time in completed \jargon{child threads}.
 		  See also \const{self_cputime} and \const{process_cputime}. \\
 epoch		& Time stamp when thread was started \\
-errors		& Number of error mesages printed \\
+errors		& Number of error messages printed \\
 functors        & Total number of defined name/arity pairs \\
 functor_space   & Bytes used to represent functors \\
 global          & Allocated size of the global stack in bytes \\
@@ -11696,7 +11876,7 @@ engines_created & MT-version: number of created engines \\
 threads_peak	& MT-version: highest id handed out.  This is a fair but
 		  possibly not 100\% accurate value for the highest
 		  number of threads since the process was created. \\
-warnings	& Number of warning mesages printed \\
+warnings	& Number of warning messages printed \\
 \hline
 \end{tabular}
 \end{center}
@@ -11872,7 +12052,7 @@ The default suffices, unless the user redefines related hooks. Do
 of memory available for your real task.
 
 Related hooks are message_hook/3 (redefining GC messages),
-prolog_trace_interception/4 and prolog_exception_hook/4.
+prolog_trace_interception/4 and prolog_exception_hook/5.
 \end{description}
 
     \predicate{prolog_stack_property}{2}{?Stack, ?KeyValue}

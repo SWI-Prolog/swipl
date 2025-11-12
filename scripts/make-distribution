@@ -8,7 +8,6 @@ fi
 version=`cat VERSION`
 pdf_build_dir=build.pdf
 PUBLIC="plweb@oehoe:srv/plweb/data/download/stable"
-QT_BIN=$HOME/Qt6.6/6.6.1/macos/bin
 export MACOSX_DEPLOYMENT_TARGET=10.15
 
 build_pdf()
@@ -22,82 +21,29 @@ build_pdf()
 
 # Build the Windows version using the Docker from
 # https://github.com/SWI-Prolog/docker-swipl-build-mingw.git
-#
-# Comment to build locally. See README.win32   for the setup. Be warned,
-# this is complicated! Disabled profile   guide optimization for Windows
-# as it is broken in recent   Ubuntu  releases. Linking the instrumented
-# binary fails due to a missing  symbols   in  libgcov.a.  The Docker is
-# based on Fedora.
 
 MINGW_DOCKER_DIR=$HOME/src/docker/docker-swipl-build-mingw
 
-build_win32()
-{ if [ ! -z "$MINGW_DOCKER_DIR" ]; then
-    make -C $MINGW_DOCKER_DIR SWIPLSRC=$HOME/src/swipl win32
-  else
-    rm -rf build.win32
-    mkdir build.win32
-    ( cd build.win32
-      cmake -DCMAKE_BUILD_TYPE=Release \
-            -DSWIPL_CC=gcc.exe -DSWIPL_CXX=g++.exe \
-	    -DCMAKE_TOOLCHAIN_FILE=../cmake/cross/linux_win32.cmake \
-	    -DJAVA_COMPATIBILITY=ON \
-	    -G Ninja ..
-      ninja
-      cpack
-    )
-  fi
-}
-
 build_win64()
-{ if [ ! -z "$MINGW_DOCKER_DIR" ]; then
-    make -C $MINGW_DOCKER_DIR SWIPLSRC=$HOME/src/swipl win64
-  else
-  rm -rf build.win64
-    mkdir build.win64
-    ( cd build.win64
-      cmake -DCMAKE_BUILD_TYPE=Release \
-            -DSWIPL_CC=gcc.exe -DSWIPL_CXX=g++.exe \
-	    -DJAVA_HOME="$HOME/.wine/drive_c/Program Files/Java/jdk-13.0.2" \
-	    -DCMAKE_TOOLCHAIN_FILE=../cmake/cross/linux_win64.cmake \
-	    -DJAVA_COMPATIBILITY=ON \
-	    -G Ninja ..
-      ninja
-      cpack
-    )
-  fi
+{ make -C $MINGW_DOCKER_DIR SWIPLSRC=`pwd` win64
 }
-
-# Used on the M1 where we build using Clang and Qt
-build_macosx()
-{ rm -rf build.macosx
-  mkdir build.macosx
-  ( cd build.macosx
-    export PATH=$HOME/deps/bin:$QT_BIN:$PATH
-    MACOSX_DEPLOYMENT_TARGET=10.14 \
-	cmake -DCMAKE_BUILD_TYPE=Release \
-	      -DSWIPL_CC=cc -DSWIPL_CXX=c++ \
-	      -DUSE_GMP=OFF \
-	      -DMACOSX_DEPENDENCIES_FROM=$HOME/deps \
-              -DBUILD_MACOS_BUNDLE=ON \
-	      -DJAVA_COMPATIBILITY=ON \
-	      -G Ninja ..
-    ninja
-    cpack
-  )
-}
-
 
 build_macos_universal_binary()
 { rm -rf build.macosx-fat
   mkdir build.macosx-fat
   ( cd build.macosx-fat
+    PREFIX=$HOME/deps
+    export PKG_CONFIG_LIBDIR="/usr/lib/pkgconfig:$PREFIX/lib/pkgconfig"
+    export CMAKE_PREFIX_PATH="$PREFIX:/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr"
+    CUFLAGS="-arch x86_64"
+    export CFLAGS="-Wno-nullability-completeness $CUFLAGS"
+    export CXXFLAGS="$CFLAGS"
     export PATH=$HOME/deps/bin:$QT_BIN:$PATH
-    CFLAGS="-arch x86_64" CXXFLAGS="-arch x86_64" \
     MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET \
 	cmake -DCMAKE_BUILD_TYPE=Release \
 	      -DSWIPL_CC=cc -DSWIPL_CXX=c++ \
 	      -DMACOSX_DEPENDENCIES_FROM=$HOME/deps \
+	      -DPKG_CONFIG_EXECUTABLE=/opt/local/bin/pkg-config \
               -DMACOS_UNIVERSAL_BINARY=ON \
               -DBUILD_MACOS_BUNDLE=ON \
 	      -DJAVA_COMPATIBILITY=ON \
@@ -109,25 +55,6 @@ build_macos_universal_binary()
 }
 
 
-# Use gcc 13 from Macport `port install gcc13`
-build_macosx_gcc()
-{ rm -rf build.macosx-gcc
-  mkdir build.macosx-gcc
-  ( cd build.macosx-gcc
-    export PATH=$HOME/deps/bin:$QT_BIN:$PATH
-    export CC=gcc-mp-13
-    MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET \
-        cmake -DCMAKE_BUILD_TYPE=PGO \
-	      -DSWIPL_CC=cc -DSWIPL_CXX=c++ \
-              -DMACOSX_DEPENDENCIES_FROM=$HOME/deps \
-              -DBUILD_MACOS_BUNDLE=ON \
-              -DJAVA_COMPATIBILITY=ON \
-              -G Ninja ..
-    ninja
-    cpack
-  )
-}
-
 build_source()
 { ./scripts/make-src-tape
 }
@@ -136,6 +63,19 @@ ubuntu()
 { $HOME/src/docker/ubuntu/run.sh -C $(pwd) $*
 }
 
+# Build a single PPA in case something went wrong and we need
+# to retry.
+build_PPA()
+{ distro=$1
+
+  git checkout ppa
+  git rebase master
+  ubuntu ./scripts/make-ppa --distro=$distro --push
+  git checkout master
+  git submodule update debian
+}
+
+# Build all PPAs
 build_PPAs()
 { git branch -D ppa || true
   git checkout -b ppa
@@ -169,7 +109,6 @@ list_built()
     list_file build.macosx-gcc/swipl-${version}-1.x86_64.dmg
     list_file build.macosx/swipl-${version}-1.x86_64.dmg
   else
-    ls -l build.win32/swipl-${version}-1.x86.exe
     ls -l build.win64/swipl-${version}-1.x64.exe
     ls -l build.pdf/man/SWI-Prolog-$version.pdf
     ls -l ../swipl-$version.tar.gz
@@ -189,7 +128,6 @@ force_build()
     fi
   else
     build_pdf
-    build_win32
     build_win64
     build_source
     [ "$PPA" = no ] || build_PPAs
@@ -205,10 +143,6 @@ upload_file()
 { if [ -f "$2" ]; then
     rsync -Pvu "$2" ${PUBLIC}/$1
   fi
-}
-
-upload_win32()
-{ upload_file bin build.win32/swipl-${version}-1.x86.exe
 }
 
 upload_win64()
@@ -240,7 +174,6 @@ upload()
 { if [ $(uname) = Darwin ]; then
     upload_macosx
   else
-    upload_win32
     upload_win64
     upload_pdf
     upload_src

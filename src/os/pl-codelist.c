@@ -41,7 +41,7 @@ codes_or_chars_to_buffer(term_t l, unsigned int flags, int wide,
 			 CVT_code *status)
 
 If l represents a list of codes   or characters, return a buffer holding
-the characters. If wide == TRUE  the   buffer  contains  objects of type
+the characters. If wide == true  the   buffer  contains  objects of type
 pl_wchar_t. Otherwise it contains traditional characters.  If wchar_t is
 2 bytes wide, the result contains surrogate pairs.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
@@ -54,11 +54,11 @@ codes_or_chars_to_buffer(term_t l, unsigned int flags, int wide,
   word list = valHandle(l);
   word slow;
   Word arg, tail;
-  int step_slow = TRUE;
+  int step_slow = true;
   enum { CHARS, CODES } type;
 
   if ( isList(list) )
-  { intptr_t c = -1;
+  { sword c = -1;
 
     arg = argTermP(list, 0);
     deRef(arg);
@@ -100,7 +100,7 @@ codes_or_chars_to_buffer(term_t l, unsigned int flags, int wide,
 
   slow = list;
   while( isList(list) )
-  { intptr_t c = -1;
+  { sword c = -1;
 
     arg = argTermP(list, 0);
     deRef(arg);

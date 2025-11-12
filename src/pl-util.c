@@ -142,7 +142,7 @@ predicateName(Definition def)
     return "(nil)";
 
   if ( def->module != MODULE_user && !isUserSystemPredicate(def) )
-  { if ( def->module && GD->cleaning != CLN_DATA )
+  { if ( def->module && GD->halt.cleaning != CLN_DATA )
       strcpy(e, atom_summary(def->module->name, 50));
     else
       strcpy(e, "(nil)");
@@ -180,7 +180,7 @@ functorName(functor_t f)
 char *
 keyName(word key)
 { if ( tagex(key) == (TAG_ATOM|STG_GLOBAL) )
-  { return functorName(key);
+  { return functorName(word2functor(key));
   } else
   { char tmp[650];
 
@@ -207,7 +207,7 @@ keyName(word key)
 	  break;
 	}
         case TAG_ATOM:
-	  strcpy(tmp, atom_summary(key, 30));
+	  strcpy(tmp, atom_summary(word2atom(key), 30));
 	  break;
 	case TAG_STRING:
 	  strcpy(tmp, string_summary(key, 30));
@@ -241,7 +241,7 @@ generationName(gen_t gen)
     return "GEN_INFINITE";
 
   if ( gen > GEN_TRANSACTION_BASE )
-  { int tid    = (gen-GEN_TRANSACTION_BASE)/GEN_TRANSACTION_SIZE;
+  { int tid    = (int)((gen-GEN_TRANSACTION_BASE)/GEN_TRANSACTION_SIZE);
     int64_t g2 = (gen-GEN_TRANSACTION_BASE)%GEN_TRANSACTION_SIZE;
 
     Ssprintf(tmp, "%d@%" PRIi64, tid, (int64_t)g2);
@@ -295,8 +295,8 @@ static bool
 isUserSystemPredicate(Definition def)
 { GET_LD
 
-  if ( true(def, P_LOCKED) &&
-       GD->cleaning != CLN_DATA &&
+  if ( ison(def, P_LOCKED) &&
+       GD->halt.cleaning != CLN_DATA &&
        isCurrentProcedure(def->functor->functor, MODULE_user) )
     succeed;
 
@@ -310,7 +310,7 @@ notImplemented(char *name, int arity)
 }
 
 
-word
+foreign_t
 setBoolean(int *flag, term_t old, term_t new)
 { if ( !PL_unify_bool_ex(old, *flag) ||
        !PL_get_bool_ex(new, flag) )
@@ -320,7 +320,7 @@ setBoolean(int *flag, term_t old, term_t new)
 }
 
 
-word
+foreign_t
 setInteger(int *flag, term_t old, term_t new)
 { GET_LD
 
@@ -330,4 +330,3 @@ setInteger(int *flag, term_t old, term_t new)
 
   succeed;
 }
-

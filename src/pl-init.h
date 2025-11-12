@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2012-2022, University of Amsterdam
+    Copyright (c)  2012-2024, University of Amsterdam
 			      CWI, Amsterdam
 			      SWI-Prolog Solutions b.v.
     All rights reserved.
@@ -99,6 +99,7 @@ typedef struct
 		 *******************************/
 
 int		startProlog(int argc, char **argv);
+void		printCrashContext(const char *btname);
 bool		sysError(const char *fm, ...);
 void		fatalError(const char *fm, ...) NORETURN;
 bool		warning(const char *fm, ...);
@@ -117,7 +118,7 @@ int		opt_append(opt_list **l, const char *s);
 #define SYSTEMHOME "/usr/lib/swipl"
 #endif
 #ifndef NOTTYCONTROL
-#define NOTTYCONTROL FALSE
+#define NOTTYCONTROL false
 #endif
 
 #ifndef PLARCH
@@ -128,8 +129,8 @@ int		opt_append(opt_list **l, const char *s);
 #endif
 
 
-#define DEF_DEFDEFSTACKLIMIT	(((size_t)1024/8)*1024*1024*SIZEOF_VOIDP)
-#define DEF_DEFTABLE		(((size_t)1024/8)*1024*1024*SIZEOF_VOIDP)
+#define DEF_DEFDEFSTACKLIMIT	(((size_t)1024/8)*1024*1024*SIZEOF_WORD)
+#define DEF_DEFTABLE		(((size_t)1024/8)*1024*1024*SIZEOF_WORD)
 
 #ifndef DEFSTACKLIMIT
 #define DEFSTACKLIMIT   DEF_DEFDEFSTACKLIMIT

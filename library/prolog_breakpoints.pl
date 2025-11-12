@@ -46,20 +46,19 @@
 :- autoload(library(error), [existence_error/2]).
 :- autoload(library(lists), [nth1/3, member/2]).
 :- autoload(library(prolog_clause), [clause_info/4, clause_name/2]).
+:- autoload(library(apply), [maplist/2]).
+:- autoload(library(broadcast), [broadcast/1]).
 
 
 /** <module> Manage Prolog break-points
 
 This module provides an  interface  for   development  tools  to set and
 delete break-points, giving a location in  the source. Development tools
-that want to track changes to   breakpoints must use user:message_hook/3
-to intercept these message terms:
+that want to track changes  to  breakpoints   must  use  listen/2 on the
+messages below. See library(broadcast).
 
-  * breakpoint(set, Id)
-  * breakpoint(delete, Id)
-
-Note that the hook must fail  after   creating  its side-effects to give
-other hooks the opportunity to react.
+  * prolog(breakpoint(set, Id))
+  * prolog(breakpoint(delete, Id))
 */
 
 %!  set_breakpoint(+File, +Line, +Char, -Id) is det.
@@ -268,6 +267,7 @@ delete_breakpoint(ClauseRef, PC) :-
     call_cleanup(break_message(breakpoint(delete, Id)), erase(Ref)).
 
 break_message(Message) :-
+    broadcast(prolog(Message)),
     print_message(informational, Message).
 
 %!  break_location(+ClauseRef, +PC, -File, -Pos) is det.

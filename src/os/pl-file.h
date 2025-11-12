@@ -65,6 +65,7 @@ typedef enum iri_op
 #define	getBinaryOutputStream(t, s)	LDFUNC(getBinaryOutputStream, t, s)
 #define pushOutputContext(s)		LDFUNC(pushOutputContext, s)
 #define popOutputContext(_)		LDFUNC(popOutputContext, _)
+#define validUserStreams(_)		LDFUNC(validUserStreams, _)
 #endif /*USE_LD_MACROS*/
 
 #define LDFUNC_DECLARATIONS
@@ -72,6 +73,7 @@ typedef enum iri_op
 /* pl-file.c */
 void		initIO(void);
 void		dieIO(void);
+bool		validUserStreams(void);
 void		referenceStandardStreams(PL_local_data_t *ld);
 void		unreferenceStandardStreams(PL_local_data_t *ld);
 void		copyStandardStreams(PL_local_data_t *ldnew,
@@ -83,8 +85,8 @@ int		getTextInputStream(term_t t, IOSTREAM **s);
 int		getBinaryInputStream(term_t t, IOSTREAM **s);
 int		getTextOutputStream(term_t t, IOSTREAM **s);
 int		getBinaryOutputStream(term_t t, IOSTREAM **s);
-int		reportStreamError(IOSTREAM *s);
-int		streamStatus(IOSTREAM *s);
+bool		reportStreamError(IOSTREAM *s);
+bool		streamStatus(IOSTREAM *s);
 int		setFileNameStream(IOSTREAM *s, atom_t name);
 atom_t		fileNameStream(IOSTREAM *s);
 int		getSingleChar(IOSTREAM *s, int signals);
@@ -98,8 +100,8 @@ int		pl_seen(void);
 int		seeString(const char *s);
 int		seeingString(void);
 int		seenString(void);
-int		tellString(char **s, size_t *size, IOENC enc);
-int		toldString(void);
+bool		tellString(char **s, size_t *size, IOENC enc);
+bool		toldString(void);
 void		prompt1(atom_t prompt);
 atom_t		PrologPrompt(void);
 int		streamNo(term_t spec, int mode);
@@ -108,7 +110,7 @@ int		unifyTime(term_t t, time_t time);
 #ifdef __WINDOWS__
 word		pl_make_fat_filemap(term_t dir);
 #endif
-int		PL_unify_stream_or_alias(term_t t, IOSTREAM *s);
+bool		PL_unify_stream_or_alias(term_t t, IOSTREAM *s);
 void		pushOutputContext(IOSTREAM *s);
 void		popOutputContext(void);
 int		setupOutputRedirect(term_t to,

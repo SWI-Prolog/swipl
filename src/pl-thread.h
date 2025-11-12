@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1999-2024, University of Amsterdam
+    Copyright (c)  1999-2025, University of Amsterdam
                               VU University Amsterdam
 			      CWI, Amsterdam
 			      SWI-Prolog Solutions b.v.
@@ -108,10 +108,10 @@ typedef struct _PL_thread_info_t
   unsigned short    open_count;		/* for PL_thread_detach_engine() */
   unsigned	    detached      : 1;	/* detached thread */
   unsigned	    debug         : 1;	/* thread can be debugged */
-  unsigned	    in_exit_hooks : 1;	/* TRUE: running exit hooks */
-  unsigned	    has_tid       : 1;	/* TRUE: tid = valid */
-  unsigned	    is_engine	  : 1;	/* TRUE: created as engine */
-  unsigned	    c_stack_low   : 1;	/* TRUE: Signalled low C stack */
+  unsigned	    in_exit_hooks : 1;	/* true: running exit hooks */
+  unsigned	    has_tid       : 1;	/* true: tid = valid */
+  unsigned	    is_engine	  : 1;	/* true: created as engine */
+  unsigned	    c_stack_low   : 1;	/* true: Signalled low C stack */
   unsigned	    joined_by_creator : 1;
   int		    joining_by;		/* TID of joining thread */
   c_stack_info	   *c_stack;
@@ -119,12 +119,14 @@ typedef struct _PL_thread_info_t
   size_t	    table_space;	/* Max size for local tables */
   rc_cancel	    (*cancel)(int id);	/* cancel function */
   thread_status	    status;		/* PL_THREAD_* */
+#ifdef O_PLMT
   pthread_t	    tid;		/* Thread identifier */
 #ifdef PID_IDENTIFIES_THREAD
   pid_t		    pid;		/* for identifying */
 #endif
 #ifdef __WINDOWS__
   DWORD		    w32id;		/* Win32 thread HANDLE */
+#endif
 #endif
   struct PL_local_data  *thread_data;	/* The thread-local data  */
   module_t	    module;		/* Module for starting goal */
@@ -178,7 +180,7 @@ typedef struct message_queue
 { struct thread_message   *head;	/* Head of message queue */
   struct thread_message   *tail;	/* Tail of message queue */
   uint64_t	       sequence_next;	/* next for sequence id */
-  word		       id;		/* Id of the queue */
+  atom_t	       id;		/* Id of the queue */
   size_t	       size;		/* # terms in queue */
   size_t	       max_size;	/* Max # terms in queue */
   int		       waiting;		/* # waiting threads */
@@ -514,26 +516,28 @@ static inline	PL_local_data_t *acquire_ldata(DECL_LD PL_thread_info_t *info);
 #define HAVE_PTHREAD_EXIT 1
 #endif
 
-int		exitPrologThreads(void);
-bool		aliasThread(int tid, atom_t type, atom_t name);
-word		pl_thread_create(term_t goal, term_t id,
-				 term_t options);
-#if HAVE_PTHREAD_EXIT
-word		pl_thread_exit(term_t retcode);
-#endif
+#if USE_LD_MACROS
+#define localiseDefinition(def)		LDFUNC(localiseDefinition, def)
+#define unify_thread_id(id, info)	LDFUNC(unify_thread_id, id, info)
+#endif /*USE_LD_MACROS*/
+#define LDFUNC_DECLARATIONS
 
+bool		exitPrologThreads(void);
+bool		aliasThread(int tid, atom_t type, atom_t name);
+foreign_t	pl_thread_create(term_t goal, term_t id,
+				 term_t options);
 foreign_t	pl_thread_at_exit(term_t goal);
 int		PL_thread_self(void);
 #ifdef O_ENGINES
-int		unify_thread_id(term_t id, PL_thread_info_t *info);
+bool		unify_thread_id(term_t id, PL_thread_info_t *info);
 #endif
-int		enableThreads(int enable);
+bool		enableThreads(bool enable);
 
 
 const char *	threadName(int id);
 void		executeThreadSignals(int sig);
 foreign_t	pl_attach_xterm(term_t in, term_t out);
-int		attachConsole(void);
+bool		attachConsole(void);
 Definition	localiseDefinition(Definition def);
 LocalDefinitions new_ldef_vector(void);
 void		free_ldef_vector(LocalDefinitions ldefs);
@@ -547,6 +551,8 @@ intptr_t	system_thread_id(PL_thread_info_t *info);
 void		get_current_timespec(struct timespec *time);
 void		carry_timespec_nanos(struct timespec *time);
 void		free_predicate_references(PL_local_data_t *ld);
+double		halt_grace_time(void);
+#undef LDFUNC_DECLARATIONS
 
 
 		 /*******************************
@@ -603,7 +609,7 @@ foreign_t	pl_thread_self(term_t self);
 
 typedef struct
 { functor_t functor;			/* functor of property */
-  int LDFUNCP (*function)(DECL_LD void *ctx, term_t a);	/* function to generate */
+  bool LDFUNCP (*function)(DECL_LD void *ctx, term_t a);	/* function to generate */
 } tprop;
 
 #if USE_LD_MACROS
@@ -617,28 +623,27 @@ typedef struct
 #define require_c_stack(needed)		LDFUNC(require_c_stack, needed)
 #define clear_low_c_stack(_)		LDFUNC(clear_low_c_stack, _)
 #endif /*USE_LD_MACROS*/
-
 #define LDFUNC_DECLARATIONS
 
 int		get_prop_def(term_t t, atom_t expected,
 			     const tprop *list, const tprop **def);
 void		initPrologThreads(void);
-int		pl_atom_table_in_use(AtomTable atom_table);
-int		pl_atom_bucket_in_use(Atom *atom_bucket);
+bool		pl_atom_table_in_use(AtomTable atom_table);
+bool		pl_atom_bucket_in_use(Atom *atom_bucket);
 Atom**		pl_atom_buckets_in_use(void);
 Definition*	predicates_in_use(void);
-int		pl_functor_table_in_use(FunctorTable functor_table);
-int		pl_kvs_in_use(KVS kvs);
+bool		pl_functor_table_in_use(FunctorTable functor_table);
+bool		pl_kvs_in_use(KVS kvs);
 definition_ref* pushPredicateAccessObj(Definition def);
 void		popPredicateAccess(Definition def);
 size_t		popNPredicateAccess(size_t n);
 void		markAccessedPredicates(PL_local_data_t *ld);
-int		cgc_thread_stats(cgc_stats *stats);
-int		signalGCThread(int sig);
-int		isSignalledGCThread(int sig);
+bool		cgc_thread_stats(cgc_stats *stats);
+bool		signalGCThread(int sig);
+bool		isSignalledGCThread(int sig);
 double		ThreadCPUTime(int which);
 void		updatePendingThreadSignals(void);
-int		require_c_stack(size_t needed);
+bool		require_c_stack(size_t needed);
 void		clear_low_c_stack(void);
 
 #undef LDFUNC_DECLARATIONS

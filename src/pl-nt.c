@@ -35,6 +35,7 @@
 */
 
 #ifdef __WINDOWS__
+#define SWIPL_WINDOWS_NATIVE_ACCESS 1
 #include <winsock2.h>			/* Needed on VC8 */
 #include <windows.h>
 #include <psapi.h>
@@ -77,7 +78,7 @@ int
 hasConsole(void)
 { HANDLE h;
 
-  if ( GD->os.gui_app == FALSE )	/* has been set explicitly */
+  if ( GD->os.gui_app == false )	/* has been set explicitly */
     succeed;
 
 					/* I found a console */
@@ -94,34 +95,18 @@ hasConsole(void)
 }
 
 
-int
-PL_wait_for_console_input(void *handle)
-{ BOOL rc;
-  HANDLE hConsole = handle;
-
-  for(;;)
-  { rc = MsgWaitForMultipleObjects(1,
-				   &hConsole,
-				   FALSE,	/* wait for either event */
-				   INFINITE,
-				   QS_ALLINPUT);
-
-    if ( rc == WAIT_OBJECT_0+1 )
-    { MSG msg;
-
-      while( PeekMessage(&msg, NULL, 0, 0, PM_REMOVE) )
-      { TranslateMessage(&msg);
-	DispatchMessage(&msg);
-      }
-    } else if ( rc == WAIT_OBJECT_0 )
-    { return TRUE;
-    } else
-    { DEBUG(MSG_WIN_API,
-	    Sdprintf("MsgWaitForMultipleObjects(): 0x%x\n", rc));
-    }
+bool
+win_input_ready(IOSTREAM *input)
+{ HANDLE hConsole = Swinhandle(input);
+  if ( !hConsole )
+    return false;
+  if ( WaitForSingleObject(hConsole, 0) == WAIT_OBJECT_0 )
+  { DWORD count;
+    GetNumberOfConsoleInputEvents(hConsole, &count);
+    return count > 0;
   }
+  return false;
 }
-
 
 		 /*******************************
 		 *	    MESSAGE BOX		*
@@ -209,25 +194,25 @@ WinError(void)
 		 *	  SLEEP/1 SUPPORT	*
 		 *******************************/
 
-int
+bool
 Pause(double t)
 { HANDLE h;
 
   if ( t <= 0.0 )
   { SwitchToThread();
-    return TRUE;
+    return true;
   }
 
-  if ( (h = CreateWaitableTimer(NULL, TRUE, NULL)) )
+  if ( (h = CreateWaitableTimer(NULL, true, NULL)) )
   { LARGE_INTEGER ft;
 
     ft.QuadPart = -(LONGLONG)(t * 10000000.0); /* 100 nanosecs per tick */
 
-    SetWaitableTimer(h, &ft, 0, NULL, NULL, FALSE);
+    SetWaitableTimer(h, &ft, 0, NULL, NULL, false);
     for(;;)
     { int rc = MsgWaitForMultipleObjects(1,
 					 &h,
-					 FALSE,
+					 false,
 					 INFINITE,
 					 QS_ALLINPUT);
       if ( rc == WAIT_OBJECT_0+1 )
@@ -237,32 +222,32 @@ Pause(double t)
 	{ TranslateMessage(&msg);
 	  DispatchMessage(&msg);
 	  if ( PL_exception(0) )
-	    return FALSE;
+	    return false;
 	}
 
 	if ( PL_handle_signals() < 0 )
 	{ CloseHandle(h);
-	  return FALSE;
+	  return false;
 	}
       } else
 	break;
     }
     CloseHandle(h);
 
-    return TRUE;
+    return true;
   } else				/* Pre NT implementation */
   { DWORD msecs = (DWORD)(t * 1000.0);
 
     while( msecs >= 100 )
     { Sleep(100);
       if ( PL_handle_signals() < 0 )
-	return FALSE;
+	return false;
       msecs -= 100;
     }
     if ( msecs > 0 )
       Sleep(msecs);
 
-    return TRUE;
+    return true;
   }
 }
 
@@ -338,7 +323,7 @@ void
 setOSPrologFlags(void)
 { PL_set_prolog_flag("cpu_count", PL_INTEGER, (intptr_t)CpuCount());
 #ifdef MSYS2
-  PL_set_prolog_flag("msys2", PL_BOOL|FF_READONLY, TRUE);
+  PL_set_prolog_flag("msys2", PL_BOOL|FF_READONLY, true);
 #endif
 }
 
@@ -475,7 +460,7 @@ win_exec(size_t len, const wchar_t *cmd, UINT show)
   rval = CreateProcessW(NULL,		/* app */
 			wcmd,
 			NULL, NULL,	/* security */
-			FALSE,		/* inherit handles */
+			false,		/* inherit handles */
 			0,		/* flags */
 			NULL,		/* environment */
 			NULL,		/* Directory */
@@ -530,7 +515,7 @@ System(char *command)			/* command is a UTF-8 string */
 		      wcmd,			/* command line */
 		      NULL,			/* Security stuff */
 		      NULL,			/* Thread security stuff */
-		      FALSE,			/* Inherit handles */
+		      false,			/* Inherit handles */
 		      CREATE_NO_WINDOW,		/* flags */
 		      NULL,			/* environment */
 		      NULL,			/* CWD */
@@ -552,9 +537,9 @@ System(char *command)			/* command is a UTF-8 string */
 	Sleep(50);
 
       rval = GetExitCodeProcess(pinfo.hProcess, &code);
-    } while(rval == TRUE && code == STILL_ACTIVE);
+    } while(rval == true && code == STILL_ACTIVE);
 
-    shell_rval = (rval == TRUE ? code : -1);
+    shell_rval = (rval == true ? code : -1);
     CloseHandle(pinfo.hProcess);
   } else
   { discardBuffer(&buf);
@@ -565,7 +550,7 @@ System(char *command)			/* command is a UTF-8 string */
 }
 
 
-word
+foreign_t
 pl_win_exec(term_t cmd, term_t how)
 { wchar_t *s;
   size_t len;
@@ -710,7 +695,7 @@ static BOOL (WINAPI *f_RemoveDllDirectory)(DLL_DIRECTORY_COOKIE);
 
 static DWORD
 load_library_search_flags(void)
-{ static int done = FALSE;
+{ static int done = false;
   static DWORD flags = 0;
 
   if ( !done )
@@ -726,7 +711,7 @@ load_library_search_flags(void)
     { DEBUG(MSG_WIN_API,
 	    Sdprintf("LoadLibraryExW() flags are NOT supported\n"));
     }
-    done = TRUE;
+    done = true;
   }
 
   return flags;
@@ -763,9 +748,9 @@ PRED_IMPL("win_add_dll_directory", 2, win_add_dll_directory, 0)
       }
       return PL_error(NULL, 0, WinErrorNo(eno), ERR_SYSCALL, "AddDllDirectory()");
     } else
-      return FALSE;
+      return false;
   } else
-    return FALSE;
+    return false;
 }
 
 
@@ -776,24 +761,24 @@ PRED_IMPL("win_remove_dll_directory", 1, win_remove_dll_directory, 0)
   if ( PL_get_int64_ex(A1, &icookie) )
   { if ( f_RemoveDllDirectory )
     { if ( (*f_RemoveDllDirectory)((DLL_DIRECTORY_COOKIE)(uintptr_t)icookie) )
-	return TRUE;
+	return true;
 
       return PL_error(NULL, 0, WinError(), ERR_SYSCALL, "RemoveDllDirectory()");
     } else
-      return FALSE;
+      return false;
   } else
-    return FALSE;
+    return false;
 }
 
 
 static int
 is_windows_abs_path(const wchar_t *path)
 { if ( path[1] == ':' && path[0] < 0x80 && iswalpha(path[0]) )
-    return TRUE;			/* drive */
+    return true;			/* drive */
   if ( path[0] == '\\' && path[1] == '\\' )
-    return TRUE;			/* UNC */
+    return true;			/* UNC */
 
-  return FALSE;
+  return false;
 }
 
 void *
@@ -903,7 +888,7 @@ PRED_IMPL("win_process_modules", 1, win_process_modules, 0)
 		 PrologPath(name_utf8, pname, sizeof(pname)) )
 	    { if ( !PL_unify_list(tail, head, tail) ||
 		   !PL_unify_chars(head, PL_ATOM|REP_FN, (size_t)-1, pname)  )
-	      { rc = FALSE;
+	      { rc = false;
 		goto out;
 	      }
 	    } else
@@ -1028,7 +1013,7 @@ static int
 unify_csidl_path(term_t t, int csidl)
 { wchar_t buf[PATH_MAX];
 
-  if ( SHGetSpecialFolderPathW(0, buf, csidl, FALSE) )
+  if ( SHGetSpecialFolderPathW(0, buf, csidl, false) )
   { wchar_t *p;
 
     for(p=buf; *p; p++)
@@ -1067,10 +1052,10 @@ PRED_IMPL("win_folder", 2, win_folder, PL_FA_NONDETERMINISTIC)
 
 	    PL_error(NULL, 0, NULL, ERR_DOMAIN, dom, A1);
 	    PL_unregister_atom(dom);
-	    return FALSE;
+	    return false;
 	  }
 	} else
-	  return FALSE;
+	  return false;
       }
     case FRG_REDO:
     { fid_t fid;
@@ -1090,7 +1075,7 @@ PRED_IMPL("win_folder", 2, win_folder, PL_FA_NONDETERMINISTIC)
 	  PL_rewind_foreign_frame(fid);
 	}
 	PL_close_foreign_frame(fid);
-	return FALSE;
+	return false;
     }
     default:
       succeed;
@@ -1180,8 +1165,8 @@ PRED_IMPL("win_registry_get_value", 3, win_registry_get_value, 0)
 
   if ( !PL_get_wchars(Key, &klen, &k, CVT_ATOM|CVT_EXCEPTION) ||
        !PL_get_wchars(Name, &namlen, &name, CVT_ATOM|CVT_ATOM) )
-    return FALSE;
-  if ( !(key=reg_open_key(k, FALSE)) )
+    return false;
+  if ( !(key=reg_open_key(k, false)) )
     return PL_error(NULL, 0, NULL, ERR_EXISTENCE, ATOM_key, Key);
 
   DEBUG(9, Sdprintf("key = %p, name = %s\n", key, name));
@@ -1201,7 +1186,7 @@ PRED_IMPL("win_registry_get_value", 3, win_registry_get_value, 0)
     }
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -1248,11 +1233,11 @@ void
 getDefaultsFromRegistry(void)
 { HKEY key;
 
-  if ( (key = reg_open_key(L"HKEY_LOCAL_MACHINE/Software/SWI/Prolog", FALSE)) )
+  if ( (key = reg_open_key(L"HKEY_LOCAL_MACHINE/Software/SWI/Prolog", false)) )
   { setStacksFromKey(key);
     RegCloseKey(key);
   }
-  if ( (key = reg_open_key(L"HKEY_CURRENT_USER/Software/SWI/Prolog", FALSE)) )
+  if ( (key = reg_open_key(L"HKEY_CURRENT_USER/Software/SWI/Prolog", false)) )
   { setStacksFromKey(key);
     RegCloseKey(key);
   }
@@ -1308,7 +1293,7 @@ PRED_IMPL("win_get_user_preferred_ui_languages", 2, win_get_user_preferred_ui_la
   ULONG num, sz = 0;
   wchar_t store[1024];
   wchar_t *buf = store;
-  int rc = TRUE;
+  int rc = true;
 
   if ( PL_get_atom_chars(A1, &how) )
   { if ( strcmp(how, "id") == 0 )

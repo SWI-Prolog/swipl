@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        jan@swi-prolog.org
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2023, SWI-Prolog Solutions b.v.
+    Copyright (c)  2023-2025, SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -50,6 +50,15 @@
     profile(0, +),
     profile_procedure_data(:, -).
 
+:- create_prolog_flag(profile_ports, true,
+                      [ keep(true),
+                        type(oneof([true,false,classic]))
+                      ]).
+:- create_prolog_flag(profile_sample_rate, 200.0,
+                      [ keep(true),
+                        type(float)
+                      ]).
+
 :- set_prolog_flag(generate_debug_info, false).
 
 /** <module> Execution profiler
@@ -71,19 +80,23 @@ library(swi/pce_profile).
 %   and jump to predicate implementations.  Without   the  GUI, a simple
 %   textual report is generated. Defined options are:
 %
-%     * time(Which)
-%     Profile `cpu` or `wall` time.  The default is CPU time.
-%     * sample_rate(Rate)
-%     Samples per second, any numeric value between 1 and 1000
-%     * ports(Bool)
-%     Specifies ports counted - `true` (all ports), `false` (call
-%     port only) or `classic` (all with some errors).
-%     Accomodates space/accuracy tradeoff building call tree.
-%     * top(N)
-%     When generating a textual report, show the top N predicates.
-%     * cumulative(Bool)
-%     If `true` (default `false`), show cumulative output in
-%     a textual report.
+%     - time(Which)
+%       Profile `cpu` or `wall` time.  The default is CPU time.
+%     - sample_rate(Rate)
+%       Samples per second, any numeric value between 1 and 1000.
+%       Default is defined by the Prolog flag `profile_sample_rate`,
+%       which defaults to 200.
+%     - ports(Bool)
+%       Specifies ports counted - `true` (all ports), `false` (call
+%       port only) or `classic` (all with some errors).
+%       Accomodates space/accuracy tradeoff building call tree.
+%       Default is defined by the Prolog flag `profile_ports`,
+%       which defaults to `true`.
+%     - top(N)
+%       When generating a textual report, show the top N predicates.
+%     - cumulative(Bool)
+%       If `true` (default `false`), show cumulative output in
+%       a textual report.
 %
 %   @tbd The textual input reflects only part of the information.
 %   @see show_coverage/2 from library(test_cover).
@@ -92,11 +105,13 @@ profile(Goal) :-
     profile(Goal, []).
 
 profile(Goal0, Options) :-
+    current_prolog_flag(profile_ports, DefPorts),
+    current_prolog_flag(profile_sample_rate, DefRate),
     option(time(Which), Options, cpu),
     time_name(Which, How),
-    option(ports(Ports), Options, classic),
+    option(ports(Ports), Options, DefPorts),
     must_be(oneof([true,false,classic]),Ports),
-    option(sample_rate(Rate), Options, 200),
+    option(sample_rate(Rate), Options, DefRate),
     must_be(between(1.0,1000), Rate),
     expand_goal(Goal0, Goal),
     call_cleanup('$profile'(Goal, How, Ports, Rate),
@@ -133,23 +148,23 @@ show_profile_(Options) :-
     !.
 show_profile_(Options) :-
     prof_statistics(Stat),
-    sort_on(Options, SortKey),
+    NetTicks is Stat.ticks-Stat.accounting,
+    NetTime is (NetTicks/Stat.ticks)*Stat.time,
+    Ports = Stat.ports,
     findall(Node, profile_procedure_data(_:_, Node), Nodes),
+    (   option(cumulative(false), Options, false)
+    ->  SortKey = ticks_self
+    ;   SortKey = ticks
+    ),
     sort_prof_nodes(SortKey, Nodes, Sorted),
-    format('~`=t~69|~n'),
-    format('Total time: ~3f seconds~n', [Stat.time]),
-    format('~`=t~69|~n'),
-    format('~w~t~w =~45|~t~w~60|~t~w~69|~n',
-           [ 'Predicate', 'Box Entries', 'Calls+Redos', 'Time'
-           ]),
-    format('~`=t~69|~n'),
+    format_divider,
+    format('Number of nodes: ~w~t[ports(~w)]~55|~tTotal time: ~3f seconds~101|~n',
+           [Stat.nodes, Ports, NetTime]),
+    format('Predicate~tCalls +~41| Redos~t~49|~t \c
+            Exits +~58| Fails~tTime:Self +~87| Time:Children~n', []),
+    format_divider,
     option(top(N), Options, 25),
-    show_plain(Sorted, N, Stat, SortKey).
-
-sort_on(Options, ticks_self) :-
-    option(cumulative(false), Options, false),
-    !.
-sort_on(_, ticks).
+    show_plain(Sorted, N, (NetTicks,NetTime,Ports)).
 
 sort_prof_nodes(ticks, Nodes, Sorted) :-
     !,
@@ -160,24 +175,39 @@ sort_prof_nodes(Key, Nodes, Sorted) :-
     sort(Key, >=, Nodes, Sorted).
 
 key_ticks(Node, Ticks) :-
-    Ticks is Node.ticks_self + Node.ticks_siblings.
+	value(ticks,Node,Ticks).
 
-show_plain([], _, _, _).
-show_plain(_, 0, _, _) :- !.
-show_plain([H|T], N, Stat, Key) :-
-    show_plain(H, Stat, Key),
+show_plain([], _, _) :- format_divider.
+show_plain([H|T], N, Stat) :-
+    show_plain(H, Stat),
     N2 is N - 1,
-    show_plain(T, N2, Stat, Key).
+    (   N2 > 0
+    ->  show_plain(T, N2, Stat)
+    ;   format_divider
+    ).
 
-show_plain(Node, Stat, Key) :-
+show_plain(Node, (NetTicks,NetTime,Ports)) :-
     value(label,                       Node, Pred),
     value(call,                        Node, Call),
-    value(redo,                        Node, Redo),
-    value(time(Key, percentage, Stat), Node, Percent),
-    IntPercent is round(Percent*10),
-    Entry is Call + Redo,
-    format('~w~t~D =~45|~t~D+~55|~D ~t~1d%~69|~n',
-           [Pred, Entry, Call, Redo, IntPercent]).
+    (   Ports == false
+    ->  Redo = 0, Exit = 0, Fail = 0
+    ;   value(redo,                    Node, Redo),
+        value(exit,                    Node, Exit),
+        Fail is Call+Redo-Exit
+    ),
+    time_data(Node,NetTicks,NetTime,SelfPC,SelfTime,ChildrenPC,ChildrenTime),
+    format('~w ~t~D +~41| ~D ~t~49|~t~D +~58| ~D ~t~2fs.(~78|~t~1f%) +~87|~t~2fs.(~95|~t~1f%)~102|~n',
+           [Pred, Call, Redo, Exit, Fail, SelfTime, SelfPC, ChildrenTime, ChildrenPC]).
+
+format_divider :- format('~`=t~102|~n').
+
+time_data(Data,NetTicks,NetTime,SelfPC,SelfTime,ChildrenPC,ChildrenTime) :-
+    value(ticks_self,Data,Ticks),
+    SelfPC is 100*Ticks/NetTicks,
+    SelfTime is SelfPC*NetTime/100,
+    value(ticks_siblings,Data,ChildrenTicks),
+    ChildrenPC is 100*ChildrenTicks/NetTicks,
+    ChildrenTime is ChildrenPC*NetTime/100.
 
 
                  /*******************************
@@ -305,15 +335,12 @@ value(label, Data, Label) :-
 value(ticks, Data, Ticks) :-
     !,
     Ticks is Data.ticks_self + Data.ticks_siblings.
-value(time(Key, percentage, Stat), Data, Percent) :-
+value(time(Key, percentage, TotalTicks), Data, Percent) :-
     !,
     value(Key, Data, Ticks),
-    Total = Stat.ticks,
-    Account = Stat.accounting,
-    (   Total-Account > 0
-    ->  Percent is 100 * (Ticks/(Total-Account))
-    ;   Percent is 0.0
+    (TotalTicks > 0
+     -> Percent is 100 * (Ticks/TotalTicks)
+     ;  Percent is 0.0
     ).
 value(Name, Data, Value) :-
     Value = Data.Name.
-

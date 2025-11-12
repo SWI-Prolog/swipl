@@ -20,11 +20,11 @@ set(SWIPL_PACKAGE_LIST_ODBC_title    "ODBC_interface")
 set(SWIPL_PACKAGE_LIST_BDB_title     "BerkeleyDB_interface")
 set(SWIPL_PACKAGE_LIST_PCRE_title    "Perl_regex")
 set(SWIPL_PACKAGE_LIST_YAML_title    "YAML_support")
+set(SWIPL_PACKAGE_LIST_JSON_title    "JSON_support")
 set(SWIPL_PACKAGE_LIST_JAVA_title    "Java_interface")
 set(SWIPL_PACKAGE_LIST_SSL_title     "OpenSSL_interface")
 set(SWIPL_PACKAGE_LIST_TIPC_title    "TIPC_networking")
-set(SWIPL_PACKAGE_LIST_QT_title	     "Qt_console")
-set(SWIPL_PACKAGE_LIST_X_title	     "Graphics_subsystem")
+set(SWIPL_PACKAGE_LIST_GUI_title     "XPCE_graphics_subsystem")
 set(SWIPL_PACKAGE_LIST_WASM_title    "WASM_libraries")
 set(SWIPL_PACKAGE_LIST_PYTHON_title  "Python_interface")
 
@@ -32,10 +32,7 @@ if(EMSCRIPTEN)
   set(SWIPL_PACKAGE_SETS WASM)
 else()
   set(SWIPL_PACKAGE_SETS
-      BASIC ARCHIVE ODBC BDB PCRE YAML JAVA PYTHON SSL TIPC QT X)
-  if(UNIX)
-    list(APPEND SWIPL_PACKAGE_SETS TERM)
-  endif()
+      BASIC ARCHIVE ODBC BDB PCRE YAML JSON JAVA PYTHON SSL TIPC TERM GUI)
 endif()
 
 foreach(pkgset ${SWIPL_PACKAGE_SETS})
@@ -81,8 +78,10 @@ set(SWIPL_PACKAGE_LIST_ARCHIVE
     archive)
 
 set(SWIPL_PACKAGE_LIST_TERM
-    libedit
-    readline)
+    libedit)
+if(UNIX AND NOT EPILOG)
+  list(APPEND SWIPL_PACKAGE_LIST_TERM readline)
+endif()
 
 set(SWIPL_PACKAGE_LIST_ODBC
     odbc
@@ -97,6 +96,9 @@ set(SWIPL_PACKAGE_LIST_PCRE
 set(SWIPL_PACKAGE_LIST_YAML
     yaml)
 
+set(SWIPL_PACKAGE_LIST_JSON
+    json)
+
 set(SWIPL_PACKAGE_LIST_SSL
     ssl)
 
@@ -109,10 +111,7 @@ set(SWIPL_PACKAGE_LIST_PYTHON
 set(SWIPL_PACKAGE_LIST_TIPC
     tipc)
 
-set(SWIPL_PACKAGE_LIST_QT
-    swipl-win)
-
-set(SWIPL_PACKAGE_LIST_X
+set(SWIPL_PACKAGE_LIST_GUI
     xpce)
 
 set(SWIPL_PACKAGE_LIST_WASM
@@ -149,9 +148,9 @@ set(SWIPL_PKG_DEPS_semweb RDF clib http nlp sgml zlib)
 set(SWIPL_PKG_DEPS_ssl clib http sgml zlib)
 set(SWIPL_PKG_DEPS_tipc clib paxos)
 if(EMSCRIPTEN)
-set(SWIPL_PKG_DEPS_http clib sgml)
+set(SWIPL_PKG_DEPS_http clib sgml json)
 else()
-set(SWIPL_PKG_DEPS_http clib sgml ssl)
+set(SWIPL_PKG_DEPS_http clib sgml json ssl)
 endif()
 
 set(SWIPL_PKG_EXPLICIT)				# Explicitly requested packages
@@ -305,13 +304,19 @@ endif()
 if(CMAKE_VERSION VERSION_LESS 3.16)
   swipl_del_package(swipy     "Requires CMake version 3.16 or higher")
 endif()
+if(SWIPL_PACKAGES_GUI)
+  find_package(SDL3 CONFIG COMPONENTS SDL3-shared QUIET)
+  if(NOT SDL3_FOUND)
+    swipl_del_package(xpce    "Requires library SDL3")
+  endif()
+endif()
 
 if(INSTALL_DOCUMENTATION)
   if(SWIPL_PACKAGES)
     swipl_add_packages(EXPLICIT
-		       PACKAGES ltx2htm pldoc nlp archive
+		       PACKAGES ltx2htm pldoc nlp archive utf8proc
 		       COMMENT "required for online documentation.  Use "
-		       "-DINSTALL_DOCUMENTATION=OFF to avoid this dependency")
+		       "-DINSTALL_DOCUMENTATION=OFF to avoid these dependencies")
   else()
     message("-- Cannot install documentation without packages")
   endif()
