@@ -58,9 +58,6 @@ source should also use format() to produce error messages, etc.
 
 typedef foreign_t (*Func1)(term_t a1);
 
-static char *	formatFloat(PL_locale *locale, int how, int arg,
-			    Number f, Buffer out);
-
 #define MAXRUBBER 100
 
 struct rubber
@@ -72,11 +69,17 @@ struct rubber
 typedef struct
 { IOSTREAM *out;			/* our output stream */
   int column;				/* current column */
+  int tab_stop;				/* Last tab stop */
   tmp_buffer buffer;			/* bin for characters with tabs */
   size_t buffered;			/* characters in buffer */
   int pending_rubber;			/* number of not-filled ~t's */
   struct rubber rub[MAXRUBBER];
 } format_state;
+
+static char *	formatFloat(PL_locale *locale, int how, int arg,
+			    Number f, Buffer out);
+static void	distribute_rubber(struct rubber *, int, int);
+static WUNUSED int emit_rubber(format_state *state);
 
 #define BUFSIZE		1024
 #define DEFAULT		INT_MIN
@@ -105,6 +108,7 @@ update_column(format_state *state, int c)
   { switch(c)
     { case '\n':
 	state->column = 0;
+	state->tab_stop = 0;
 	break;
       case '\t':
 	state->column = (state->column+1)|0x7;
@@ -244,10 +248,6 @@ outtext(format_state *state, PL_chars_t *txt)
 
 #define format_predicates (GD->format.predicates)
 
-static void	distribute_rubber(struct rubber *, int, int);
-static WUNUSED int emit_rubber(format_state *state);
-
-
 		/********************************
 		*       PROLOG CONNECTION	*
 		********************************/
@@ -342,18 +342,26 @@ format_impl(IOSTREAM *out, term_t format, term_t Args, Module m)
   if ( !PL_get_text(format, &fmt, CVT_ATOM|CVT_STRING|CVT_LIST|BUF_STACK) )
     return PL_error("format", 3, NULL, ERR_TYPE, ATOM_text, format);
 
-  if ( (argc = (int)lengthList(args, false)) >= 0 )
+  intptr_t len = lengthList(args, false);
+  if ( len >= 0 )
   { term_t head = PL_new_term_ref();
     int n = 0;
 
+    argc = len;
     argv = PL_new_term_refs(argc);
     while( PL_get_list(args, head, args) )
       PL_put_term(argv+n++, head);
   } else
-  { argc = 1;
-    argv = PL_new_term_refs(argc);
+  { Word p = valTermRef(args);
+    deRef(p);
 
-    PL_put_term(argv, args);
+    if ( !isList(*p) )
+    { argc = 1;
+      argv = PL_new_term_refs(argc);
+
+      PL_put_term(argv, args);
+    } else
+      return PL_type_error("list", args);
   }
 
   switch(fmt.storage)			/* format can do call-back! */
@@ -507,11 +515,11 @@ bool
 do_format(IOSTREAM *fd, PL_chars_t *fmt, int argc, term_t argv, Module m)
 { GET_LD
   format_state state;			/* complete state */
-  int tab_stop = 0;			/* padded tab stop */
   unsigned int here = 0;
   int rc = true;
 
   state.out = fd;
+  state.tab_stop = 0;
   state.pending_rubber = 0;
   initBuffer(&state.buffer);
   state.buffered = 0;
@@ -656,6 +664,7 @@ do_format(IOSTREAM *fd, PL_chars_t *fmt, int argc, term_t argv, Module m)
 	      case 'e':			/* exponential float */
 	      case 'E':			/* Exponential float */
 	      case 'f':			/* float */
+	      case 'F':			/* float */
 	      case 'g':			/* shortest of 'f' and 'e' */
 	      case 'G':			/* shortest of 'f' and 'E' */
 	      case 'h':
@@ -682,7 +691,7 @@ do_format(IOSTREAM *fd, PL_chars_t *fmt, int argc, term_t argv, Module m)
 		  }
 		  SHIFT;
 
-		  if ( c == 'f' && mod_colon )
+		  if ( (c == 'f' || c == 'F') && mod_colon )
 		    l = fd->locale;
 		  else
 		    l = &prolog_locale;
@@ -783,13 +792,17 @@ do_format(IOSTREAM *fd, PL_chars_t *fmt, int argc, term_t argv, Module m)
 		  NEED_ARG;
 		  if ( !PL_get_text(argv, &txt, CVT_ATOM|CVT_LIST|CVT_STRING) )
 		    FMT_ARG("s", argv);
-		  if ( arg != DEFAULT )
-		  { if ( arg < 0 )
-		      arg = 0;
-		    if ( arg < txt.length )
-		      txt.length = arg;
-		  }
+
+		  if ( arg == DEFAULT )
+		    arg = txt.length;
+		  else if ( arg < 0 )
+		    arg = 0;
+		  else if ( arg < txt.length )
+		    txt.length = arg;
+
 		  rc = outtext(&state, &txt);
+		  for(int i=arg-txt.length; rc && i>0; i--)
+		    rc = outchr(&state, ' ');
 		  PL_free_text(&txt);
 		  SHIFT;
 		  if ( !rc )
@@ -889,11 +902,8 @@ do_format(IOSTREAM *fd, PL_chars_t *fmt, int argc, term_t argv, Module m)
 		  break;
 		}
 	      case 'n':			/* \n */
-	      case 'N':			/* \n if not on newline */
 		{ if ( arg == DEFAULT )
 		    arg = 1;
-		  if ( c == 'N' && state.column == 0 )
-		    arg--;
 		  while( arg-- > 0 )
 		  { rc = outchr(&state, '\n');
 		    if ( !rc )
@@ -902,6 +912,14 @@ do_format(IOSTREAM *fd, PL_chars_t *fmt, int argc, term_t argv, Module m)
 		  here++;
 		  break;
 		}
+	      case 'N':			/* \n if not on newline */
+		if ( state.column != 0 )
+		{ rc = outchr(&state, '\n');
+		  if ( !rc )
+		    goto out;
+		}
+		here++;
+		break;
 	      case 't':			/* insert tab */
 		{ if ( state.pending_rubber >= MAXRUBBER )
 		    FMT_ERROR("Too many tab stops");
@@ -925,7 +943,7 @@ do_format(IOSTREAM *fd, PL_chars_t *fmt, int argc, term_t argv, Module m)
 	      case '+':			/* tab relative */
 		  if ( arg == DEFAULT )
 		    arg = 8;
-		  stop = (c == '+' ? tab_stop + arg : arg);
+		  stop = (c == '+' ? state.tab_stop + arg : arg);
 
 		  if ( stop < state.column && mod_colon )
 		    nl_and_reindent = state.pending_rubber ?
@@ -962,7 +980,7 @@ do_format(IOSTREAM *fd, PL_chars_t *fmt, int argc, term_t argv, Module m)
 		      goto out;
 		  }
 
-		  state.column = tab_stop = stop;
+		  state.column = state.tab_stop = stop;
 		  here++;
 		  break;
 		}
@@ -1004,15 +1022,13 @@ static void
 distribute_rubber(struct rubber *r, int rn, int space)
 { if ( space > 0 )
   { int s = space / rn;
-    int n, m;
 
-    for(n=0; n < rn; n++)		/* give them equal size */
+    for(int n=0; n < rn; n++)		/* give them equal size */
       r[n].size = s;
 					/* distribute from the center */
     space -= s*rn;
-    for(m = rn / 2, n = 0; space; n++, space--)
-    { r[m + (n % 2 ? n : -n)].size++;
-    }
+    for(int n=rn-1; space; n--, space--)
+      r[n].size++;
   } else
   { int n;
 
@@ -1459,6 +1475,7 @@ formatFloat(PL_locale *locale, int how, int arg, Number f, Buffer out)
     case V_MPZ:
     { switch(how)
       { case 'f':
+	case 'F':
 	{ mpz_init(t1);
 	  mpz_init(t2);
 	  mpz_ui_pow_ui(t1, 10, arg);
@@ -1514,6 +1531,7 @@ formatFloat(PL_locale *locale, int how, int arg, Number f, Buffer out)
 
       switch(how)
       { case 'f':
+	case 'F':
 	{ mpz_init(t1);
 	  mpz_init(t2);
 	  mpz_ui_pow_ui(t1, 10, arg);
@@ -1729,7 +1747,7 @@ formatFloat(PL_locale *locale, int how, int arg, Number f, Buffer out)
       int upcase;
       limb_t prec = ((double)(arg+2) * log(10)/log(2));
 
-      if ( how == 'f' )		/* we must compensate for the integer */
+      if ( how == 'f' || how == 'F' ) /* we must compensate for the integer */
       { mpz_t i;
 	mpz_init(i);
 	mpz_set_q(i, f->value.mpq);
@@ -1742,6 +1760,7 @@ formatFloat(PL_locale *locale, int how, int arg, Number f, Buffer out)
       upcase = false;
       switch(how)
       { case 'f':
+	case 'F':
 	  flags = BF_FTOA_FORMAT_FRAC;
 	  break;
 	case 'E':

@@ -8,6 +8,8 @@
 	  [ test/1,				% +File
 	    test/2				% +File, +ReportFile
 	  ]).
+:- use_module(library(apply)).
+:- use_module(library(ansi_term)).
 
 /** <module> ECLiPSe test automation
 
@@ -92,8 +94,10 @@ report(brief).
 :- op(1200,  fy, fixme).
 :- op(1110, xf,  should_fail).
 :- op(1110, xfx, should_give).
+:- op(1110, xfx, should_output).
 :- op(1110, xfx, should_throw).
 :- op(1110, xfx, should_raise).
+:- op(1110, xfx, output).
 
 %%	test(+TestFile) is det.
 %
@@ -120,7 +124,6 @@ test(FileIn, FileOut) :-
 		close(Out)),
 	    close(In)).
 
-
     test_stream(In, Out) :-
         stream_property(In, file_name(File)),
         format(Out, '~N% Running ECLiPSe tests from file ~w~n', [File]),
@@ -130,7 +133,6 @@ test(FileIn, FileOut) :-
         counter_set(failed_test_count, 0),
         counter_set(skipped_test_count, 0),
         repeat,
-%	    line_count(In, Line),
             catch(catch(read_term(In, Test,
 				  [ module(test_util_iso)
 				  ]), SyntaxError,
@@ -140,8 +142,7 @@ test(FileIn, FileOut) :-
             ( Test \== end_of_file ->
                 counter_inc(test_count),
                 counter_get(test_count, N),
-%               writeq(Out, Test), nl,
-                catch(interpret_test(Test, N/Line, Out), continue, true),
+                catch(interpret_test(Test, t(File,Line,N), Out), continue, true),
                 fail
             ;
                 counter_get(test_count, N),
@@ -166,6 +167,8 @@ interpret_test((Goal should_fail), Name, Stream) :-  !,
         should_fail(Goal, Name, Stream).
 interpret_test((Goal should_give Check), Name, Stream) :-  !,
         should_give(Goal, Check, Name, Stream).
+interpret_test((Goal should_output Check), Name, Stream) :-  !,
+        should_output(Goal, Check, Name, Stream).
 interpret_test((Goal should_throw Ball), Name, Stream) :-  !,
         should_throw(Goal, Ball, Name, Stream).
 interpret_test((Goal should_raise Exception), Name, Stream) :-  !,
@@ -245,14 +248,56 @@ Goal should_give Check :-
             unexpected(Stream, Name, success, failure)
         ).
 
+Goal should_output ExpectedText :-
+        current_output(Stream),
+        catch(should_output(Goal, ExpectedText, Goal, Stream), continue, true).
 
+    should_output(Goal, ExpectedText, Name, Stream) :-
+        ( catch(with_output_to(atom(OutputAtom), Goal), Ball,
+                unexpected(Stream,Name,Goal,success,throw(Ball))) ->
+            atom_chars(OutputAtom, OutputChars),
+            ( output_matches_expected(ExpectedText, OutputChars, OutputAtom) ->
+                expected_outcome(Stream, Name)
+            ;
+                most_readable_text(ExpectedText, MessageText),
+                unexpected(Stream, Name, Goal, output(MessageText), actual_output(OutputAtom))
+            )
+        ; unexpected(Stream, Name, Goal, success, failure)
+        ).
+
+    output_matches_expected(ExpectedText, OutputChars, OutputAtom) :-
+        ( var(ExpectedText)
+        ; ExpectedText == [], OutputChars == []
+        ; atom(ExpectedText), OutputAtom == ExpectedText
+        ; catch(atom_string(OutputAtom, ExpectedText), _, fail)
+        ; ExpectedText = [_|_],
+            ( subsumes_term(ExpectedText, OutputChars)
+            ; chars_codes(OutputChars, OutputCodes),
+              subsumes_term(ExpectedText, OutputCodes)
+            )
+        ), !.
+
+    most_readable_text(T, R) :- atom(T), !, R = T.
+    most_readable_text(T, R) :- catch(string(T),_,fail), !, R = T.
+    most_readable_text(T, R) :-
+        catch(atom_codes(A, T), _, fail),
+        !, R = A.
+    most_readable_text(T, R) :-
+        catch(atom_chars(A, T), _, fail),
+        !, R = A.
+    most_readable_text(T, T).
+
+    chars_codes([], []).
+    chars_codes([Char|Chars], [Code|Codes]) :-
+        char_code(Char, Code),
+        chars_codes(Chars, Codes).
 
 Goal should_throw Ball :-
         current_output(Stream),
         catch(should_throw(Goal, Ball, Goal, Stream), continue, true).
 
     should_throw(Goal, Expected, Name, Stream) :-
-        ( catch(Goal, Ball,
+        ( catch(with_output_to(string(_), Goal), Ball,
                 ( subsumes_term(Expected,Ball) ->
                     expected_outcome(Stream, Name)
                 ;
@@ -267,22 +312,29 @@ Goal should_throw Ball :-
 
 
 
-expected_outcome(Stream, Name) :-
+expected_outcome(Stream, t(_File,Line,TestNo)) =>
 	(   report(brief)
 	->  put_char(Stream, '.'),
 	    flush_output(Stream)
-	;   format(Stream, '~NTest ~w: OK~n', [Name])
+	;   format(Stream, '~NTest ~w at line ~d: OK~n', [TestNo, Line])
 	),
 	counter_inc(succeeded_test_count),
         throw(continue).
 
-unexpected(Stream, Name, Expected, Outcome) :-
-	format(Stream, '~NTest ~w: ~n~texpected ~12|~q,~n~tgot ~12|~q~n',
-	       [Name, Expected, Outcome]),
+unexpected(Stream, t(File,Line,TestNo), Expected, Outcome) =>
+	ansi_format(Stream, error,
+                    '~NTest ~w at ~w:~w: ~n~texpected ~12|~q,~n~tgot ~12|~q~n',
+                    [TestNo, File, Line, Expected, Outcome]),
         counter_inc(failed_test_count),
         throw(continue).
 
-
+unexpected(Stream, t(File,Line,TestNo), Goal, Expected, Outcome) =>
+        ansi_format(Stream, error, 'Test ~w at ~w:~w:~n', [TestNo,File,Line]),
+        ansi_format(Stream, error, '  Expected ~p~n', [Expected]),
+        ansi_format(Stream, error, '       Got ~p~n', [Outcome]),
+        ansi_format(Stream, error, '      Goal ~p~n', [Goal]),
+        counter_inc(failed_test_count),
+        throw(continue).
 
 %
 % ISO implementation of non-backtrackable counters

@@ -21,11 +21,12 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <inttypes.h>
 #ifdef __STDC_NO_ATOMICS__
-#define _Atomic
+#define _Atomic(type) type
 #else
 #include <stdatomic.h>
 #endif
