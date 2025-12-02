@@ -6616,10 +6616,13 @@ SICStus. See format/2 for valid format specifiers and the
     \termitem{ignore_ops}{Bool}
 If \const{true}, the generic term representation (<functor>(<args>
 \ldots)) will be used for all terms.  Otherwise (default), operators
-will be used where appropriate.\footnote{In traditional systems this
-flag also stops the syntactic sugar notation for lists and brace terms.
-In SWI-Prolog, these are controlled by the separate options
-\const{dotlists} and \const{brace_terms}}.
+will be used where appropriate.  The ISO standard also dictates lists
+to be written as \verb$.(Head,Tail)$.  SWI-Prolog writes lists using
+Prolog list notation unless the option \term{dotlists}{true} is also
+given.  This is done because SWI-Prolog lists do not use the dot as
+list cell functor.  PIP-0105 added the option \term{portable}{Bool}
+to accomplish unambiguous transfer of terms while maximizing
+readability.
 
     \termitem{integer_format}{+Atom}
 Print integers using format/2 as \term{format}{Atom, [Int]}.  The
@@ -6644,8 +6647,25 @@ true.
 \end{code}
 
 Used by the top level and debugger to limit screen output.  See also
-the Prolog flags \prologflag{answer_write_options} and
+the options \term{max_text}{Length} and \term{truncated}{-Bool}
+as well as the prolog flags \prologflag{answer_write_options} and
 \prologflag{debugger_write_options}.
+
+    \termitem{max_text}{Length}
+Abbreviate atoms and strings that are longer than \arg{Length}
+characters. The abbreviated characters are indicated using elipsis
+($\ldots$), if possible using the Unicode character U-2026 and using
+\texttt{...} otherwise. On sufficiantly long texts the elipsis is
+followed by the three last characters. If \arg{Length} is -1, no
+length limit is imposed.  If \arg{Length} is 0, it only
+prints the elipsis. When \term{quoted}{true} is active, the quotes are
+not included in the length restriction. The text between the quotes
+represents at max \arg{Length} characters, but the lexical
+representation can be longer due to required escape sequences. This
+option is defined by PIP-0105.\footnote{The current draft calls this
+option \term{text_max}{Max}. Considering all other options and flags use
+max_*, SWI-Prolog uses \const{max_text}. This may change depending on
+how PIP-0105 evolves.}
 
     \termitem{module}{Module}
 Define the reference module (default \const{user}).  This defines
@@ -6698,6 +6718,24 @@ printing an operand of an operator.  If \arg{Term} is an atom that is
 also an operator it will always be embraced.\footnote{If the priority
 is 1200 it is assumed to be a toplevel term and if the priority is
 999 it is assumed to be a list element or argument of a compound term.}
+
+    \termitem{portable}{Bool}
+Similar to \term{ignore_ops}{Bool}, but when \const{true}, lists,
+\jargon{brace terms} and the infix operator ``\chr{,}'' are printed
+normally. The name \textit{portable} refers to the fact that any term
+written this way can be read unambigously regardless of differences in
+the (operator) context while providing maximal readability and avoiding
+high stack usage implied by the ISO \const{ignore_ops} list
+representation as \verb$.(a,.(b,[]))$.\footnote{The dotted list notation
+cannot be reduced to list cells before we reach the closing
+parenthesis.} This option is defined by PIP-0105.
+
+For example:
+
+\begin{code}
+?- write_term((a,b+c,[a],{d}), [portable]).
+a,+(b,c),[a],{d}
+\end{code}
 
     \termitem{portray}{Bool}
 Same as \term{portrayed}{Bool}.  Deprecated.
@@ -6757,6 +6795,12 @@ readability. The default is \const{standard}, adding only space where
 needed for proper tokenization by read_term/3.  Currently, the only
 other value is \const{next_argument}, adding a space after a comma
 used to separate arguments in a term or list.
+
+    \termitem{truncated}{-Bool}
+If \term{max_depth}{+Depth} and/or \term{max_text}{+Length} is
+active and the limit has been exceeded, \arg{Bool} is unified to
+\const{true}. Else it is unified to \const{false}. This option is part
+of PIP-0105.
 
     \termitem{variable_names}{+List}
 Assign names to variables in \arg{Term}. \arg{List} is a list of terms

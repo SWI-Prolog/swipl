@@ -2,8 +2,8 @@
 
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
-    WWW:           http://www.swi-prolog.org
-    Copyright (c)  1995-2024, University of Amsterdam
+    WWW:           https://www.swi-prolog.org
+    Copyright (c)  1995-2025, University of Amsterdam
                               VU University Amsterdam
                               CWI, Amsterdam
                               SWI-Prolog Solutions b.v.
@@ -108,6 +108,8 @@ save_option(on_error,    oneof([print,halt,status]),
             "How to handle errors").
 save_option(on_warning,  oneof([print,halt,status]),
             "How to handle warnings").
+save_option(zip,         boolean,
+            "If true, create a clean `.zip` file").
 
 term_expansion(save_pred_options,
                (:- predicate_options(qsave_program/2, 2, Options))) :-
@@ -144,6 +146,19 @@ qsave_program(FileBase, Options0) :-
     qsave_init_file_option(SaveClass, Options1, Options),
     prepare_entry_points(Options),
     save_autoload(Options),
+    qsave_state(File, SaveClass, Options).
+
+qsave_state(File, SaveClass, Options) :-
+    system_specific_join(Join, Options),
+    !,
+    current_prolog_flag(pid, PID),
+    format(atom(ZipFile), '_swipl_state_~d.zip', [PID]),
+    qsave_state(ZipFile, SaveClass, [zip(true)|Options]),
+    emulator(Emulator, Options),
+    call_cleanup(
+        join_exe_and_state(Join, Emulator, ZipFile, File),
+        delete_file(ZipFile)).
+qsave_state(File, SaveClass, Options) :-
     setup_call_cleanup(
         open_map(Options),
         ( prepare_state(Options),
@@ -155,11 +170,10 @@ qsave_program(FileBase, Options0) :-
               open(File, write, StateOut, [type(binary)]),
               write_state(StateOut, SaveClass, File, Options),
               Reason,
-              finalize_state(Reason, StateOut, File))
+              finalize_state(Reason, StateOut, File, Options))
         ),
         close_map),
-    cleanup,
-    !.
+    cleanup.
 
 write_state(StateOut, SaveClass, ExeFile, Options) :-
     make_header(StateOut, SaveClass, Options),
@@ -176,13 +190,23 @@ write_zip_state(RC, SaveClass, ExeFile, Options) :-
     save_program(RC, SaveClass, Options),
     save_foreign_libraries(RC, ExeFile, Options).
 
-finalize_state(exit, StateOut, File) :-
+%!  finalize_state(+Status, +StateStream:stream, +File:atom, +Options)
+%!                 is det.
+%
+%   Fixpu the result. Normally closes StateStream   used  to create File
+%   and makes the file executable.
+
+finalize_state(exit, StateOut, _File, Options) :-
+    option(zip(true), Options),
+    !,
+    close(StateOut).
+finalize_state(exit, StateOut, File, _Options) :-
     close(StateOut),
     '$mark_executable'(File).
-finalize_state(!, StateOut, File) :-
+finalize_state(!, StateOut, File, Options) :-
     print_message(warning, qsave(nondet)),
-    finalize_state(exit, StateOut, File).
-finalize_state(_, StateOut, File) :-
+    finalize_state(exit, StateOut, File, Options).
+finalize_state(_, StateOut, File, _Options) :-
     close(StateOut, [force(true)]),
     catch(delete_file(File),
           Error,
@@ -194,12 +218,22 @@ cleanup :-
 is_meta(goal).
 is_meta(toplevel).
 
+%!  exe_file(+Base, -Exe, +Options) is det.
+%
+%   True when Exe is the name of the  file we create. This adds ``.exe``
+%   to the given name on Windows.
+
 exe_file(Base, Exe, Options) :-
     current_prolog_flag(windows, true),
     option(stand_alone(true), Options, true),
     file_name_extension(_, '', Base),
     !,
     file_name_extension(Base, exe, Exe).
+exe_file(Base, Exe, Options) :-
+    option(zip(true), Options),
+    file_name_extension(_, '', Base),
+    !,
+    file_name_extension(Base, zip, Exe).
 exe_file(Exe, Exe, _).
 
 delete_if_exists(File) :-
@@ -214,13 +248,92 @@ qsave_init_file_option(runtime, Options1, Options) :-
     Options = [init_file(none)|Options1].
 qsave_init_file_option(_, Options, Options).
 
+%!  system_specific_join(-How, +Options) is semidet.
+%
+%   Normally we create the saved state  as   a  header with the zip file
+%   containing the actual state on its back.  This is troublesome as the
+%   result looks like a normal  executable,   but  does  not satisfy the
+%   target system binary format. On some platforms  we can do better and
+%   add the state as an additional section   to the executable. This may
+%   fix issues using the executable with   tools to manage binaries such
+%   as strip(1) or gdb.
+%
+%   This predicate succeeds, indicating how to  perform the join, if the
+%   current platform supports this  feature.  After   the  zip  file  is
+%   created, join_exe_and_state/4 is called to join  the emulator to the
+%   zip file.
+
+system_specific_join(objcopy(Prog), Options) :-
+    current_prolog_flag(executable_format, elf),
+    option(stand_alone(true), Options),
+    \+ option(zip(true), Options),
+    absolute_file_name(path(objcopy), Prog,
+                       [ access(execute),
+                         file_errors(fail)
+                       ]).
+
+%!  join_exe_and_state(+How, +Emulator, +ZipFile, +Executable) is det.
+%
+%   Create Executable by combining Emulator  with ZipFile. Emulator must
+%   be a native binary.  Typically it is `swipl`.
+%
+%   Note that we use shell/1 rather than process_create/3. This would be
+%   easier, but we do not want dependencies  on foreign code that is not
+%   needed.
+
+join_exe_and_state(objcopy(Prog), Emulator, ZipFile, File) =>
+    copy_file(Emulator, File),
+    '$mark_executable'(File),
+    shell_quote(Prog, QProg),
+    shell_quote(ZipFile, QZipFile),
+    shell_quote(File, QFile),
+    format(string(Cmd),
+           '~w --add-section .zipdata=~w \c
+            --set-section-flags .zipdata=readonly,data \c
+            ~w',
+           [QProg, QZipFile, QFile]),
+    shell(Cmd).
+
+copy_file(From, To) :-
+    setup_call_cleanup(
+        open(To, write, Out, [type(binary)]),
+        setup_call_cleanup(
+            open(From, read, In, [type(binary)]),
+            copy_stream_data(In, Out),
+            close(In)),
+        close(Out)).
+
+%!  shell_quote(+Arg, -QArg) is det.
+%
+%   Quote argument against shell. Currently uses either single or double
+%   quotes and refuses names containing a single quote and a `$`. Should
+%   we ignore any name holding a quote or `$`?
+
+shell_quote(Arg, QArg) :-
+    sub_atom(Arg, _, _, _, '\''),
+    !,
+    (   (   sub_atom(Arg, _, _, _, '"')
+        ;   sub_atom(Arg, _, _, _, '$')
+        )
+    ->  domain_error(save_file, Arg)
+    ;   format(string(QArg), '"~w"', [Arg])
+    ).
+shell_quote(Arg, QArg) :-
+    format(string(QArg), '\'~w\'', [Arg]).
+
 
                  /*******************************
                  *           HEADER             *
                  *******************************/
 
 %!  make_header(+Out:stream, +SaveClass, +Options) is det.
+%
+%   Write the header after which we add   the zip file. This is normally
+%   either ``swipl[.exe]`` or a shell script.
 
+make_header(_Out, _, Options) :-
+    option(zip(true), Options),
+    !.
 make_header(Out, _, Options) :-
     stand_alone(Options),
     !,

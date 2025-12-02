@@ -73,6 +73,8 @@ typedef struct
 { unsigned int flags;			/* PL_WRT_* flags */
   int   max_depth;			/* depth limit */
   int   depth;				/* current depth */
+  int	max_text;			/* Limit length for atoms/strings */
+  bool  truncated;			/* max_depth was exceeded */
   atom_t integer_format;		/* How to format integers */
   atom_t float_format;			/* How to format floats */
   atom_t spacing;			/* Where to insert spaces */
@@ -86,7 +88,8 @@ typedef struct
 #define WRITE_OPTIONS_DEFAULTS \
 	{ .spacing = ATOM_standard, \
 	  .integer_format = ATOM_int_format_specifier, \
-	  .float_format = ATOM_float_format_specifier \
+	  .float_format = ATOM_float_format_specifier, \
+	  .max_text = -1 \
 	}
 
 #define W_OP_ARG	1		/* writeTerm() location argument */
@@ -428,7 +431,6 @@ PutString(const char *str, IOSTREAM *s)
   return true;
 }
 
-
 static bool
 PutComma(write_options *options)
 { if ( options->spacing == ATOM_next_argument )
@@ -454,6 +456,22 @@ PutStringN(const char *str, size_t length, IOSTREAM *s)
 
   for(i=0; i<length; i++, q++)
   { if ( Sputcode(*q, s) == EOF )
+      return false;
+  }
+
+  return true;
+}
+
+/* Write `length` wide characters from `str`.  Note that
+ * `length` is in characters, __not__ wchar_t units.
+ */
+
+static bool
+PutWStringN(const wchar_t *str, size_t length, IOSTREAM *s)
+{ while(length-- > 0)
+  { int c;
+    str = get_wchar(str, &c);
+    if ( !Putc(c, s) )
       return false;
   }
 
@@ -547,6 +565,23 @@ PutTokenN(const char *s, size_t len, IOSTREAM *stream)
   return true;
 }
 
+static int
+PutElipsis(IOSTREAM *s, bool first)
+{ int rc = true;
+
+  if ( Scanrepresent(0x2026, s) == 0 )
+  { if ( first && !(rc=PutOpenToken(0x2026, s)) )
+      return false;
+    if ( Sputcode(0x2026, s) == -1 )
+      return false;
+    return rc;
+  } else
+  { if ( first && !(rc=PutOpenToken('.', s)) )
+      return false;
+    TRY(PutString("...", s));
+    return rc;
+  }
+}
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 PutOpenBrace()/PutCloseBrace() are used to put  additional braces around
@@ -639,23 +674,6 @@ putQuoted(int c, int quote, int flags, IOSTREAM *stream)
   return true;
 }
 
-
-
-static bool
-writeQuoted(IOSTREAM *stream, const char *text, size_t len, int quote,
-	    write_options *options)
-{ const unsigned char *s = (const unsigned char *)text;
-
-  TRY(Putc(quote, stream));
-
-  while(len-- > 0)
-  { TRY(putQuoted(*s++, quote, options->flags, stream));
-  }
-
-  return Putc(quote, stream);
-}
-
-
 #if O_ATTVAR
 static bool
 writeAttributes(term_t t, int prec, write_options *options, int flags)
@@ -690,7 +708,9 @@ writeAttVar(term_t av, write_options *options)
   TRY(PutToken(varName(av, buf), options->out));
 
   if ( (options->flags & PL_WRT_ATTVAR_DOTS) )
-  { return PutString("{...}", options->out);
+  { return (Putc('{', options->out) &&
+	    PutElipsis(options->out, false) &&
+	    Putc('}', options->out));
   } else if ( (options->flags & PL_WRT_ATTVAR_WRITE) )
   { fid_t fid;
     term_t a;
@@ -755,6 +775,143 @@ writeBlob(atom_t a, write_options *options)
   return PutString(">", options->out);
 }
 
+static const wchar_t *
+wcs_backskip(const wchar_t *s, size_t len)
+{
+#if SIZEOF_WCHAR_T == 2
+  while(len-- > 0)
+  { s--;
+    if ( IS_UTF16_TRAIL(s[0]) )
+      s--;
+  }
+  return s;
+#else
+  return s-len;
+#endif
+}
+
+static bool
+write_chars(const char *str, size_t len, int quote, write_options *options)
+{ if ( quote )
+  { const unsigned char *s = (const unsigned char*)str;
+    const unsigned char *e = &s[len];
+
+    while(s<e)
+    { int chr = *s++;
+
+      TRY(putQuoted(chr, quote, options->flags, options->out));
+    }
+
+    return true;
+  } else
+  { return PutStringN(str, len, options->out);
+  }
+}
+
+static bool
+write_wchars(const wchar_t *s, size_t len, int quote, write_options *options)
+{ if ( quote )
+  { while(len-- > 0)
+    { int chr;
+
+      s = get_wchar(s, &chr);
+
+      TRY(putQuoted(chr, quote, options->flags, options->out));
+    }
+    return true;
+  } else
+  { return PutWStringN(s, len, options->out);
+  }
+}
+
+
+static int					/* false, true, TRUE_WITH_SPACE */
+writeText(PL_chars_t *txt, int quote, write_options *options)
+{ int rc = true;
+  size_t len = PL_text_length(txt);
+
+  if ( len == 0 )
+    return true;
+
+  if ( options->max_text >= 0 )
+  { if ( len > options->max_text )
+    { int mt = options->max_text;
+      int sl = min(mt, mt/2);		/* suffix len */
+      int pl = mt-sl;			/* prefix len */
+      bool quoted_ellipsis = false;
+
+      options->truncated = true;
+
+      if ( !quote && ison(options, PL_WRT_QUOTED) )
+      { quoted_ellipsis = true;
+	quote = '\'';
+	TRY( (rc=PutOpenToken(quote, options->out)) &&
+	     Putc(quote, options->out) );
+      }
+
+      switch(txt->encoding)
+      { case ENC_ISO_LATIN_1:
+	{ const char *s = (const char*)txt->text.t;
+	  if ( pl > 0 )
+	  { if ( !quote )
+	      TRY(rc=PutOpenToken(s[0], options->out));
+	    TRY(write_chars(s, pl, quote, options));
+	    TRY(PutElipsis(options->out, false));
+	  } else
+	  { TRY(rc=PutElipsis(options->out, true));
+	  }
+	  TRY(write_chars(s+len-sl, sl, quote, options));
+	  break;
+	}
+	case ENC_WCHAR:
+	{ const wchar_t *s = txt->text.w;
+	  const wchar_t *e = &s[txt->length];
+	  const wchar_t *suffix = wcs_backskip(e, sl);
+
+	  if ( pl > 0 )
+	  { int c;
+	    get_wchar(s, &c);
+	    if ( !quote )
+	      TRY(rc = PutOpenToken(c, options->out));
+	    TRY(write_wchars(s, pl, quote, options));
+	    TRY(PutElipsis(options->out, false));
+	  } else
+	  { TRY(rc=PutElipsis(options->out, true));
+	  }
+	  TRY(write_wchars(suffix, sl, quote, options));
+	  break;
+	}
+        default:
+	  assert(0);
+	  return false;
+      }
+      if ( rc && quoted_ellipsis )
+	TRY(Putc(quote, options->out));
+      return rc;
+    }
+  }
+
+  switch(txt->encoding)
+  { case ENC_ISO_LATIN_1:
+    { const char *s = (const char*)txt->text.t;
+      if ( !quote )
+	TRY(rc=PutOpenToken(s[0], options->out));
+      TRY(write_chars(s, len, quote, options));
+      return rc;
+    }
+    case ENC_WCHAR:
+    { const wchar_t *s = (const wchar_t*)txt->text.t;
+      if ( !quote )
+	TRY(rc=PutOpenToken(s[0], options->out));
+      TRY(write_wchars(s, len, quote, options));
+      return rc;
+    }
+    default:
+      assert(0);
+      return false;
+  }
+}
+
 
 static int				/* false, true or TRUE_WITH_SPACE */
 writeAtom(atom_t a, write_options *options)
@@ -785,11 +942,21 @@ writeAtom(atom_t a, write_options *options)
     }
   }
 
+  if ( atom->type->write_ex )
+    return ((*atom->type->write_ex)(a, options) &&
+	    !Sferror(options->out));
   if ( atom->type->write )
     return ((*atom->type->write)(options->out, a, options->flags) &&
 	    !Sferror(options->out));
   if ( isoff(atom->type, PL_BLOB_TEXT) )
     return writeBlob(a, options);
+
+  PL_chars_t text;
+
+  if ( !get_atom_text(a, &text) )
+  { assert(0);
+    return false;
+  }
 
   if ( ison(options, PL_WRT_QUOTED) )
   { switch( atomType(a, options) )
@@ -797,22 +964,25 @@ writeAtom(atom_t a, write_options *options)
       case AT_SYMBOL:
       case AT_SOLO:
       case AT_SPECIAL:
-	return PutToken(atom->name, options->out);
+	return writeText(&text, 0, options);
       case AT_QUOTE:
       case AT_FULLSTOP:
       default:
       { int rc;
+	int quote = '\'';
 
-	TRY(rc=PutOpenToken('\'', options->out));
-	TRY(writeQuoted(options->out,
-			atom->name,
-			atom->length,
-			'\'', options));
+	if ( !( (rc=PutOpenToken(quote, options->out)) &&
+		Putc(quote, options->out) &&
+		writeText(&text, quote, options) &&
+		Putc(quote, options->out) ) )
+	  return false;
+
 	return rc;
       }
     }
   } else
-    return PutTokenN(atom->name, atom->length, options->out);
+  { return writeText(&text, 0, options);
+  }
 }
 
 
@@ -826,43 +996,33 @@ writeAtomToStream(IOSTREAM *s, atom_t atom)
   return !!writeAtom(atom, &options);
 }
 
-
 bool
-writeUCSAtom(IOSTREAM *fd, atom_t atom, int flags)
-{ Atom a = atomValue(atom);
-  const pl_wchar_t *s = (const pl_wchar_t*)a->name;
-  size_t len = a->length/sizeof(pl_wchar_t);
-  const pl_wchar_t *e = &s[len];
+writeUCSAtom(atom_t atom, void *context)
+{ write_options *options = context;
+  PL_chars_t text;
 
-  if ( (flags&PL_WRT_QUOTED) && !unquoted_atomW(atom, fd, flags) )
-  { pl_wchar_t quote = L'\'';
-
-    TRY(PutOpenToken(quote, fd) &&
-	Putc(quote, fd));
-
-    while(s < e)
-    { int c;
-
-      s = get_wchar(s, &c);
-      TRY(putQuoted(c, quote, flags, fd));
-    }
-
-    return Putc(quote, fd);
+  if ( !get_atom_text(atom, &text) )
+  { assert(0);
+    return false;
   }
 
-  if ( e > s )
-  { int c;
+  if ( (options->flags&PL_WRT_QUOTED) &&
+       !unquoted_atomW(atom, options->out, options->flags) )
+  { pl_wchar_t quote = L'\'';
 
-    get_wchar(s, &c);
-    if ( !PutOpenToken(c, fd) )
+    return ( PutOpenToken(quote, options->out) &&
+	     Putc(quote, options->out) &&
+	     writeText(&text, quote, options) &&
+	     Putc(quote, options->out) );
+  } else
+  { PL_chars_t text;
+
+    if ( !get_atom_text(atom, &text) )
+    { assert(0);
       return false;
-
-    while ( s < e )
-    { s = get_wchar(s, &c);
-
-      if ( !Putc(c, fd) )
-	return false;
     }
+
+    return writeText(&text, 0, options);
   }
 
   return true;
@@ -927,72 +1087,15 @@ writeString(term_t t, write_options *options)
 
     if ( !(rc=Putc(quote, options->out)) )
       goto out;
-
-    switch(txt.encoding)
-    { case ENC_ISO_LATIN_1:
-      { const unsigned char *s = (const unsigned char*)txt.text.t;
-	const unsigned char *e = &s[txt.length];
-
-	while(s<e)
-	{ int chr = *s++;
-
-	  if ( !(rc=putQuoted(chr, quote, options->flags, options->out)) )
-	    goto out;
-	}
-	break;
-      }
-      case ENC_WCHAR:
-      { const wchar_t *s = txt.text.w;
-	const wchar_t *e = &s[txt.length];
-
-	while(s<e)
-	{ int chr;
-
-	  s = get_wchar(s, &chr);
-	  if ( !(rc=putQuoted(chr, quote, options->flags, options->out)) )
-	    goto out;
-	}
-	break;
-      }
-      default:
-	assert(0);
-    }
-    rc = Putc(quote, options->out);
+    rc = ( writeText(&txt, quote, options) &&
+	   Putc(quote, options->out) );
   } else
-  { switch(txt.encoding)
-    { case ENC_ISO_LATIN_1:
-      { const unsigned char *s = (const unsigned char*)txt.text.t;
-	const unsigned char *e = &s[txt.length];
-
-	while(s<e)
-	{ int chr = *s++;
-
-	  if ( !(rc=Putc(chr, options->out)) )
-	    goto out;
-	}
-	break;
-      }
-      case ENC_WCHAR:
-      { const wchar_t *s = txt.text.w;
-	const wchar_t *e = &s[txt.length];
-
-	while(s<e)
-	{ int chr;
-
-	  s = get_wchar(s, &chr);
-	  if ( !(rc=Putc(chr, options->out)) )
-	    goto out;
-	}
-	break;
-      }
-      default:
-	assert(0);
-    }
+  { rc = writeText(&txt, 0, options);
   }
-  PL_STRINGS_RELEASE();
 
 out:
   PL_free_text(&txt);
+  PL_STRINGS_RELEASE();
 
   return rc;
 }
@@ -1554,7 +1657,7 @@ callPortray(term_t arg, int prec, write_options *options)
 static bool
 writeTerm(term_t t, int prec, write_options *options, int flags)
 { GET_LD
-  int rval;
+  bool rval;
   int levelSave = options->depth;
   fid_t fid;
 
@@ -1567,8 +1670,9 @@ writeTerm(term_t t, int prec, write_options *options, int flags)
   }
 
   if ( ++options->depth > options->max_depth && options->max_depth )
-  { PutOpenToken('.', options->out);
-    rval = PutString("...", options->out);
+  { options->truncated = true;
+    PutOpenToken('.', options->out);
+    rval = PutElipsis(options->out, true);
   } else
   { rval = writeTerm2(t, prec, options, flags);
   }
@@ -1596,7 +1700,11 @@ writeList(term_t list, write_options *options)
       if ( PL_get_nil(l) )
 	break;
       if ( ++options->depth >= options->max_depth && options->max_depth )
-	return PutString("|...]", options->out);
+      { options->truncated = true;
+	return ( Putc('|', options->out) &&
+		 PutElipsis(options->out, false) &&
+		 Putc(']', options->out) );
+      }
       if ( !PL_is_functor(l, FUNCTOR_dot2) )
       { TRY(Putc('|', options->out));
 	TRY(writeTerm(l, 999, options, W_LIST_TAIL));
@@ -1634,7 +1742,8 @@ writeList(term_t list, write_options *options)
       }
 
       if ( ++options->depth >= options->max_depth && options->max_depth )
-      { if ( !PutToken("...", options->out) )
+      { options->truncated = true;
+	if ( !PutElipsis(options->out, true) )
 	  return false;
 	while(depth-->0)
 	{ if ( !Putc(')', options->out) )
@@ -1768,7 +1877,9 @@ writeTerm2(term_t t, int prec, write_options *options, int flags)
       return false;
     }
 					/* operators */
-    if ( isoff(options, PL_WRT_IGNOREOPS) )
+    if ( isoff(options, PL_WRT_IGNOREOPS) ||
+	 ( functor == ATOM_comma && arity == 2 &&
+	   ison(options, PL_WRT_INFIX_COMMA)) )
     { term_t arg;
 
       if ( !(arg=PL_new_term_ref()) )
@@ -2075,6 +2186,7 @@ static const PL_option_t write_term_options[] =
 { { ATOM_quoted,		    OPT_BOOL },
   { ATOM_quote_non_ascii,	    OPT_BOOL },
   { ATOM_ignore_ops,		    OPT_BOOL },
+  { ATOM_portable,		    OPT_BOOL },
   { ATOM_dotlists,		    OPT_BOOL },
   { ATOM_brace_terms,		    OPT_BOOL },
   { ATOM_numbervars,		    OPT_BOOL },
@@ -2084,10 +2196,12 @@ static const PL_option_t write_term_options[] =
   { ATOM_character_escapes,	    OPT_BOOL },
   { ATOM_character_escapes_unicode, OPT_BOOL },
   { ATOM_max_depth,		    OPT_INT  },
+  { ATOM_max_text,		    OPT_INT  },
+  { ATOM_truncated,		    OPT_TERM },
   { ATOM_module,		    OPT_ATOM },
   { ATOM_back_quotes,		    OPT_ATOM },
   { ATOM_attributes,		    OPT_ATOM },
-  { ATOM_priority,		    OPT_INT },
+  { ATOM_priority,		    OPT_INT  },
   { ATOM_partial,		    OPT_BOOL },
   { ATOM_spacing,		    OPT_ATOM },
   { ATOM_blobs,			    OPT_ATOM },
@@ -2106,8 +2220,9 @@ pl_write_term3(term_t stream, term_t term, term_t opts)
 { GET_LD
   int quoted      = false;
   int ignore_ops  = false;
+  int portable    = false;
   int dotlists    = false;
-  int braceterms  = true;
+  int braceterms  = -1;
   int numbervars  = -1;			/* not set */
   int portray     = false;
   term_t gportray = 0;
@@ -2125,15 +2240,17 @@ pl_write_term3(term_t stream, term_t term, term_t opts)
   int fullstop    = false;
   int no_lists    = false;
   term_t varnames = 0;
+  term_t truncated = 0;
   IOSTREAM *s = NULL;
   write_options options = WRITE_OPTIONS_DEFAULTS;
   int rc;
 
   if ( !PL_scan_options(opts, 0, "write_option", write_term_options,
-			&quoted, &quote_non_ascii, &ignore_ops, &dotlists, &braceterms,
+			&quoted, &quote_non_ascii, &ignore_ops, &portable,
+			&dotlists, &braceterms,
 			&numbervars, &portray, &portray, &gportray,
 			&charescape, &charescape_unicode,
-			&options.max_depth, &mname,
+			&options.max_depth, &options.max_text, &truncated, &mname,
 			&bq, &attr, &priority, &partial, &options.spacing,
 			&blobs, &cycles, &varnames, &nl, &fullstop,
 			&no_lists,
@@ -2199,16 +2316,18 @@ pl_write_term3(term_t stream, term_t term, term_t opts)
   if ( numbervars == -1 )
     numbervars = (portray ? true : false);
 
-  if ( quoted )          options.flags |= PL_WRT_QUOTED;
-  if ( quote_non_ascii ) options.flags |= PL_WRT_QUOTE_NON_ASCII;
-  if ( ignore_ops )      options.flags |= PL_WRT_IGNOREOPS;
-  if ( dotlists )        options.flags |= PL_WRT_DOTLISTS;
-  if ( !braceterms )     options.flags |= PL_WRT_BRACETERMS;
-  if ( numbervars )      options.flags |= PL_WRT_NUMBERVARS;
-  if ( portray )         options.flags |= PL_WRT_PORTRAY;
-  if ( !cycles )         options.flags |= PL_WRT_NO_CYCLES;
-  if ( no_lists )        options.flags |= PL_WRT_NO_LISTS;
-  if ( partial )	 options.flags |= PL_WRT_PARTIAL;
+  if ( quoted )              options.flags |= PL_WRT_QUOTED;
+  if ( quote_non_ascii )     options.flags |= PL_WRT_QUOTE_NON_ASCII;
+  if ( ignore_ops )          options.flags |= PL_WRT_IGNOREOPS|PL_WRT_BRACETERMS;
+  if ( portable )	     options.flags |= PL_WRT_PORTABLE;
+  if ( dotlists )            options.flags |= PL_WRT_DOTLISTS;
+  if ( braceterms == false ) options.flags |= PL_WRT_BRACETERMS;
+  if ( braceterms == true )  options.flags &= ~PL_WRT_BRACETERMS;
+  if ( numbervars )          options.flags |= PL_WRT_NUMBERVARS;
+  if ( portray )             options.flags |= PL_WRT_PORTRAY;
+  if ( !cycles )             options.flags |= PL_WRT_NO_CYCLES;
+  if ( no_lists )            options.flags |= PL_WRT_NO_LISTS;
+  if ( partial )	     options.flags |= PL_WRT_PARTIAL;
   if ( bq )
   { unsigned int flags = 0;
 
@@ -2247,6 +2366,9 @@ pl_write_term3(term_t stream, term_t term, term_t opts)
     rc = PutToken(".", s) && Putc(nl ? '\n' : ' ', s);
   else if ( nl )
     rc = Putc('\n', s);
+
+  if ( rc && truncated )
+    rc = PL_unify_bool_ex(truncated, options.truncated);
 
 out:
   END_NUMBERVARS(varnames);

@@ -764,8 +764,9 @@ typedef struct PL_blob_t
   atom_t		(*load)(IOSTREAM *s);
   size_t		padding;	/* Required 0-padding */
 					/* private */
-  void *		reserved[9];	/* for future extension */
-  int			registered;	/* Already registered? */
+  void *		reserved[8];	/* for future extension */
+  int			(*write_ex)(atom_t a, void *context);
+  bool			registered;	/* Already registered? */
   int			rank;		/* Rank for ordering atoms */
   struct PL_blob_t *    next;		/* next in registered type-chain */
   atom_t		atom_name;	/* Name as atom */
@@ -1022,7 +1023,7 @@ PL_EXPORT(IOSTREAM *) _PL_stream(int which);
 #define Scurrent_output _PL_stream(4)
 #endif
 
-#define PL_WRT_QUOTED		       0x01 /* quote atoms */
+#define PL_WRT_QUOTED		       0x01 /* quote atoms and strings */
 #define PL_WRT_IGNOREOPS	       0x02 /* ignore list/operators */
 #define PL_WRT_NUMBERVARS	       0x04 /* print $VAR(N) as a variable */
 #define PL_WRT_PORTRAY		       0x08 /* call portray */
@@ -1053,6 +1054,9 @@ PL_EXPORT(IOSTREAM *) _PL_stream(int which);
 #define PL_WRT_QUOTE_NON_ASCII	   0x800000 /* Quote atoms containing non-ascii */
 #define PL_WRT_PARTIAL		  0x1000000 /* Partial output */
 #define PL_WRT_NO_CHARESCAPES	  0x2000000 /* Do not Output ISO escapes */
+#define PL_WRT_INFIX_COMMA	  0x4000000 /* Write (a,b), with PL_WRT_IGNOREOPS */
+
+#define PL_WRT_PORTABLE (PL_WRT_IGNOREOPS|PL_WRT_INFIX_COMMA)
 
 PL_EXPORT(bool)	PL_write_term(IOSTREAM *s,
 			     term_t term,
