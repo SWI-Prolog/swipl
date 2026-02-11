@@ -67,7 +67,9 @@ The term has the following layout on the global stack:
 
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static int PL_get_dict_ex(term_t data, term_t tag, term_t dict, int flags);
+static bool PL_get_dict_ex(term_t data,
+			   term_t tag, term_t dict, int flags);
+
 #define DICT_GET_ALL	0xff
 #define DICT_GET_PAIRS	0x01
 #define DICT_GET_EQUALS	0x02
@@ -75,7 +77,7 @@ static int PL_get_dict_ex(term_t data, term_t tag, term_t dict, int flags);
 #define DICT_GET_TERM	0x08
 
 functor_t
-dict_functor(int pairs)
+dict_functor(size_t pairs)
 { if ( pairs < CACHED_DICT_FUNCTORS )
   { if ( GD->dict.dict_functors[pairs] )
       return GD->dict.dict_functors[pairs];
@@ -142,7 +144,7 @@ and is never a reference.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 #define get_create_dict_ex(t, dt) LDFUNC(get_create_dict_ex, t, dt)
-static int
+static bool
 get_create_dict_ex(DECL_LD term_t t, term_t dt)
 { Word p = valTermRef(t);
 
@@ -213,9 +215,9 @@ dict_lookup_ptr(DECL_LD word dict, word name, size_t *arg)
 */
 
 #define dict_ordered(data, count, dupl) LDFUNC(dict_ordered, data, count, dupl)
-static int
-dict_ordered(DECL_LD Word data, int count, Word dupl)
-{ int ordered = true;
+static bool
+dict_ordered(DECL_LD Word data, size_t count, Word dupl)
+{ bool ordered = true;
   Word n1, n2;
 
   if ( count > 0 )
@@ -249,7 +251,7 @@ dict_ordered(DECL_LD Word data, int count, Word dupl)
 }
 
 
-static int
+static int // cmp_t, but that does not satisty sort_r()
 compare_dict_entry(const void *a, const void *b, void *arg)
 { Word p = (Word)a+1;
   Word q = (Word)b+1;
@@ -261,10 +263,10 @@ compare_dict_entry(const void *a, const void *b, void *arg)
 }
 
 
-int
+bool
 dict_order(DECL_LD Word dict, Word dupl)
 { Functor data = (Functor)dict;
-  int arity = arityFunctor(data->definition);
+  size_t arity = arityFunctor(data->definition);
 
   assert(arity%2 == 1);
 
@@ -286,8 +288,12 @@ typedef struct order_term_refs
 } order_term_refs;
 
 
-#define compare_term_refs(ip1, ip2, ctx) LDFUNC(compare_term_refs, ip1, ip2, ctx)
-static inline int compare_term_refs(DECL_LD const int *ip1, const int *ip2, order_term_refs *ctx);
+// The compare functions are `int` typed for `sort_r()`.
+#define compare_term_refs(ip1, ip2, ctx) \
+	LDFUNC(compare_term_refs, ip1, ip2, ctx)
+
+static inline int compare_term_refs(DECL_LD const int *ip1, const int *ip2,
+				      order_term_refs *ctx);
 
 static int
 (compare_term_refs)(const void *a, const void *b, void *arg)
@@ -302,11 +308,11 @@ compare_term_refs(DECL_LD const int *ip1, const int *ip2, order_term_refs *ctx)
   assert(!isRef(*p));
   assert(!isRef(*q));
 
-  return (*p<*q ? -1 : *p>*q ? 1 : 0);
+  return SCALAR_TO_CMP(*p, *q);
 }
 
 
-int
+int	/* 0 or index of duplicate key */
 dict_order_term_refs(DECL_LD term_t *av, int *indexes, int count)
 { order_term_refs ctx;
 
@@ -332,7 +338,8 @@ dict_order_term_refs(DECL_LD term_t *av, int *indexes, int count)
 
 
 #define assign_in_dict(dp, val) LDFUNC(assign_in_dict, dp, val)
-static int
+
+static boolex_t
 assign_in_dict(DECL_LD Word dp, Word val)
 { deRef(val);
 
@@ -358,10 +365,10 @@ assign_in_dict(DECL_LD Word dp, Word val)
 #define put_dict(dict, size, nv, new_dict) \
 	LDFUNC(put_dict, dict, size, nv, new_dict)
 
-static int
-put_dict(DECL_LD word dict, int size, Word nv, word *new_dict)
+static boolex_t
+put_dict(DECL_LD word dict, size_t size, Word nv, word *new_dict)
 { Functor data = valueTerm(dict);
-  int arity = arityFunctor(data->definition);
+  size_t arity = arityFunctor(data->definition);
   Word new, out, in, in_end, nv_end;
   int modified = false;
 
@@ -383,7 +390,7 @@ put_dict(DECL_LD word dict, int size, Word nv, word *new_dict)
 
   while(in < in_end && nv < nv_end)
   { Word i_name, n_name;
-    int rc;
+    boolex_t rc;
 
     deRef2(in+1, i_name);
     deRef2(nv+1, n_name);
@@ -424,7 +431,7 @@ put_dict(DECL_LD word dict, int size, Word nv, word *new_dict)
   } else
   { while(nv < nv_end)
     { Word n_name;
-      int rc;
+      boolex_t rc;
 
       deRef2(nv+1, n_name);
       if ( (rc=assign_in_dict(out++, nv)) != true )
@@ -452,7 +459,7 @@ but whose tag and values are all set to variables.
 #define copy_keys_dict(dict, new_dict) \
 	LDFUNC(copy_keys_dict, dict, new_dict)
 
-static int
+static boolex_t
 copy_keys_dict(DECL_LD word dict, word *new_dict)
 { Functor data = valueTerm(dict);
   size_t arity = arityFunctor(data->definition);
@@ -512,11 +519,13 @@ same_keys_dict(DECL_LD word dict1, word dict2)
 }
 
 
-#define del_dict(dict, key, new_dict) LDFUNC(del_dict, dict, key, new_dict)
-static int
+#define del_dict(dict, key, new_dict) \
+	LDFUNC(del_dict, dict, key, new_dict)
+
+static boolex_t
 del_dict(DECL_LD word dict, word key, word *new_dict)
 { Functor data = valueTerm(dict);
-  int arity = arityFunctor(data->definition);
+  size_t arity = arityFunctor(data->definition);
   Word new, out, in, in_end;
 
   assert(arity%2 == 1);
@@ -553,7 +562,7 @@ del_dict(DECL_LD word dict, word key, word *new_dict)
 #define unify_tags(t1, t2, flags)			\
 	LDFUNC(unify_tags, t1, t2, flags)
 
-static int
+static boolex_t
 unify_tags(DECL_LD Word t1, Word t2, int flags)
 { deRef(t1);
   deRef(t2);
@@ -572,7 +581,7 @@ unify_tags(DECL_LD Word t1, Word t2, int flags)
 #define partial_unify_dict(dict1, dict2) \
 	LDFUNC(partial_unify_dict, dict1, dict2)
 
-static int
+static boolex_t
 partial_unify_dict(DECL_LD word dict1, word dict2)
 { Functor d1 = valueTerm(dict1);
   Functor d2 = valueTerm(dict2);
@@ -621,7 +630,7 @@ partial_unify_dict(DECL_LD word dict1, word dict2)
 #define unify_left_dict(del, from) \
 	LDFUNC(unify_left_dict, del, from)
 
-static int			/* bool or *_OVERFLOW */
+static boolex_t
 unify_left_dict(DECL_LD word del, word from)
 { Functor dd = valueTerm(del);
   Functor fd = valueTerm(from);
@@ -664,7 +673,7 @@ unify_left_dict(DECL_LD word del, word from)
 #define select_dict(del, from, new_dict) \
 	LDFUNC(select_dict, del, from, new_dict)
 
-static int
+static boolex_t
 select_dict(DECL_LD word del, word from, word *new_dict)
 { Functor dd = valueTerm(del);
   Functor fd = valueTerm(from);
@@ -674,7 +683,7 @@ select_dict(DECL_LD word del, word from, word *new_dict)
   Word fend = fin+arityFunctor(fd->definition);
   int buf[256];
   bit_vector *keep = NULL;
-  int rc;
+  boolex_t rc;
 
   /* unify the tags */
   if ( (rc=unify_tags(din, fin, ALLOW_RETCODE)) != true )
@@ -749,7 +758,7 @@ select_dict(DECL_LD word del, word from, word *new_dict)
 
 
 #define get_name_ex(t, np) LDFUNC(get_name_ex, t, np)
-static int
+static bool
 get_name_ex(DECL_LD term_t t, Word np)
 { Word p = valTermRef(t);
 
@@ -764,8 +773,10 @@ get_name_ex(DECL_LD term_t t, Word np)
 }
 
 
-#define get_name_value(p, name, value, m, flags) LDFUNC(get_name_value, p, name, value, m, flags)
-static int
+#define get_name_value(p, name, value, m, flags) \
+	LDFUNC(get_name_value, p, name, value, m, flags)
+
+static bool
 get_name_value(DECL_LD Word p, Word name, Word value, mark *m, int flags)
 { const char *type;
 
@@ -822,7 +833,7 @@ get_name_value(DECL_LD Word p, Word name, Word value, mark *m, int flags)
 		 *	 FOREIGN SUPPORT	*
 		 *******************************/
 
-int
+bool
 PL_is_dict(DECL_LD term_t t)
 { Word p = valTermRef(t);
 
@@ -851,7 +862,7 @@ API_STUB(bool)
 /* Turn data into a dict if it is not already a dict.
  */
 
-static int
+static bool
 PL_get_dict_ex(term_t data, term_t tag, term_t dict, int flags)
 { GET_LD
   word dupl;
@@ -941,23 +952,24 @@ the standard order of terms.
 
 typedef struct cmp_dict_index_data
 { Word  data;
-  int  *indexes;
+  size_t *indexes;
   PL_local_data_t *ld;
 } cmp_dict_index_data;
 
 #define cmp_dict_index(ip1, ip2, ctx) LDFUNC(cmp_dict_index, ip1, ip2, ctx)
-static inline int cmp_dict_index(DECL_LD const int *ip1, const int *ip2, cmp_dict_index_data *ctx);
+static inline cmp_t cmp_dict_index(DECL_LD const int *ip1, const int *ip2,
+				   cmp_dict_index_data *ctx);
 
 static int
 (cmp_dict_index)(const void *a1, const void *a2, void *arg)
 { return cmp_dict_index(PASS_AS_LD(((cmp_dict_index_data*)arg)->ld) a1, a2, arg);
 }
 
-static inline int
+static inline cmp_t
 cmp_dict_index(DECL_LD const int *ip1, const int *ip2, cmp_dict_index_data *ctx)
 { Word p = &ctx->data[*ip1*2+1];
   Word q = &ctx->data[*ip2*2+1];
-  int rc;
+  cmp_t rc;
 
   deRef(p);
   deRef(q);
@@ -1014,10 +1026,10 @@ pl_for_dict(DECL_LD term_t dict,
 	   void *closure,
 	   int flags)
 { term_t av = PL_new_term_refs(2);
-  int i, arity, pairs;
+  size_t i, arity, pairs;
   Word p = valTermRef(dict);
-  int index_buf[256];
-  int *indexes = NULL;
+  size_t index_buf[256];
+  size_t *indexes = NULL;
   int rc = 0;
 
   deRef(p);
@@ -1029,7 +1041,7 @@ pl_for_dict(DECL_LD term_t dict,
 
     if ( pairs < 256 )
       indexes = index_buf;
-    else if ( !(indexes = malloc(pairs*sizeof(int))) )
+    else if ( !(indexes = malloc(pairs*sizeof(size_t))) )
       return PL_no_memory();
 
     for(i=0; i<pairs; i++)
@@ -1039,12 +1051,12 @@ pl_for_dict(DECL_LD term_t dict,
     ctx.data = argTermP(*p,1);
     ctx.indexes = indexes;
 
-    sort_r(indexes, pairs, sizeof(int), cmp_dict_index, &ctx);
+    sort_r(indexes, pairs, sizeof(size_t), cmp_dict_index, &ctx);
   }
 
   for(i=0; i < pairs; )
   { Word p = valTermRef(dict);
-    int in;
+    size_t in;
 
     if ( indexes )
     { in = indexes[i]*2+1;
@@ -1146,7 +1158,7 @@ fix_firstvars(Code start, Code end)
   }
 }
 
-static int
+static bool
 resortDictsInCodes(Code PC, Code end)
 {
   for( ; PC < end; PC = stepPC(PC) )
@@ -1163,13 +1175,13 @@ resortDictsInCodes(Code PC, Code end)
 	if ( fd->name == ATOM_dict &&
 	     fd->arity > 1 &&
 	     fd->arity%2 == 1 )
-	{ int f, fields = fd->arity/2;
+	{ size_t f, fields = fd->arity/2;
 	  kv_code kv_buf[KV_PREALOCATED];
 	  code c_buf[C_PREALLOCATED];
 	  kv_code *kv_pos;
 	  Code c_tmp;
 	  Code fields_start, fs;
-	  int h_void = 0;
+	  ssize_t h_void = 0;
 
 	  if ( fields <= KV_PREALOCATED )
 	    kv_pos = kv_buf;
@@ -1360,7 +1372,7 @@ which these pairs are enumerated is _undefined_.
 static foreign_t
 pl_get_dict(term_t PL__t0, size_t PL__ac, int ex, control_t PL__ctx)
 { PRED_LD
-  int i;
+  size_t i;
   word dict;
 
   switch( CTX_CNTRL )
@@ -1392,11 +1404,11 @@ pl_get_dict(term_t PL__t0, size_t PL__ac, int ex, control_t PL__ctx)
     }
     case FRG_REDO:
     { Functor f;
-      int arity;
+      size_t arity;
       fid_t fid;
       Word p;
 
-      i = (int)CTX_INT + 2;
+      i = CTX_INT + 2;
       p = valTermRef(A2);
       deRef(p);
       dict = *p;
@@ -1639,9 +1651,9 @@ PRED_IMPL("put_dict", 3, put_dict, 0)
   { retry:
     Mark(fli_context->mark);
     Functor f2 = valueTerm(*valTermRef(dt+1));
-    int arity = arityFunctor(f2->definition);
+    size_t arity = arityFunctor(f2->definition);
     word new;
-    int rc;
+    boolex_t rc;
 
     if ( (rc = put_dict(*valTermRef(dt+0),
 			arity/2, &f2->arguments[1],

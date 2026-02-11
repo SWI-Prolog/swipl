@@ -940,7 +940,7 @@ VS2005 docs):
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 int
-ms_snprintf(char *buffer, size_t count, const char *fmt, ...)
+c99_snprintf(char *buffer, size_t count, const char *fmt, ...)
 { va_list ap;
   int ret;
 
@@ -948,7 +948,7 @@ ms_snprintf(char *buffer, size_t count, const char *fmt, ...)
   ret = _vsnprintf(buffer, count-1, fmt, ap);
   va_end(ap);
 
-  if ( ret < 0 || ret == count )
+  if ( ret < 0 || ret >= (int)(count-1) )
   { ret = (int)count;
     buffer[count-1] = '\0';
   }

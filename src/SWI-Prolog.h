@@ -61,7 +61,7 @@ extern "C" {
 /* PLVERSION_TAG: a string, normally "", but for example "rc1" */
 
 #ifndef PLVERSION
-#define PLVERSION 100000
+#define PLVERSION 100001
 #endif
 #ifndef PLVERSION_TAG
 #define PLVERSION_TAG ""
@@ -516,6 +516,9 @@ PL_EXPORT(void)		PL_unregister_atom(atom_t a);
 PL_EXPORT(size_t)	PL_atom_index(atom_t index);
 PL_EXPORT(atom_t)	PL_atom_from_index(size_t a);
 #ifdef O_DEBUG_ATOMGC
+#if defined(_MSC_VER) && !defined(__PRETTY_FUNCTION__)
+#define __PRETTY_FUNCTION__ __FUNCSIG__
+#endif
 #define PL_register_atom(a) \
 	_PL_debug_register_atom(a, __FILE__, __LINE__, __PRETTY_FUNCTION__)
 #define PL_unregister_atom(a) \
@@ -1341,7 +1344,7 @@ typedef struct
 
 
 PL_EXPORT(int)	PL_thread_self(void);	/* Prolog thread id (-1 if none) */
-PL_EXPORT(int)	PL_unify_thread_id(term_t t, int i);
+PL_EXPORT(int)	PL_unify_thread_id(term_t t, int i); /* -1 if i is invalid */
 PL_EXPORT(bool)	PL_get_thread_id_ex(term_t t, int *idp);
 PL_EXPORT(bool)	PL_get_thread_alias(int tid, atom_t *alias);	/* Locks alias */
 PL_EXPORT(int)	PL_thread_attach_engine(PL_thread_attr_t *attr);
@@ -1349,7 +1352,7 @@ PL_EXPORT(bool)	PL_thread_destroy_engine(void);
 PL_EXPORT(bool)	PL_thread_at_exit(void (*function)(void *),
 				  void *closure,
 				  bool global);
-PL_EXPORT(int)	PL_thread_raise(int tid, int sig);
+PL_EXPORT(bool)	PL_thread_raise(int tid, int sig);
 #if defined(_WINDOWS_) || defined(_WINDOWS_H)	/* <windows.h> is included */
 PL_EXPORT(bool)	PL_w32thread_raise(DWORD dwTid, int sig);
 #endif
@@ -1401,15 +1404,15 @@ typedef uint64_t table_value_t;
 
 PL_EXPORT(hash_table_t)	PL_new_hash_table(size_t size,
 					  void (*free_symbol)(table_key_t n, table_value_t v));
-PL_EXPORT(int)		PL_free_hash_table(hash_table_t table);
+PL_EXPORT(bool)		PL_free_hash_table(hash_table_t table);
 PL_EXPORT(table_value_t) PL_lookup_hash_table(hash_table_t table, table_key_t key);
 PL_EXPORT(table_value_t) PL_add_hash_table(hash_table_t table,
 					   table_key_t key, table_value_t value, int flags);
 PL_EXPORT(table_value_t) PL_del_hash_table(hash_table_t table, table_key_t key);
-PL_EXPORT(int)		PL_clear_hash_table(hash_table_t table);
+PL_EXPORT(bool)		PL_clear_hash_table(hash_table_t table);
 PL_EXPORT(hash_table_enum_t) PL_new_hash_table_enum(hash_table_t table);
 PL_EXPORT(void)		PL_free_hash_table_enum(hash_table_enum_t e);
-PL_EXPORT(int)		PL_advance_hash_table_enum(hash_table_enum_t e,
+PL_EXPORT(bool)		PL_advance_hash_table_enum(hash_table_enum_t e,
 						   table_key_t *key, table_value_t *value);
 
 
@@ -1486,8 +1489,8 @@ typedef struct pl_context_t
   void *	reserved[10];		/* Reserved for extensions */
 } pl_context_t;
 
-PL_EXPORT(int)	PL_get_context(struct pl_context_t *c, int thead_id);
-PL_EXPORT(int)	PL_step_context(struct pl_context_t *c);
+PL_EXPORT(bool)	PL_get_context(struct pl_context_t *c, int thead_id);
+PL_EXPORT(bool)	PL_step_context(struct pl_context_t *c);
 PL_EXPORT(int)	PL_describe_context(struct pl_context_t *c,
 				    char *buf, size_t len);
 

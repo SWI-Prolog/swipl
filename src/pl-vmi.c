@@ -226,7 +226,7 @@ END_VMH
 	}
 #define GROW_STACK_SPACE(g, t) \
 	do \
-	{ int __rc;					\
+	{ bool __rc;					\
 	  SAVE_REGISTERS(QID);				\
 	  __rc = ensureStackSpace(g, t);		\
 	  LOAD_REGISTERS(QID);				\
@@ -2966,7 +2966,7 @@ VMH(c_cut, 1, (Choice), (och))
   if ( (void *)och > (void *)FR )
   { lTop = (LocalFrame)(och+1);
   } else
-  { int nvar = (ison(FR->predicate, P_FOREIGN)
+  { size_t nvar = (ison(FR->predicate, P_FOREIGN)
 			? (int)FR->predicate->functor->arity
 			: FR->clause->value.clause->variables);
     lTop = (LocalFrame) argFrameP(FR, nvar);
@@ -4240,13 +4240,13 @@ VMI(A_IS, VIF_BREAK, 0, ())		/* A is B */
     CHECK_WAKEUP;
     NEXT_INSTRUCTION;
   } else
-  { int rc;
+  { bool rc;
 
     if ( isRational(*k) && ratNumber(n) )
     { number left;
 
       get_rational(*k, &left);
-      rc = (cmpNumbers(&left, n) == CMP_EQUAL);
+      rc = (cmpNumbers(&left, n) == CMPEX_EQUAL);
       clearNumber(&left);
     } else if ( isFloat(*k) && floatNumber(n) )
     { Word ak = valIndirectP(*k);
@@ -5461,7 +5461,7 @@ VMH(i_metacall_common, 3, (Word, int, bool), (a, callargs, is_call0))
 	}
       } else
       { Clause cl;
-	int rc;
+	ssize_t rc;
 
 	if ( fd->functor == FUNCTOR_at_sign2 &&
 	     !checkCallAtContextInstantiation(a) )

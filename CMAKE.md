@@ -52,7 +52,7 @@ In most cases the following should  update   an  installed system to the
 latest version:
 
     git pull
-    git submodule update --init
+    git submodule update --init --recursive
     cd build
     cmake ..
     ninja
@@ -326,9 +326,9 @@ features.
 For example, to build  a  system  using   the  `clang`  C  compiler with
 AddressSanitizer, use
 
-    mkdir build.clang.asan
-    cd build.clang.asan
-    ../script/configure
+    mkdir build.clang-asan
+    cd build.clang-asan
+    ../scripts/configure
     (direnv allow)
     ninja
 

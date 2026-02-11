@@ -71,7 +71,7 @@
 #include "pl-nt.h"
 #endif
 
-#ifdef __SANITIZE_ADDRESS__
+#if defined(__SANITIZE_ADDRESS__) && defined(HAVE_SANITIZER_LSAN_INTERFACE_H)
 #include <sanitizer/lsan_interface.h>
 #endif
 
@@ -4460,6 +4460,10 @@ PL_qualify(term_t raw, term_t qualified)
 predicate_t
 PL_pred(functor_t functor, module_t module)
 { valid_functor_t(functor);
+  size_t arity = arityFunctor(functor);
+
+  if ( arity < 0 || arity > MAXARITY )
+    PL_api_error("invalid arity %d (out of range)", arity);
   if ( module == NULL )
     module = PL_context();
 
@@ -4470,8 +4474,12 @@ PL_pred(functor_t functor, module_t module)
 predicate_t
 PL_predicate(const char *name, int arity, const char *module)
 { Module m;
+
+  if ( arity < 0 || arity > MAXARITY )
+    PL_api_error("invalid arity %d (out of range)", arity);
+
   atom_t a    = lookupAtom(name, strlen(name));
-  functor_t f = lookupFunctorDef(a, arity);
+  functor_t f = lookupFunctorDef(a, (size_t)arity);
 
   PL_unregister_atom(a);
 
@@ -4487,7 +4495,7 @@ PL_predicate(const char *name, int arity, const char *module)
 }
 
 
-/* _PL_predicate(const char *name, int arity, const char *module, moved to pl-fli.h */
+/* _PL_predicate(const char *name, size_t arity, const char *module, moved to pl-fli.h */
 
 
 bool
@@ -5003,7 +5011,7 @@ supported by GCC and Clang. Do do so, use
 
 See cmake/BuildType.cmake for details.
 
-Currently SWI-Prolog does not reclaim all memory   on  edit, even not if
+Currently SWI-Prolog does not reclaim all memory   on  exit, even not if
 cleanupProlog() is called with reclaim_memory set to true. The docs says
 we can use __lsan_disable() just before exit   to  avoid the leak check,
 but this doesn't seem to work (Ubuntu 18.04). What does work is defining
@@ -5025,6 +5033,7 @@ haltProlog(int status)
     case PL_CLEANUP_RECURSIVE:
       return false;
     default:
+      GD->halt.cleaning = CLN_ATEXIT;
       run_on_halt(&GD->os.exit_hooks, status);
       return true;
   }
@@ -5768,7 +5777,7 @@ PL_query(int query)
       return (intptr_t)(cpu*1000.0);
     }
     case PL_QUERY_HALTING:
-    { return (GD->halt.cleaning == CLN_NORMAL ? false : true);
+    { return (GD->halt.cleaning != CLN_NORMAL);
     }
     default:
       sysError("PL_query: Illegal query: %d", query);

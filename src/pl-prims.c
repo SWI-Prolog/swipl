@@ -264,7 +264,7 @@ Returns one of:
 #define SWAPW(p,q) do { Word _tmp = p; p=q; q=_tmp; } while(0)
 #define unify_simple_ptrs(t1, t2) LDFUNC(unify_simple_ptrs, t1, t2)
 
-int
+boolex_t
 unify_simple_ptrs(DECL_LD Word t1, Word t2)
 { word w1, w2;
 
@@ -355,12 +355,12 @@ unify_simple_ptrs(DECL_LD Word t1, Word t2)
 
 
 #define do_unify(t1, t2) LDFUNC(do_unify, t1, t2)
-int
+boolex_t
 do_unify(DECL_LD Word t1, Word t2)
 { deRef(t1);
   deRef(t2);
 
-  int rc = unify_simple_ptrs(t1, t2);
+  boolex_t rc = unify_simple_ptrs(t1, t2);
   if ( rc >= 0 )
     return rc;
   if ( rc != DO_COMPOUND )
@@ -508,7 +508,7 @@ Return:
       - false: unification failure or raised exception
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+boolex_t
 unify_ptrs(DECL_LD Word t1, Word t2, int flags)
 { for(;;)
   { int rc;
@@ -590,13 +590,13 @@ entry.  Returns one of
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 #define var_occurs_in(v, t) LDFUNC(var_occurs_in, v, t)
-static int
+static boolex_t
 var_occurs_in(DECL_LD Word v, Word t)
 { segstack visited;
   Functor tmp[256];
   term_agenda agenda;
-  int compound = false;
-  int rc = false;
+  bool compound = false;
+  boolex_t rc = false;
 
   deRef(t);
   if ( v == t )
@@ -615,7 +615,7 @@ var_occurs_in(DECL_LD Word v, Word t)
   unified:
     if ( isTerm(*t) )
     { Functor f = valueTerm(*t);
-      int arity = arityFunctor(f->definition);
+      size_t arity = arityFunctor(f->definition);
 
       if ( !compound )
       { compound = true;
@@ -628,11 +628,14 @@ var_occurs_in(DECL_LD Word v, Word t)
       { f->definition |= FIRST_MASK;
 	if ( !pushSegStack(&visited, f, Functor) ||
 	     !pushWorkAgenda(&agenda, arity, f->arguments) )
-	  return MEMORY_OVERFLOW;
+	{ rc = MEMORY_OVERFLOW;
+	  goto out;
+	}
       }
     }
   } while( compound && (t=nextTermAgenda(&agenda)) );
 
+out:
   if ( compound )
   { Functor f;
 
@@ -645,14 +648,18 @@ var_occurs_in(DECL_LD Word v, Word t)
 }
 
 
-int
+bool
 PL_var_occurs_in(term_t var, term_t value)
 { GET_LD
   Word v = valTermRef(var);
 
   deRef(v);
+  boolex_t rc = var_occurs_in(v, valTermRef(value));
 
-  return var_occurs_in(v, valTermRef(value));
+  if ( rc >= 0 )
+    return rc;
+
+  return raiseStackOverflow(rc);
 }
 
 
@@ -1057,7 +1064,7 @@ typedef struct term_chain_agenda
 
 
 #define ph_acyclic_mark(p) LDFUNC(ph_acyclic_mark, p)
-static int
+static boolex_t
 ph_acyclic_mark(DECL_LD Word p)
 { term_chain_agenda agenda;
   termChain chains[32];
@@ -1066,7 +1073,7 @@ ph_acyclic_mark(DECL_LD Word p)
   Functor tail = top;
   Functor iter;
   Word pdef;
-  int arity;
+  size_t arity;
 
   initSegStack(&agenda.stack, sizeof(termChain), sizeof(chains), chains);
 
@@ -1085,18 +1092,20 @@ ph_acyclic_mark(DECL_LD Word p)
     arity = arityFunctor(tail->definition);
 
     if ( arity > 1 )
-    { int i;
-      int new_workspace = false;
+    { size_t i;
+      bool new_workspace = false;
 
       iter = tail;
-      for( i = arity-2; i >= 0; i-- )
-      { p = iter->arguments + i;
+      for( i = arity; i >= 2; i-- )
+      { p = iter->arguments + i - 2;
 	deRef(p);
 
 	if ( isTerm(*p) )
 	{ if ( !new_workspace )
 	  { if ( !pushSegStack(&agenda.stack, agenda.work, termChain) )
-	      outOfCore();
+	    { discardSegStack(&agenda.stack);
+	      return MEMORY_OVERFLOW;
+	    }
 	    agenda.work.head = head;
 	    agenda.work.tail = tail;
 	    agenda.work.p = iter->arguments + arity-1;
@@ -1105,7 +1114,9 @@ ph_acyclic_mark(DECL_LD Word p)
 	    new_workspace = true;
 	  } else
 	  { if ( !pushSegStack(&agenda.stack, agenda.work, termChain) )
-	      outOfCore();
+	    { discardSegStack(&agenda.stack);
+	      return MEMORY_OVERFLOW;
+	    }
 	    agenda.work.head = agenda.work.tail = valueTerm(*p);
 	    agenda.work.p = NULL;
 	  }
@@ -1161,7 +1172,7 @@ ph_acyclic_mark(DECL_LD Word p)
 
 
 #define ph_acyclic_unmark(p) LDFUNC(ph_acyclic_unmark, p)
-static int
+static void
 ph_acyclic_unmark(DECL_LD Word p)
 { term_agenda agenda;
 
@@ -1180,14 +1191,12 @@ ph_acyclic_unmark(DECL_LD Word p)
       pushWorkAgenda(&agenda, arityFunctor(f->definition), f->arguments);
     }
   }
-
-  return true;
 }
 
 
-int
+boolex_t
 is_acyclic(DECL_LD Word p)
-{ int rc1;
+{ boolex_t rc1;
 
   deRef(p);
   if ( isTerm(*p) )
@@ -1202,9 +1211,9 @@ is_acyclic(DECL_LD Word p)
 
 
 #define PL_is_acyclic(t) LDFUNC(PL_is_acyclic, t)
-static int
+static bool
 PL_is_acyclic(DECL_LD term_t t)
-{ int rc;
+{ boolex_t rc;
 
   if ( (rc=is_acyclic(valTermRef(t))) == true )
     return true;
@@ -1321,7 +1330,7 @@ scan_shared(DECL_LD Word t, Word vart, size_t *count)
 */
 
 #define unscan_shared(t) LDFUNC(unscan_shared, t)
-static int
+static void
 unscan_shared(DECL_LD Word t)
 { term_agenda agenda;
   Word p;
@@ -1333,7 +1342,7 @@ unscan_shared(DECL_LD Word t)
       Word d = &f->definition;
 
       if ( is_marked(d) )
-      { int arity;
+      { size_t arity;
 
 	clear_marked(d);
 	clear_first(d);
@@ -1343,8 +1352,6 @@ unscan_shared(DECL_LD Word t)
     }
   }
   clearTermAgenda(&agenda);
-
-  return true;
 }
 
 
@@ -1381,7 +1388,7 @@ restore_shared_functors(DECL_LD Word vars)
 
 
 #define link_shared(t) LDFUNC(link_shared, t)
-static int
+static void
 link_shared(DECL_LD Word t)
 { term_agenda agenda;
   Word p;
@@ -1399,7 +1406,7 @@ link_shared(DECL_LD Word t)
 	deRef(v);
 
 	if ( is_marked(d) )
-	{ int arity = arityFunctor(*v);
+	{ size_t arity = arityFunctor(*v);
 	  pushWorkAgenda(&agenda, arity, f->arguments);
 	}
 
@@ -1412,7 +1419,7 @@ link_shared(DECL_LD Word t)
 	  *v = makeRefG(p);
 	}
       } else if ( is_marked(d) )
-      { int arity;
+      { size_t arity;
 	word fun = f->definition & ~(FIRST_MASK|MARK_MASK);
 
 	clear_marked(d);
@@ -1422,19 +1429,17 @@ link_shared(DECL_LD Word t)
     }
   }
   clearTermAgenda(&agenda);
-
-  return true;
 }
 
 
-int
+bool
 PL_factorize_term(term_t term, term_t template, term_t factors)
 { GET_LD
   fid_t fid;
   term_t vars, wrapped;
   Word t;
   size_t count;
-  int rc;
+  boolex_t rc;
 
   for(;;)
   { if ( !(fid = PL_open_foreign_frame()) ||
@@ -1523,9 +1528,11 @@ PRED_IMPL("deterministic", 1, deterministic, 0)
 		 *	    TERM-HASH		*
 		 *******************************/
 
-#define termHashValue(term, depth, hval) LDFUNC(termHashValue, term, depth, hval)
+#define termHashValue(term, depth, hval) \
+	LDFUNC(termHashValue, term, depth, hval)
+
 static bool
-termHashValue(DECL_LD word term, long depth, unsigned int *hval)
+termHashValue(DECL_LD word term, int64_t depth, unsigned int *hval)
 { for(;;)
   { switch(tag(term))
     { case TAG_VAR:
@@ -1565,9 +1572,9 @@ termHashValue(DECL_LD word term, long depth, unsigned int *hval)
       case TAG_COMPOUND:
       { Functor t = valueTerm(term);
 	FunctorDef fd;
-	int arity;
+	size_t arity;
 	Word p;
-	unsigned int atom_hashvalue;
+	size_t atom_hashvalue;
 
 	if ( visited(t) )
 	{ *hval = MurmurHashAligned2(hval, sizeof(*hval), *hval);
@@ -1582,7 +1589,7 @@ termHashValue(DECL_LD word term, long depth, unsigned int *hval)
 				   sizeof(atom_hashvalue),
 				   *hval);
 
-	if ( --depth != 0 )
+	if ( --depth != 0 )			/* -1 keeps on going */
 	{ for(p = t->arguments; arity-- > 0; p++)
 	  { if ( !termHashValue(*p, depth, hval) )
 	    { popVisited();
@@ -1612,12 +1619,12 @@ PRED_IMPL("term_hash", 4, term_hash4, 0)
 { PRED_LD
   Word p = valTermRef(A1);
   unsigned int hraw = MURMUR_SEED;
-  long depth;
+  int64_t depth;
   int range;
-  int rc = true;
+  bool rc = true;
 
-  if ( !PL_get_long_ex(A2, &depth) )
-    fail;
+  if ( !PL_get_int64_ex(A2, &depth) )
+    return false;
   if ( depth < -1 )
     return PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_not_less_than_zero, A2);
 
@@ -1653,7 +1660,7 @@ There are atoms of different  type.   We  only define comparison between
 atoms of the same type, except for mixed ISO Latin-1 and UCS atoms.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+cmp_t
 compareAtoms(atom_t w1, atom_t w2)
 { if ( w1 == w2 )
     return CMP_EQUAL;
@@ -1780,7 +1787,7 @@ compareStandard(Word p1, Word p2, int eq)
 
     Var @< AttVar @< Number @< String @< Atom < Term
 
-    OldVar < NewVar	(not relyable)
+    OldVar < NewVar	(not reliable)
     Atom:	alphabetically
     Strings:	alphabetically
     number:	value
@@ -1790,8 +1797,10 @@ If eq == true, only test for equality. In this case expensive inequality
 tests (alphabetical order) are skipped and the call returns NOTEQ.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-#define compare_primitives(p1, p2, eq) LDFUNC(compare_primitives, p1, p2, eq)
-static int
+#define compare_primitives(p1, p2, eq) \
+	LDFUNC(compare_primitives, p1, p2, eq)
+
+static cmpex_t
 compare_primitives(DECL_LD Word p1, Word p2, bool eq)
 { word t1, t2;
   word w1, w2;
@@ -1802,7 +1811,7 @@ compare_primitives(DECL_LD Word p1, Word p2, bool eq)
   if ( w1 == w2 )
   { if ( isVar(w1) )
       return SCALAR_TO_CMP(p1, p2);
-    return CMP_EQUAL;
+    return CMPEX_EQUAL;
   }
 
   t1 = tag(w1);
@@ -1823,7 +1832,7 @@ compare_primitives(DECL_LD Word p1, Word p2, bool eq)
     static_assert(TAG_VAR == 0 && TAG_ATTVAR==1,
 		  "Think twice before reordering the tags");
     if ( (t1|t2) > TAG_ATTVAR )			/* actually `t1 > TAG_ATTVAR || t2 > TAG_ATTVAR` */
-      return t1 < t2 ? CMP_LESS : CMP_GREATER;
+      return t1 < t2 ? CMPEX_LESS : CMPEX_GREATER;
   }
 
   switch(t1)
@@ -1850,14 +1859,14 @@ compare_primitives(DECL_LD Word p1, Word p2, bool eq)
     }
     case TAG_FLOAT:
     { if ( equalIndirect(w1,w2) )
-	return CMP_EQUAL;
+	return CMPEX_EQUAL;
       else if ( eq )
 	return CMP_NOTEQ;
       else
 	return compare_neq_floats(valFloat(w1), valFloat(w2));
     }
     case TAG_ATOM:
-      return eq ? CMP_NOTEQ : compareAtoms(word2atom(w1), word2atom(w2));
+      return eq ? CMP_NOTEQ : (cmpex_t)compareAtoms(word2atom(w1), word2atom(w2));
     case TAG_STRING:
       return compareStrings(w1, w2, eq);
     case TAG_COMPOUND:
@@ -1868,8 +1877,8 @@ compare_primitives(DECL_LD Word p1, Word p2, bool eq)
   }
 }
 
-static int
-compare_functors(word f1, word f2, int eq)
+static cmpex_t
+compare_functors(word f1, word f2, bool eq)
 { if ( eq )
   { return CMP_NOTEQ;
   } else
@@ -1877,27 +1886,29 @@ compare_functors(word f1, word f2, int eq)
     FunctorDef fd2 = valueFunctor(f2);
 
     if ( fd1->arity != fd2->arity )
-      return fd1->arity > fd2->arity ? CMP_GREATER : CMP_LESS;
+      return fd1->arity > fd2->arity ? CMPEX_GREATER : CMPEX_LESS;
 
-    return compareAtoms(fd1->name, fd2->name);
+    return (cmpex_t)compareAtoms(fd1->name, fd2->name);
   }
 }
 
-#define do_compare(agenda, f1, f2, eq) LDFUNC(do_compare, agenda, f1, f2, eq)
-static int
-do_compare(DECL_LD term_agendaLR *agenda, Functor f1, Functor f2, int eq)
+#define do_compare(agenda, f1, f2, eq) \
+	LDFUNC(do_compare, agenda, f1, f2, eq)
+
+static cmpex_t
+do_compare(DECL_LD term_agendaLR *agenda, Functor f1, Functor f2, bool eq)
 { Word p1, p2;
 
   goto compound;
 
   while( nextTermAgendaLR(agenda, &p1, &p2) )
-  { int rc;
+  { cmpex_t rc;
 
     deRef(p1);
     deRef(p2);
 
     if ( (rc=compare_primitives(p1, p2, eq)) != CMP_COMPOUND )
-    { if ( rc == CMP_EQUAL )
+    { if ( rc == CMPEX_EQUAL )
 	continue;
       return rc;
     } else
@@ -1916,7 +1927,7 @@ do_compare(DECL_LD term_agendaLR *agenda, Functor f1, Functor f2, int eq)
       if ( f1->definition != f2->definition )
       { return compare_functors(f1->definition, f2->definition, eq);
       } else
-      { int arity;
+      { size_t arity;
 
       compound:
 	arity = arityFunctor(f1->definition);
@@ -1931,13 +1942,13 @@ do_compare(DECL_LD term_agendaLR *agenda, Functor f1, Functor f2, int eq)
     }
   }
 
-  return CMP_EQUAL;
+  return CMPEX_EQUAL;
 }
 
 
-int
-compareStandard(DECL_LD Word p1, Word p2, int eq)
-{ int rc;
+cmpex_t
+compareStandard(DECL_LD Word p1, Word p2, bool eq)
+{ cmpex_t rc;
 
   deRef(p1);
   deRef(p2);
@@ -1973,7 +1984,7 @@ PRED_IMPL("compare", 3, compare, PL_FA_ISO)
   Word d  = valTermRef(A1);
   Word p1 = valTermRef(A2);
   Word p2 = p1+1;
-  int val;
+  cmpex_t val;
   atom_t a;
 
   deRef(d);
@@ -1984,7 +1995,7 @@ PRED_IMPL("compare", 3, compare, PL_FA_ISO)
     { a = word2atom(*d);
 
       if ( a == ATOM_equals )
-	return compareStandard(p1, p2, true) == CMP_EQUAL ? true : false;
+	return compareStandard(p1, p2, true) == CMPEX_EQUAL;
 
       if ( a != ATOM_smaller && a != ATOM_larger )
 	return PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_order, A1);
@@ -1995,12 +2006,12 @@ PRED_IMPL("compare", 3, compare, PL_FA_ISO)
   if ( (val = compareStandard(p1, p2, false)) == CMP_ERROR )
     return false;
 
-  if ( a )
+  if ( a )				/* diff is given */
   { if ( a == ATOM_smaller )
       return val < 0;
     else
       return val > 0;
-  } else
+  } else				/* unify diff */
   { a = val < 0 ? ATOM_smaller :
 	val > 0 ? ATOM_larger :
 		  ATOM_equals;
@@ -2015,12 +2026,12 @@ PRED_IMPL("@<", 2, std_lt, 0)
 { PRED_LD
   Word p1 = valTermRef(A1);
   Word p2 = p1+1;
-  int rc;
+  cmpex_t rc;
 
   if ( (rc=compareStandard(p1, p2, false)) == CMP_ERROR )
     return false;
 
-  return rc < 0 ? true : false;
+  return rc < 0;
 }
 
 
@@ -2029,12 +2040,12 @@ PRED_IMPL("@=<", 2, std_leq, 0)
 { PRED_LD
   Word p1 = valTermRef(A1);
   Word p2 = p1+1;
-  int rc;
+  cmpex_t rc;
 
   if ( (rc=compareStandard(p1, p2, false)) == CMP_ERROR )
     return false;
 
-  return rc <= 0 ? true : false;
+  return rc <= 0;
 }
 
 
@@ -2043,12 +2054,12 @@ PRED_IMPL("@>", 2, std_gt, 0)
 { PRED_LD
   Word p1 = valTermRef(A1);
   Word p2 = p1+1;
-  int rc;
+  cmpex_t rc;
 
   if ( (rc=compareStandard(p1, p2, false)) == CMP_ERROR )
     return false;
 
-  return rc > 0 ? true : false;
+  return rc > 0;
 }
 
 
@@ -2057,12 +2068,12 @@ PRED_IMPL("@>=", 2, std_geq, 0)
 { PRED_LD
   Word p1 = valTermRef(A1);
   Word p2 = p1+1;
-  int rc;
+  cmpex_t rc;
 
   if ( (rc=compareStandard(p1, p2, false)) == CMP_ERROR )
     return false;
 
-  return rc >= 0 ? true : false;
+  return rc >= 0;
 }
 
 		/********************************
@@ -2135,7 +2146,7 @@ True if T1 and T2 is really  the   same  term,  so setarg/3 affects both
 terms.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+bool
 PL_same_term(DECL_LD term_t T1, term_t T2)
 { Word t1 = valTermRef(T1);
   Word t2 = valTermRef(T2);
@@ -2748,9 +2759,9 @@ PRED_IMPL("$seek_list", 4, seek_list, 0)
 
 /*  Determine the length of a list.  Returns:
 
-	len >=  0 if list is proper
-	len == -1 if list is not a list
-	len == -2 if list is incomplete (i.e. tail is unbound)
+	length >=  0 if list is proper
+	length == -1 if list is not a list
+	length == -2 if list is incomplete (i.e. tail is unbound)
 
  ** Mon Apr 18 16:29:01 1988  jan@swivax.UUCP (Jan Wielemaker)  */
 
@@ -2936,7 +2947,7 @@ PRED_IMPL("compound_name_arguments", 3, compound_name_arguments, 0)
 		 *******************************/
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-Returns	>= 0: Number for next variable variable
+Returns	>= 0: Number for next variable
 	  -1: Error
 	< -1: Out of stack error or ALREADY_NUMBERED or CONTAINS_ATTVAR
 
@@ -3071,7 +3082,7 @@ out:
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-Returns	>= 0: Number for next variable variable
+Returns	>= 0: Number for next variable
 	  -1: Error.  Exception is left in the environment
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
@@ -3579,10 +3590,12 @@ PRED_IMPL("is_most_general_term", 1, is_most_general_term, 0)
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 subsumes is defined as
 
+```
 subsumes(General, Specific) :-
 	term_variables(Specific, SVars),
 	General = Specific,
 	term_variables(SVars, SVars).
+```
 
 Below is the implementation, but we keep  the array of variables instead
 of creating an array and we check whether these are all unique variables
@@ -3601,7 +3614,7 @@ algorithm.
 
 We can enhance on this by combining this with the one-sided unification.
 We could delay scanning specific until we  bind the first variable. This
-will not have any significant  inpact   on  performance for a succeeding
+will not have any significant  impact   on  performance for a succeeding
 subsumes check, but can result in early failure and avoiding the scan of
 specific. This works because  the   one-sided  unification algorithm can
 only succeed in places where it should fail.
@@ -4414,7 +4427,7 @@ PRED_IMPL("atom_number", 2, atom_number, 0)
     return false;
 }
 
-/* MacOS X Mavericks and Yosemite write a char (nul) too many if the
+/* MacOS X Mavericks and Yosemite write a char (0) too many if the
  * buffer is short.  Thanks to Samer Abdallah for sorting this out.
  *
  * (*) On failure, wcsxfrm() normally returns the required size.
@@ -4876,26 +4889,26 @@ second 15 bits for the `after'.
 There are many possibilities (think the semantics are a bit overloaded).
 
     * sub is given
-	+ if len conflicts: fail
+	+ if length conflicts: fail
 	+ if before or after given: test deterministically
 	+ otherwise: search (non-deterministic)
     * two of the integers are given
 	+ generate (deterministic)
     * before is given:
 	+ split the remainder (non-deterministic)
-    * len is given:
+    * length is given:
 	+ enumerate breaks (non-deterministic)
     * after is given:
 	+ split the remainder (non-deterministic)
     * non given:
-	+ enumerate using before and len (non-deterministic)
+	+ enumerate using before and length (non-deterministic)
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 enum sub_type
 { SUB_SEARCH,				/* sub given, but no position */
   SUB_SPLIT_TAIL,			/* before given, split tail */
   SUB_SPLIT_HEAD,			/* after given, split head */
-  SUB_SPLIT_LEN,			/* len given, move it */
+  SUB_SPLIT_LEN,			/* length given, move it */
   SUB_ENUM				/* all free */
 };
 
@@ -4958,7 +4971,7 @@ sub_text(DECL_LD term_t atom,
       }
 
       if ( ts.text.t )			/* `sub' given */
-      { if ( SIZE_GIVEN(l) && ls != l ) /* len conflict */
+      { if ( SIZE_GIVEN(l) && ls != l ) /* length conflict */
 	  return false;
 	if ( SIZE_GIVEN(b) )		/* before given: test */
 	{ if ( PL_cmp_text(&ta, b, &ts, 0, ls) == CMP_EQUAL )
@@ -4990,7 +5003,7 @@ sub_text(DECL_LD term_t atom,
       { if ( b > la )
 	  return false;
 
-	if ( SIZE_GIVEN(l) )		/* len given */
+	if ( SIZE_GIVEN(l) )		/* length given */
 	{ if ( b+l <= la )		/* deterministic fit */
 	  { if ( PL_unify_text_range(sub, &ta, b, l, type) &&
 		 PL_unify_integer(after, la-b-l) )
@@ -5011,17 +5024,17 @@ sub_text(DECL_LD term_t atom,
 	}
 	state = allocForeignState(sizeof(*state));
 	state->type = SUB_SPLIT_TAIL;
-	state->n1   = 0;		/* len of the split */
+	state->n1   = 0;		/* length of the split */
 	state->n2   = la;		/* length of the atom */
 	state->n3   = b;		/* length before */
 	break;
       }
 
-      if ( SIZE_GIVEN(l) )		/* no before, len given */
+      if ( SIZE_GIVEN(l) )		/* no before, length given */
       { if ( l > la )
 	  return false;
 
-	if ( SIZE_GIVEN(a) )		/* len and after */
+	if ( SIZE_GIVEN(a) )		/* length and after */
 	{ if ( la >= a+l )
 	  { size_t b2 = la-a-l;
 
@@ -5055,7 +5068,7 @@ sub_text(DECL_LD term_t atom,
       state = allocForeignState(sizeof(*state));
       state->type = SUB_ENUM;
       state->n1	= 0;			/* before */
-      state->n2 = 0;			/* len */
+      state->n2 = 0;			/* length */
       state->n3 = la;			/* total length */
       break;
     }
@@ -5530,7 +5543,7 @@ On first call:
   1. If Result is nonvar, there was the inference limit is exceeded.
      The limit is already reset by '$inference_limit_except'/3, so we
      just indicate that our result is deterministic.
-  2. Else, restore the limit and indicate determinism in Det.
+  2. Else, restore the limit and indicate determinism in Result.
 
 On redo, use Limit to set a new  limit and fail to continue retrying the
 guarded goal.
@@ -5678,10 +5691,10 @@ raiseInferenceLimitException(void)
 		*********************************/
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-Fetch runtime statistics. There are two standards  here. One is based on
-old C-Prolog compatibility, exended as required   by  SWI-Prolog and the
-other  is  defined  by  Quintus/SICStus.  The   latter  is  included  if
-QP_STATISTICS is defined. The compatibility   is pretty complete, except
+Fetch runtime statistics.  There are two   standards here.  One is based
+on old C-Prolog compatibility, extended as   required  by SWI-Prolog and
+the other is defined by  Quintus/SICStus.    The  latter  is included if
+QP_STATISTICS is defined.  The compatibility  is pretty complete, except
 the `atoms' key that is defined by both and this ambiguous.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
@@ -5705,7 +5718,7 @@ static int
 qp_statistics(DECL_LD atom_t key, int64_t v[])
 { int vn;
 
-  if ( key == ATOM_runtime )		/* compat: exclude gc-time */
+  if ( key == ATOM_runtime )		/* compatibility: exclude GC-time */
   { v[0] = (int64_t)((LD->statistics.user_cputime -
 		      LD->gc.stats.totals.time -
 		      GD->atoms.gc_time) * 1000.0);
@@ -5953,7 +5966,7 @@ swi_statistics(DECL_LD atom_t key, Number v)
 }
 
 
-int
+bool
 pl_statistics_ld(DECL_LD term_t k, term_t value, PL_local_data_t *ld)
 { number result;			/* make compiler happy */
   atom_t key;
@@ -5963,7 +5976,7 @@ pl_statistics_ld(DECL_LD term_t k, term_t value, PL_local_data_t *ld)
 #endif
 
   if ( !PL_get_atom_ex(k, &key) )
-    fail;
+    return false;
 
   if ( !PL_is_list(value) )
   { switch(swi_statistics(PASS_AS_LD(ld) key, &result))
@@ -5984,12 +5997,9 @@ pl_statistics_ld(DECL_LD term_t k, term_t value, PL_local_data_t *ld)
 
     for(p = v; rc-- > 0; p++)
     { if ( !PL_unify_list(tail, head, tail) )
-      { if ( PL_unify_nil(tail) )
-	  succeed;
-	fail;
-      }
+	return PL_unify_nil(tail);
       if ( !PL_unify_int64(head, *p) )
-	fail;
+	return false;
     }
 
     return PL_unify_nil(tail);
@@ -6142,7 +6152,7 @@ PRED_IMPL("$cmd_option_set", 2, cmd_option_set, 0)
 }
 
 
-int
+bool
 set_pl_option(const char *name, const char *value)
 { OptDef d = (OptDef)optdefs;
 
@@ -6171,21 +6181,21 @@ set_pl_option(const char *name, const char *value)
 	       *q == EOS &&
 	       intNumber(&n) )
 	  { *val = (size_t)n.value.i;
-	    succeed;
+	    return true;
 	  }
-	  fail;
+	  return false;
 	}
 	case CMDOPT_STRING:
 	{ char **val = d->address;
 
 	  *val = store_string(value);
-	  succeed;
+	  return true;
 	}
 	case CMDOPT_LIST:
 	{ opt_list **l = d->address;
 
 	  opt_append(l, value);
-	  succeed;
+	  return true;
 	}
 	default:
 	  assert(0);
@@ -6193,7 +6203,7 @@ set_pl_option(const char *name, const char *value)
     }
   }
 
-  fail;
+  return false;
 }
 
 

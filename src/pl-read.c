@@ -1585,7 +1585,7 @@ Not sure whether it is worth the trouble to use a hash-table here.
 
 #define isVarInfo(w)	(tagex(w) == (TAG_VAR|STG_RESERVED))
 #define consVarInfo(i)	((word)(nv)<<LMASK_BITS)|TAG_VAR|STG_RESERVED
-#define valVarInfo(w)   ((size_t)((word)(w)>>LMASK_BITS))
+#define valVarInfo(w)   ((unsigned int)((word)(w)>>LMASK_BITS)) /* check cast */
 #define VAR_INDEX_HASH_OFFSET 1
 
 #define MAX_SINGLETONS 256		/* max singletons _reported_ */
@@ -1770,7 +1770,9 @@ warn_multiton(const char *name)
 #define LIST_SINGLETONS 1
 #define IS_MULTITON     2
 
-#define is_singleton(var, type, _PL_rd) LDFUNC(is_singleton, var, type, _PL_rd)
+#define is_singleton(var, type, _PL_rd) \
+	LDFUNC(is_singleton, var, type, _PL_rd)
+
 static bool
 is_singleton(DECL_LD Variable var, int type, ReadData _PL_rd)
 { if ( var->times == 1 )
@@ -1784,6 +1786,7 @@ is_singleton(DECL_LD Variable var, int type, ReadData _PL_rd)
 	term_t head = PL_new_term_ref();
 	term_t result = PL_new_term_ref();
 
+	//FIXME: PL_var_occurs_in() may raise exception
 	while(PL_get_list(tail, head, tail))
 	{ if ( PL_get_arg(4, head, result) &&
 	       PL_var_occurs_in(var->variable, result) )
@@ -2882,7 +2885,7 @@ str_number(cucharp in, ucharp *end, Number value, int flags)
 
     if ( base <= 36 &&
 	 base > 1 &&
-	 digitValue(base, in[1]) >= 0 )
+	 digitValue((int) base, in[1]) >= 0 )
     { in++;
 
       if ( !(rc=scan_number(&in, negative, (int)base, value)) )
@@ -3551,7 +3554,7 @@ build_attvar(DECL_LD int pairs, ReadData _PL_rd)
     { Word vp;
 
       if ( find_attr(valTermRef(attvar_term), name, &vp) )
-      { if ( compareStandard(value, vp, true) != CMP_EQUAL )
+      { if ( compareStandard(value, vp, true) != CMPEX_EQUAL )
 	{ if ( exception_term )
 	    return false;
 	  term_t ex;
@@ -4021,7 +4024,7 @@ bad_operator(out_entry *out, op_entry *op, ReadData _PL_rd)
 */
 
 static int
-can_reduce(op_entry *op, short cpri, int out_n, ReadData _PL_rd)
+can_reduce(op_entry *op, int cpri, int out_n, ReadData _PL_rd)
 { int rc;
   int arity = op->kind == OP_INFIX ? 2 : 1;
   out_entry *e = out_op(-arity, _PL_rd);
@@ -5502,11 +5505,11 @@ static const PL_option_t read_term_options[] =
 #define read_term_from_stream(s, term, options) \
 	LDFUNC(read_term_from_stream, s, term, options)
 
-static foreign_t
+static bool
 read_term_from_stream(DECL_LD IOSTREAM *s, term_t term, term_t options)
 { term_t tpos = 0;
   term_t tcomments = 0;
-  int rval;
+  bool rval;
   atom_t w;
   read_data rd;
   int charescapes = -1;
@@ -5802,7 +5805,7 @@ PL_put_term_from_chars(term_t t, int flags, size_t len, const char *s)
     if ( ns != s && ns != buf )
       free(ns);
     if ( isnum )
-    { int rc = PL_put_number(t, &n);
+    { bool rc = PL_put_number(t, &n);
       clearNumber(&n);
       return rc;
     }

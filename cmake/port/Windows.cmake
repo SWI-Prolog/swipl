@@ -1,5 +1,13 @@
 if(WIN32)
 
+if(MSVC)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+endif()
+
+if(NOT SWIPL_C_STACK_SIZE)
+  set(SWIPL_C_STACK_SIZE 4194304)
+endif()
+
 add_compile_options(-D__WINDOWS__)
 add_compile_options(-D_WIN32_WINNT=0x0600)
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -43,7 +51,7 @@ function(add_mingw_indirect_deps result_list)
   set(queue "")
   set(visited "")
   set(found "")
-  
+
   set(initial_dlls ${ARGN})
 
   foreach(dll IN LISTS initial_dlls)
@@ -68,7 +76,7 @@ function(add_mingw_indirect_deps result_list)
       continue()
     endif()
     list(APPEND visited "${current}")
-    
+
     execute_process(
       COMMAND x86_64-w64-mingw32-objdump -p "${current}"
       OUTPUT_VARIABLE objdump_out
@@ -100,7 +108,7 @@ function(add_mingw_indirect_deps result_list)
   set(${result_list} "${found}" PARENT_SCOPE)
 endfunction()
 
-# Find the DLLs required immediately by a target 
+# Find the DLLs required immediately by a target
 
 function(get_target_mingw_dlls result_list target)
   get_target_property(libs ${target} LINK_LIBRARIES)
@@ -112,7 +120,7 @@ function(get_target_mingw_dlls result_list target)
   endif()
 
   set(dlls "")
-  
+
   if(CMAKE_BUILD_TYPE)
     string(TOUPPER "${CMAKE_BUILD_TYPE}" config)
   else()

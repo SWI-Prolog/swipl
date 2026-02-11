@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2011-2024, University of Amsterdam
+    Copyright (c)  2011-2026, University of Amsterdam
 			      CWI, Amsterdam
 			      SWI-Prolog Solutions b.v.
     All rights reserved.
@@ -121,9 +121,9 @@ mark_vars() is a helper for copy_term/4.
 
 #define mark_vars(t, set) LDFUNC(mark_vars, t, set)
 
-static int
+static boolex_t
 mark_vars(DECL_LD term_t t, int set)
-{ int rc = true;
+{ boolex_t rc = true;
   term_agenda agenda;
   Word p = valTermRef(t);
 
@@ -140,7 +140,7 @@ mark_vars(DECL_LD term_t t, int set)
       case TAG_COMPOUND:
       {	if ( !visited(*p) )
 	{ Functor t = valueTerm(*p);
-	  int arity = arityFunctor(t->definition);
+	  size_t arity = arityFunctor(t->definition);
 
 	  set_visited(*p);
 	  if ( !pushWorkAgenda(&agenda, arity, t->arguments) )
@@ -168,7 +168,7 @@ end_loop:
 	{ clear_marks(*p);
 
 	  Functor t = valueTerm(*p);
-	  int arity = arityFunctor(t->definition);
+	  size_t arity = arityFunctor(t->definition);
 	  if ( !pushWorkAgenda(&agenda, arity, t->arguments) )
 	    fatalError("No memory for cleaning\n");
 	}
@@ -197,7 +197,7 @@ share_for_duplicate(DECL_LD const Functor t, const cp_options *options)
 #define mark_for_duplicate(p, options) \
 	LDFUNC(mark_for_duplicate, p, options)
 
-static int
+static boolex_t
 mark_for_duplicate(DECL_LD Word p, const cp_options *options)
 { term_agenda agenda;
 
@@ -389,7 +389,7 @@ must_copy_attvar(word w, int flags, int mode)
 #define mark_for_copy(p, options) \
 	LDFUNC(mark_for_copy, p, options)
 
-static int
+static boolex_t
 mark_for_copy(DECL_LD Word p, const cp_options *options)
 { Word start = p;
   int mode = 0;
@@ -436,7 +436,7 @@ mark_for_copy(DECL_LD Word p, const cp_options *options)
       }
       case TAG_COMPOUND:
       { Functor t = valueTerm(*p);
-	int arity = arityFunctor(t->definition);
+	size_t arity = arityFunctor(t->definition);
 
 	if ( virgin(t->definition) )
 	{ DEBUG(MSG_COPYTERM,
@@ -597,7 +597,7 @@ exitCyclicCopy(DECL_LD int flags)
 #define copy_term(from, to, options) \
 	LDFUNC(copy_term, from, to, options)
 
-static int
+static boolex_t
 copy_term(DECL_LD Word from, Word to, const cp_options *options)
 { term_agendaLRD agenda;
   int rc = true;
@@ -702,7 +702,7 @@ copy_term(DECL_LD Word from, Word to, const cp_options *options)
 	}
 
 	if ( shared(ff->definition) )
-	{ int arity = arityFunctor(ff->definition);
+	{ size_t arity = arityFunctor(ff->definition);
 	  Functor ft;
 
 	  if ( !(ft = (Functor)allocGlobalNoShift(arity+1)) )
@@ -719,7 +719,7 @@ copy_term(DECL_LD Word from, Word to, const cp_options *options)
 	  rc = MEMORY_OVERFLOW;
 	  goto out;
 	} else				/* unshared term */
-	{ int arity = arityFunctor(ff->definition);
+	{ size_t arity = arityFunctor(ff->definition);
 	  Functor ft;
 
 	  if ( !(ft = (Functor)allocGlobalNoShift(arity+1)) )
@@ -758,9 +758,9 @@ deferenced and to is a variable.
 #define do_copy_term(from, to, options) \
 	LDFUNC(do_copy_term, from, to, options)
 
-static int
+static boolex_t
 do_copy_term(DECL_LD Word from, Word to, const cp_options *options)
-{ int rc;
+{ boolex_t rc;
 
 again:
   switch(tag(*from))
@@ -817,7 +817,7 @@ copy_term_refs(DECL_LD term_t from, term_t to, term_t vars,
 	       const cp_options *options)
 { for(;;)
   { fid_t fid;
-    int rc;
+    boolex_t rc;
     Word dest, src;
 
     if ( !(fid = PL_open_foreign_frame()) )
@@ -966,7 +966,7 @@ term_to_fastheap(DECL_LD term_t t)
   Word gcopy, gtop, p, o;
   size_t relocations=0;
   fastheap_term *fht;
-  unsigned int *r;
+  size_t *r;
   size_t last_rel = 0;
   size_t offset;
   size_t indirect_cells = 0;
@@ -991,7 +991,7 @@ term_to_fastheap(DECL_LD term_t t)
   if ( !(fht = malloc(sizeof(fastheap_term) +
 		      ((char*)gtop-(char *)gcopy) +
 		      indirect_cells * sizeof(word) +
-		      (relocations+1) * sizeof(unsigned int))) )
+		      (relocations+1) * sizeof(size_t))) )
   { PL_resource_error("memory");
     return NULL;
   }
@@ -1037,7 +1037,7 @@ term_to_fastheap(DECL_LD term_t t)
 
 void
 free_fastheap(fastheap_term *fht)
-{ unsigned int *r;
+{ size_t *r;
   Word p = fht->data;
 
   for(r = fht->relocations; *r != REL_END; r++)
@@ -1054,7 +1054,7 @@ bool
 put_fastheap(DECL_LD fastheap_term *fht, term_t t)
 { Word p, o;
   size_t offset;
-  unsigned int *r;
+  size_t *r;
 
   if ( !ensureGlobalSpace(fht->data_len, ALLOW_GC|ALLOW_SHIFT) )
     return false;

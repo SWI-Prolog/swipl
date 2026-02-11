@@ -47,7 +47,7 @@
 
 #define LDFUNC_DECLARATIONS
 
-int	PL_is_dict(term_t t);
+bool	PL_is_dict(term_t t);
 int	pl_for_dict(term_t dict,
 		   int LDFUNCP (*func)(term_t key,
 			       term_t value,
@@ -56,8 +56,8 @@ int	pl_for_dict(term_t dict,
 		   void *closure,
 		   int flags);
 
-functor_t dict_functor(int pairs);
-int	  dict_order(Word dict, Word dupl);
+functor_t dict_functor(size_t pairs);
+bool	  dict_order(Word dict, Word dupl);
 int	  dict_order_term_refs(term_t *av, int *indexes, int cnt);
 Word	  dict_lookup_ptr(word dict, word name, size_t *arg);
 int	  resortDictsInClause(Clause clause);

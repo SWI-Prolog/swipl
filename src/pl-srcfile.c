@@ -119,7 +119,7 @@ registerSourceFile(SourceFile sf)	/* locked by lookupSourceFile() */
 
     for(; index<upto; index++)
     { if ( b[index] == NULL )
-      { sf->index = index;
+      { sf->index = (srcindex_t)index;
 	b[index] = sf;
 	GD->files.no_hole_before = index+1;
 
@@ -129,9 +129,9 @@ registerSourceFile(SourceFile sf)	/* locked by lookupSourceFile() */
   }
 
   GD->files.no_hole_before = index+1;
-  sf->index = index;
-  if ( (size_t)sf->index != index )
-    fatalError("Too many (%d) source files", index);
+  sf->index = (srcindex_t)index;
+  if ( sf->index != index )
+    fatalError("Too many (%zd) source files", (size_t)index);
   putSourceFileArray(index, sf);
   GD->files.highest = index+1;
 }
@@ -144,7 +144,7 @@ highSourceFileIndex(void)
 
 
 SourceFile
-indexToSourceFile(int index)
+indexToSourceFile(size_t index)
 { if ( index > 0 && index < GD->files.highest )
   { int idx = MSB(index);
 
@@ -351,7 +351,7 @@ acquireSourceFile(SourceFile sf)
 
 
 void
-acquireSourceFileNo(int index)
+acquireSourceFileNo(size_t index)
 { SourceFile sf;
 
   if ( (sf = indexToSourceFile(index)) )
@@ -404,7 +404,7 @@ releaseSourceFile(SourceFile sf)
 }
 
 bool
-releaseSourceFileNo(int index)
+releaseSourceFileNo(size_t index)
 { SourceFile sf;
 
   if ( (sf = indexToSourceFile(index)) )
@@ -445,7 +445,7 @@ addProcedureSourceFile(SourceFile sf, Procedure proc)
       cell->next = sf->procedures;
       sf->procedures = cell;
       set(proc->definition, FILE_ASSIGNED);
-      if ( COMPARE_AND_SWAP_UINT(&proc->source_no, 0, sf->index) )
+      if ( COMPARE_AND_SWAP_SIZE(&proc->source_no, 0, sf->index) )
 	acquireSourceFile(sf);
       else
 	set(proc, PROC_MULTISOURCE);
@@ -654,7 +654,7 @@ static
 PRED_IMPL("$time_source_file", 3, time_source_file, PL_FA_NONDETERMINISTIC)
 { PRED_LD
   int index;
-  int mx = highSourceFileIndex();
+  size_t mx = highSourceFileIndex();
   term_t file = A1;
   term_t time = A2;
   term_t type = A3;			/* user or system */
@@ -768,7 +768,7 @@ PRED_IMPL("$set_source_files", 1, set_source_files, 0)
   if ( !PL_get_atom_ex(A1, &prop) )
     return false;
   if ( prop == ATOM_system || prop == ATOM_from_state )
-  { int i, n;
+  { size_t i, n;
 
     PL_LOCK(L_SRCFILE);
     n = highSourceFileIndex();
@@ -1820,7 +1820,7 @@ PRED_IMPL("$clause_from_source", 4, clause_from_source, 0)
   atom_t owner_name;
   atom_t file_name;
   SourceFile of=NULL, sf=NULL;		/* owner file, source file */
-  unsigned int source_no;
+  size_t source_no;
   int ln;
   ListCell cell;
   Clause c = NULL;

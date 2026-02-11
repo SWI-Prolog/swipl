@@ -155,11 +155,11 @@ initWamTable(DECL_LD)
 						  sizeof(char));
 
   for(n = 0; n < I_HIGHEST; n++)
-  { int index = wam_table[n]-dewam_table_offset;
+  { size_t index = wam_table[n]-dewam_table_offset;
     dewam_table[index] = (unsigned char) 0;
   }
   for(n = 0; n < I_HIGHEST; n++)
-  { int index = wam_table[n]-dewam_table_offset;
+  { size_t index = wam_table[n]-dewam_table_offset;
     if ( dewam_table[index] )		/* See SEPARATE_VMI */
       fatalError("WAM Table mismatch: wam_table[%d(%s)] == wam_table[%d(%s)]\n",
 		 dewam_table[index], codeTable[dewam_table[index]].name,
@@ -340,8 +340,8 @@ typedef struct _varDef
   Word		address;		/* address of the variable */
   Word		arg_value;		/* Value unified against */
   atom_t	name;			/* name (if available) */
+  clsize_t	offset;			/* offset in environment frame */
   int		times;			/* occurrences */
-  int		offset;			/* offset in environment frame */
   unsigned int	flags;			/* VD_* */
 } vardef;
 
@@ -369,8 +369,8 @@ typedef struct branch_var
 } branch_var;
 
 typedef struct
-{ int		var;			/* Variable for local cuts */
-  int		nextvar;
+{ size_t	var;			/* Variable for local cuts */
+  size_t	nextvar;
   code		instruction;		/* Instruction to use: C_CUT/C_LCUT */
 } cutInfo;
 
@@ -431,8 +431,8 @@ typedef struct
 #endif /*USE_LD_MACROS*/
 
 #define LDFUNC_DECLARATIONS
-static int	output_indirect(compileInfo *ci, code op, Word p);
-static int	link_local_var(Word v, int iv, CompileInfo ci);
+static bool	output_indirect(compileInfo *ci, code op, Word p);
+static boolex_t	link_local_var(Word v, int iv, CompileInfo ci);
 #if SIZEOF_CODE < SIZEOF_WORD
 static Word	make_atoms_reachable(Word p, size_t size, const Code code);
 #endif
@@ -443,7 +443,7 @@ static Word	make_atoms_reachable(Word p, size_t size, const Code code);
 		 *	      WARNINGS		*
 		 *******************************/
 
-static int
+static boolex_t
 compiler_warning(CompileInfo ci, const char *name, ...)
 { c_warning *w;
   const cw_def *def;
@@ -514,7 +514,7 @@ normal functionality.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 #define push_compiler_warnings(ci) LDFUNC(push_compiler_warnings, ci)
-static int
+static boolex_t
 push_compiler_warnings(DECL_LD CompileInfo ci)
 { PL_put_nil(ci->warning_list);
 
@@ -566,22 +566,22 @@ static void	resetVars(DECL_LD);
 
 #define getVarDef(i) LDFUNC(getVarDef, i)
 static VarDef
-getVarDef(DECL_LD int i)
+getVarDef(DECL_LD size_t i)
 { VarDef vd;
   VarDef *vardefs = LD->comp.vardefs;
-  int nvd = LD->comp.nvardefs;
+  size_t nvd = LD->comp.nvardefs;
 
   if ( i >= nvd )
   { VarDef *vdp;
-    int onvd = nvd, n;
+    size_t onvd = nvd, n;
 
     while ( i >= nvd )
       nvd = nvd > 0 ? (nvd*2) : 32;
 
     if ( onvd > 0 )
-      vardefs = GC_REALLOC(vardefs, sizeof(VarDef) * nvd);
+      vardefs = realloc(vardefs, sizeof(VarDef) * nvd);
     else
-      vardefs = GC_MALLOC(sizeof(VarDef) * nvd);
+      vardefs = malloc(sizeof(VarDef) * nvd);
 
     if ( !vardefs )
       outOfCore();
@@ -594,7 +594,7 @@ getVarDef(DECL_LD int i)
   }
 
   if ( !(vd = vardefs[i]) )
-  { vd = vardefs[i] = PL_malloc_atomic(sizeof(vardef));
+  { vd = vardefs[i] = allocHeapOrHalt(sizeof(vardef));
     memset(vd, 0, sizeof(*vd));
     vd->functor = FUNCTOR_dvard1;
   }
@@ -605,21 +605,21 @@ getVarDef(DECL_LD int i)
 
 #define resetVarDefs(n) LDFUNC(resetVarDefs, n)
 static void
-resetVarDefs(DECL_LD int n)		/* set addresses of first N to NULL */
+resetVarDefs(DECL_LD size_t n)		/* set addresses of first N to NULL */
 { VarDef *vd;
-  int nvd = LD->comp.nvardefs;
+  size_t nvd = LD->comp.nvardefs;
 
   if ( n > nvd )			/* allocates them */
     getVarDef(n-1);
 
   vd = LD->comp.vardefs;
-  for( ; --n>=0 ; vd++ )
+  for( ; n-- > 0; vd++ )
   { VarDef v;
 
     if ( (v = *vd) )
     { v->address = NULL;
     } else
-    { *vd = v = PL_malloc_atomic(sizeof(vardef));
+    { *vd = v = allocHeapOrHalt(sizeof(vardef));
       memset(v, 0, sizeof(vardef));
       v->functor = FUNCTOR_dvard1;
     }
@@ -631,18 +631,18 @@ void
 freeVarDefs(PL_local_data_t *ld)
 { if ( ld->comp.vardefs )
   { VarDef *vardefs = ld->comp.vardefs;
-    int i, count=ld->comp.nvardefs;
+    size_t count    = ld->comp.nvardefs;
 
     ld->comp.vardefs = NULL;
     ld->comp.nvardefs = 0;
     ld->comp.filledVars = 0;
 
-    for(i=0; i<count; i++)
+    for(size_t i=0; i<count; i++)
     { if ( vardefs[i] )
 	freeHeap(vardefs[i], sizeof(vardef));
     }
 
-    GC_FREE(vardefs);
+    free(vardefs);
   }
 }
 
@@ -700,7 +700,7 @@ get_variable_names(DECL_LD CompileInfo ci)
 
 
 #define is_neck(t, flags) LDFUNC(is_neck, t, flags)
-static int
+static bool
 is_neck(DECL_LD term_t t, int *flags)
 { Word p = valTermRef(t);
 
@@ -717,7 +717,7 @@ is_neck(DECL_LD term_t t, int *flags)
 }
 
 
-int
+bool
 get_head_and_body_clause(DECL_LD term_t clause,
 			 term_t head, term_t body, Module *m,
 			 int *flags)
@@ -763,7 +763,7 @@ is_argument_var(DECL_LD Word p, CompileInfo ci)
 }
 
 #define annotate_unify(p1, p2, ci) LDFUNC(annotate_unify, p1, p2, ci)
-static int
+static bool
 annotate_unify(DECL_LD Word p1, Word p2, CompileInfo ci)
 { VarDef vd;
 
@@ -790,7 +790,7 @@ annotate_unify(DECL_LD Word p1, Word p2, CompileInfo ci)
 }
 
 #define annotate_unification(f, ci) LDFUNC(annotate_unification, f, ci)
-static int
+static bool
 annotate_unification(DECL_LD Functor f, CompileInfo ci)
 { return ( annotate_unify(&f->arguments[0], &f->arguments[1], ci) ||
 	   annotate_unify(&f->arguments[1], &f->arguments[0], ci) );
@@ -836,7 +836,7 @@ AVARS_MAX
 /*      CHECK_INTERRUPT -7 */
 #define AVARS_MAX      -12
 
-static int
+static bool
 in_branch(const branch_var *from, const branch_var *to, const Word v)
 { for(; from<to; from++)
   { if ( from->vdef->address == v )
@@ -850,8 +850,8 @@ in_branch(const branch_var *from, const branch_var *to, const Word v)
 #define analyseVariables2(head, nvars, argn, ci, depth, control) \
 	LDFUNC(analyseVariables2, head, nvars, argn, ci, depth, control)
 
-static int
-analyseVariables2(DECL_LD Word head, int nvars, int argn,
+static ssize_t
+analyseVariables2(DECL_LD Word head, ssize_t nvars, ssize_t argn,
 		  CompileInfo ci, int depth, int control)
 {
 right_recursion:
@@ -860,7 +860,7 @@ right_recursion:
 
   if ( isVar(*head) || (isAttVar(*head) && !ci->islocal) )
   { VarDef vd;
-    int index;
+    ssize_t index;
 
     if ( argn >= 0 && argn < ci->arity )
     { index = argn;
@@ -916,7 +916,7 @@ right_recursion:
   if ( isTerm(*head) )
   { Functor f = valueTerm(*head);
     FunctorDef fd = valueFunctor(f->definition);
-    int rc;
+    ssize_t rc;
 
 #if O_TIGHT_CSTACK
 #define CYCLE_CHECK_AT 1000
@@ -1166,15 +1166,13 @@ has not been implemented yet)
 /*	AVARS_MAX      -12 */
 
 #define analyse_variables(head, body, ci) LDFUNC(analyse_variables, head, body, ci)
-static int
+static ssize_t
 analyse_variables(DECL_LD Word head, Word body, CompileInfo ci)
-{ int nv, nvars = 0;
-  int n;
-  int body_voids = 0;
-  int arity = ci->arity;
+{ ssize_t nv, nvars = 0;
+  size_t body_voids = 0;
+  size_t arity = ci->arity;
 
-  if ( arity > 0 )
-    resetVarDefs(arity);
+  resetVarDefs(arity);
 
   ci->branch_vars = NULL;
   ci->singletons  = 0;
@@ -1191,7 +1189,7 @@ analyse_variables(DECL_LD Word head, Word body, CompileInfo ci)
   if ( ci->warning_list	)
     get_variable_names(ci);
 
-  for(n=0; n<arity+nvars; n++)
+  for(size_t n=0; n<arity+nvars; n++)
   { VarDef vd = LD->comp.vardefs[n];
 
     assert(vd->functor == FUNCTOR_dvard1);
@@ -1212,7 +1210,7 @@ analyse_variables(DECL_LD Word head, Word body, CompileInfo ci)
       if (n >= arity)
 	body_voids++;
     } else
-      vd->offset = n + ci->argvars - body_voids;
+      vd->offset = (clsize_t)(n + ci->argvars - body_voids);
   }
 
   LD->comp.filledVars = arity + nvars;
@@ -1220,8 +1218,9 @@ analyse_variables(DECL_LD Word head, Word body, CompileInfo ci)
   if ( (nv = nvars + arity + ci->argvars - body_voids) > MAX_VARIABLES )
     return AVARS_MAX;
 
-  ci->clause->prolog_vars = nv;
-  ci->clause->variables   = nv;
+  // Safe as nv < MAX_VARIABLES
+  ci->clause->prolog_vars = (clsize_t)nv;
+  ci->clause->variables   = (clsize_t)nv;
   ci->cut.nextvar	  = nv;
   ci->vartablesize	  = (int)((nv + BITSPERINT-1)/BITSPERINT);
 
@@ -1251,9 +1250,6 @@ calculation at runtime.
 #define A_ARG		0x04		/* sub-argument */
 #define A_RIGHT		0x08		/* rightmost argument */
 #define A_NOARGVAR	0x10		/* do not compile using ci->argvar */
-
-#define NOT_CALLABLE -10		/* return value for not-callable */
-#define MAX_ARITY_OVERFLOW -11		/* return value for max_procedure_arity overflow */
 
 #define BLOCK(s) do { s; } while (0)
 
@@ -1297,33 +1293,33 @@ Variable table operations.
 
 #define LDFUNC_DECLARATIONS
 
-forwards int	compileBody(Word, code, compileInfo *);
-forwards int	compileArgument(Word, int, compileInfo *);
-forwards int	compileSubClause(Word, code, compileInfo *);
-forwards bool	isFirstVarSet(VarTable vt, int n);
-forwards int	balanceVars(VarTable, VarTable, compileInfo *);
-forwards void	orVars(VarTable, VarTable);
-forwards int	compileListFF(word arg, compileInfo *ci);
-forwards bool	compileSimpleAddition(Word, compileInfo *);
+static boolex_t	compileBody(Word, code, compileInfo *);
+static boolex_t	compileArgument(Word, int, compileInfo *);
+static boolex_t	compileSubClause(Word, code, compileInfo *);
+static bool	isFirstVarSet(VarTable vt, int n);
+static clsize_t	balanceVars(VarTable, VarTable, compileInfo *);
+static void	orVars(VarTable, VarTable);
+static bool	compileListFF(word arg, compileInfo *ci);
+static bool	compileSimpleAddition(Word, compileInfo *);
 #if O_COMPILE_ARITH
-forwards int	compileArith(Word, compileInfo *);
-forwards bool	compileArithArgument(Word, compileInfo *);
+static boolex_t	compileArith(Word, compileInfo *);
+static bool	compileArithArgument(Word, compileInfo *);
 #endif
 #if O_COMPILE_IS
-forwards int	compileBodyUnify(Word arg, compileInfo *ci);
-forwards int	compileBodyEQ(Word arg, compileInfo *ci);
-forwards int	compileBodyNEQ(Word arg, compileInfo *ci);
-forwards int	compileBodyArg3(Word arg, compileInfo *ci);
+static boolex_t	compileBodyUnify(Word arg, compileInfo *ci);
+static boolex_t	compileBodyEQ(Word arg, compileInfo *ci);
+static boolex_t	compileBodyNEQ(Word arg, compileInfo *ci);
+static boolex_t	compileBodyArg3(Word arg, compileInfo *ci);
 #endif
-forwards int	compileBodyVar1(Word arg, compileInfo *ci);
-forwards int	compileBodyNonVar1(Word arg, compileInfo *ci);
-forwards int	compileBodyTypeTest(functor_t functor, Word arg,
+static boolex_t	compileBodyVar1(Word arg, compileInfo *ci);
+static boolex_t	compileBodyNonVar1(Word arg, compileInfo *ci);
+static boolex_t	compileBodyTypeTest(functor_t functor, Word arg,
 				    compileInfo *ci);
-forwards int	compileBodyCallContinuation(Word arg, compileInfo *ci);
-forwards int	compileBodyShift(Word arg, compileInfo *ci, int for_copy);
+static boolex_t	compileBodyCallContinuation(Word arg, compileInfo *ci);
+static boolex_t	compileBodyShift(Word arg, compileInfo *ci, int for_copy);
 static void	initMerge(CompileInfo ci);
-static int	mergeInstructions(CompileInfo ci, const vmi_merge *m, vmi c);
-static int	try_fast_condition(CompileInfo ci, size_t tc_or);
+static bool	mergeInstructions(CompileInfo ci, const vmi_merge *m, vmi c);
+static bool	try_fast_condition(CompileInfo ci, size_t tc_or);
 
 #undef LDFUNC_DECLARATIONS
 
@@ -1403,12 +1399,12 @@ into C_VAR_N(5,4), where the example 4 represents the sequence length.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 typedef struct c_var_state
-{ int at;
-  int count;
+{ size_t at;
+  size_t count;
 } c_var_state;
 
 static void
-c_var(c_var_state *s, int at, compileInfo *ci)
+c_var(c_var_state *s, size_t at, compileInfo *ci)
 { if ( s->count == 0 )
   { s->count = 1;
     s->at = at;
@@ -1425,17 +1421,17 @@ c_var(c_var_state *s, int at, compileInfo *ci)
 }
 
 
-static int
+static clsize_t
 balanceVars(VarTable valt1, VarTable valt2, compileInfo *ci)
 { unsigned int *p1 = &valt1->entry[0];
   unsigned int *p2 = &valt2->entry[0];
   unsigned int vts = ci->vartablesize;
   unsigned int n;
-  int done = 0;
+  clsize_t done = 0;
   c_var_state vstate = {0};
 
   for( n = 0; n < vts; p1++, p2++, n++ )
-  { int m = (~(*p1) & *p2);
+  { unsigned int m = (~(*p1) & *p2);
 
     if ( m )
     { unsigned int i;
@@ -1550,7 +1546,7 @@ isFirstVarP(DECL_LD Word p, compileInfo *ci, int *i)
 }
 
 
-static int
+static size_t
 allocChoiceVar(CompileInfo ci)
 {
 #if 0
@@ -1563,7 +1559,7 @@ allocChoiceVar(CompileInfo ci)
 		      ATOM_max_frame_size);
   }
 #else
-  int var = VAROFFSET(ci->clause->variables++);
+  size_t var = VAROFFSET(ci->clause->variables++);
 
   if ( ci->clause->variables == 0 )
     return PL_error(NULL, 0, NULL, ERR_REPRESENTATION,
@@ -1745,7 +1741,7 @@ initMerge(CompileInfo ci)
 }
 
 
-static int
+static bool
 mergeInstructions(CompileInfo ci, const vmi_merge *m, vmi c)
 { for(; m->code != I_HIGHEST; m++)
   { if ( m->code == c )
@@ -1840,7 +1836,7 @@ play around with variable tables.
 
 #define compileClauseGuarded(ci, cp, head, body, proc, module, warnings, flags) \
 	LDFUNC(compileClauseGuarded, ci, cp, head, body, proc, module, warnings, flags)
-static int compileClauseGuarded(DECL_LD CompileInfo ci, Clause *cp, Word head, Word body,
+static ssize_t compileClauseGuarded(DECL_LD CompileInfo ci, Clause *cp, Word head, Word body,
 				Procedure proc, Module module, term_t warnings,
 				int flags);
 
@@ -1854,12 +1850,12 @@ cleanupCompile(DECL_LD CompileInfo ci)
 }
 #endif
 
-int
+ssize_t
 compileClause(DECL_LD Clause *cp, Word head, Word body,
 	      Procedure proc, Module module, term_t warnings,
 	      int flags)
 { compileInfo ci;			/* data base for the compiler */
-  int rc;
+  ssize_t rc;
 
   ci.progress = 0;
   initBuffer(&ci.codes);
@@ -1872,19 +1868,19 @@ compileClause(DECL_LD Clause *cp, Word head, Word body,
   return rc;
 }
 
-static int
+static ssize_t
 compileClauseGuarded(DECL_LD CompileInfo ci, Clause *cp, Word head, Word body,
 		     Procedure proc, Module module, term_t warnings,
 		     int flags)
 { struct clause clause = {0};
   Clause cl;
   Definition def = getProcDefinition(proc);
-  int rc;
+  ssize_t rc;
 
   if ( head )
   { ci->islocal       = false;
     ci->subclausearg  = false;
-    ci->arity         = def->functor->arity;
+    ci->arity         = (int)def->functor->arity;
     ci->procedure     = proc;
     ci->argvars       = 0;
     ci->head_unify    = ( (flags&SSU_CHOICE_CLAUSE) ||
@@ -2277,7 +2273,7 @@ A ; B, A -> B, A -> B ; C, \+ A
     uninitialised variables ...
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static int
+static boolex_t
 compileBody(DECL_LD Word body, code call, compileInfo *ci)
 {
 right_argument:
@@ -2315,11 +2311,11 @@ right_argument:
 	deRef(a0);
 	if ( (hard=hasFunctor(*a0, FUNCTOR_ifthen2)) || /* A  -> B ; C */
 	     hasFunctor(*a0, FUNCTOR_softcut2) )        /* A *-> B ; C */
-	{ int var;
+	{ size_t var;
 	  size_t tc_or, tc_jmp;
 	  int rv;
 	  cutInfo cutsave = ci->cut;
-	  int fast = false;
+	  bool fast = false;
 
 	  if ( !(var=allocChoiceVar(ci)) )
 	    return false;
@@ -2350,7 +2346,7 @@ right_argument:
 	  OpCode(ci, tc_jmp-1) = (code)(PC(ci) - tc_jmp);
 	} else					/* A ; B */
 	{ size_t tc_or, tc_jmp;
-	  int rv;
+	  boolex_t rv;
 
 	  Output_1(ci, C_OR, (code)0);
 	  tc_or = PC(ci);
@@ -2378,8 +2374,8 @@ right_argument:
 	succeed;
       } else if ( fd == FUNCTOR_ifthen2 ||		/* A -> B */
 		  fd == FUNCTOR_softcut2 )		/* A *-> B */
-      { int var;
-	int rv;
+      { size_t var;
+	boolex_t rv;
 	int hard = (fd == FUNCTOR_ifthen2);
 	cutInfo cutsave = ci->cut;
 
@@ -2403,10 +2399,10 @@ right_argument:
 	succeed;
       } else if ( fd == FUNCTOR_not_provable1 ||	/* \+/1 */
 		  fd == FUNCTOR_dollar1 )		/* $/1 */
-      { int var;
+      { size_t var;
 	size_t tc_or, tc_det;
 	VarTable vsave;
-	int rv;
+	boolex_t rv;
 	cutInfo cutsave = ci->cut;
 	int isnot = (fd == FUNCTOR_not_provable1);
 
@@ -2463,7 +2459,7 @@ right_argument:
 #endif /* O_COMPILE_OR */
       } else if ( fd == FUNCTOR_colon2 )	/* Module:Goal */
       { target_module tmsave = ci->colon_context;
-	int rc;
+	boolex_t rc;
 
 	if ( (rc=getTargetModule(&ci->colon_context,
 				 argTermP(*body, 0), ci)) != true )
@@ -2475,7 +2471,7 @@ right_argument:
 #ifdef O_CALL_AT_MODULE
       } else if ( fd == FUNCTOR_at_sign2 )	/* Call@Module */
       { target_module atsave = ci->at_context;
-	int rc;
+	boolex_t rc;
 
 	if ( (rc=getTargetModule(&ci->at_context,
 				 argTermP(*body, 1), ci)) != true )
@@ -2494,7 +2490,7 @@ right_argument:
 }
 
 
-static int
+static bool
 try_fast_condition(CompileInfo ci, size_t tc_or)
 { Code pc  = &OpCode(ci, tc_or);
   Code end = &OpCode(ci, PC(ci));
@@ -2571,7 +2567,7 @@ current localframe and a B_VAR instruction is  generated for it. In this
 case it can return LOCAL_OVERFLOW.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static int
+static boolex_t
 link_local_var(DECL_LD Word v, int iv, CompileInfo ci)
 { VarDef vd = LD->comp.vardefs[*v>>LMASK_BITS];
   int voffset = VAROFFSET(iv);
@@ -2599,7 +2595,7 @@ is no need as they are  held  by   the  term  anyway). For `big' objects
 (strings and compounds) the system should create `argvar' references.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static int
+static boolex_t
 compileArgument(DECL_LD Word arg, int where, compileInfo *ci)
 { int index;
   bool first;
@@ -2850,7 +2846,7 @@ isvar:
 }
 
 
-static int
+static bool
 compileListFF(DECL_LD word arg, compileInfo *ci)
 { Word p = argTermP(arg, 0);
   int i1, i2;
@@ -2861,10 +2857,10 @@ compileListFF(DECL_LD word arg, compileInfo *ci)
   { isFirstVarSet(ci->used_var, i1);
     isFirstVarSet(ci->used_var, i2);
     Output_2(ci, H_LIST_FF, VAROFFSET(i1), VAROFFSET(i2));
-    succeed;
+    return true;
   }
 
-  fail;
+  return false;
 }
 
 
@@ -2957,7 +2953,7 @@ unbound (e.g. Var:is_list(X)).
 
 static void lco(CompileInfo ci, size_t pc0);
 
-static int
+static boolex_t
 compileSubClause(Word arg, code call, compileInfo *ci)
 { GET_LD
   functor_t functor;
@@ -2971,7 +2967,7 @@ compileSubClause(Word arg, code call, compileInfo *ci)
 A non-void variable. Create a I_CALL1 instruction for it.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
   if ( isIndexedVarTerm(*arg) >= 0 )
-  { int rc;
+  { boolex_t rc;
 
   metacall:
 #ifdef O_CALL_AT_MODULE
@@ -2997,7 +2993,7 @@ A non-void variable. Create a I_CALL1 instruction for it.
 #endif
 
     Output_0(ci, I_CALL1);
-    succeed;
+    return true;
   }
 
   if ( isTerm(*arg) )
@@ -3383,7 +3379,7 @@ are tagged using the functor ARITH_F. See registerArithFunctors().
 Returns one of true or *_OVERFLOW
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static int
+static boolex_t
 compileArith(DECL_LD Word arg, compileInfo *ci)
 { code a_func;
   functor_t fdef = functorTerm(*arg);
@@ -3432,8 +3428,10 @@ compileArith(DECL_LD Word arg, compileInfo *ci)
 }
 
 
-#define arithVarOffset(arg, ci, offp) LDFUNC(arithVarOffset, arg, ci, offp)
-static int
+#define arithVarOffset(arg, ci, offp) \
+	LDFUNC(arithVarOffset, arg, ci, offp)
+
+static int /* true, false, -1 (error) */
 arithVarOffset(DECL_LD Word arg, compileInfo *ci, int *offp)
 { int index;
 
@@ -3568,7 +3566,7 @@ compileArithArgument(DECL_LD Word arg, compileInfo *ci)
       }
 
       compileArithArgument(a, ci);
-    } else
+    } else if ( ar )
     { for(a+=ar-1, n=ar; n-- > 0; a--)	/* pushed right to left */
       { if ( !compileArithArgument(a, ci) )
 	  return false;
@@ -3677,7 +3675,7 @@ isUnifiedArg(DECL_LD Word a1, Word a2)
 }
 
 
-static int
+static boolex_t
 compileBodyUnify(DECL_LD Word arg, compileInfo *ci)
 { Word a1, a2;
   int i1, i2;
@@ -3772,7 +3770,7 @@ Returns true if compiled; false if not compiled. Reserved *_OVERFLOW for
 errors.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static int
+static boolex_t
 compileBodyEQ(DECL_LD Word arg, compileInfo *ci)
 { Word a1, a2;
   int i1, i2;
@@ -3782,7 +3780,10 @@ compileBodyEQ(DECL_LD Word arg, compileInfo *ci)
 
   if ( isVar(*a1) || isVar(*a2) )	/* Singleton == ?: always fail */
   { if ( (debugstatus.styleCheck&NOEFFECT_CHECK) )
-      compiler_warning(ci, "eq_singleton", a1, a2);
+    { boolex_t rc = compiler_warning(ci, "eq_singleton", a1, a2);
+      if ( rc != true )
+	return rc;
+    }
     if ( truePrologFlag(PLFLAG_OPTIMISE) )
     { skippedVar(a1, ci);
       skippedVar(a2, ci);
@@ -3854,7 +3855,7 @@ Returns true if compiled; false if not compiled. Reserved *_OVERFLOW for
 errors.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static int
+static boolex_t
 compileBodyNEQ(DECL_LD Word arg, compileInfo *ci)
 { Word a1, a2;
   int i1, i2;
@@ -3864,7 +3865,10 @@ compileBodyNEQ(DECL_LD Word arg, compileInfo *ci)
 
   if ( isVar(*a1) || isVar(*a2) )	/* Singleton \== ?: always true */
   { if ( (debugstatus.styleCheck&NOEFFECT_CHECK) )
-      compiler_warning(ci, "neq_singleton", a1, a2);
+    { boolex_t rc = compiler_warning(ci, "neq_singleton", a1, a2);
+      if ( rc != true )
+	return rc;
+    }
     if ( truePrologFlag(PLFLAG_OPTIMISE) )
     { skippedVar(a1, ci);
       skippedVar(a2, ci);
@@ -3933,7 +3937,7 @@ TBD: we can also handle the error cases here (illegal first or
 second argument)
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static int
+static boolex_t
 compileBodyArg3(DECL_LD Word arg, compileInfo *ci)
 { Word av;
   Word a3;
@@ -3993,7 +3997,7 @@ always(DECL_LD atom_t val, const char *pred, Word arg, compileInfo *ci)
 }
 
 
-static int
+static boolex_t
 compileBodyVar1(DECL_LD Word arg, compileInfo *ci)
 { Word a1;
   int i1;
@@ -4018,7 +4022,7 @@ compileBodyVar1(DECL_LD Word arg, compileInfo *ci)
 }
 
 
-static int
+static boolex_t
 compileBodyNonVar1(DECL_LD Word arg, compileInfo *ci)
 { Word a1;
   int i1;
@@ -4042,8 +4046,10 @@ compileBodyNonVar1(DECL_LD Word arg, compileInfo *ci)
   return always(ATOM_true, "nonvar", a1, ci);
 }
 
-#define compileTypeTest(arg, instruction, name, test, ci) LDFUNC(compileTypeTest, arg, instruction, name, test, ci)
-static int
+#define compileTypeTest(arg, instruction, name, test, ci) \
+	LDFUNC(compileTypeTest, arg, instruction, name, test, ci)
+
+static boolex_t
 compileTypeTest(DECL_LD Word arg,
 		code instruction, const char *name, int (*test)(word),
 		compileInfo *ci)
@@ -4114,7 +4120,7 @@ const type_test type_tests[] =
   { 0, 0, NULL, NULL }
 };
 
-static int
+static boolex_t
 compileBodyTypeTest(DECL_LD functor_t functor, Word arg, compileInfo *ci)
 { const type_test *tt;
 
@@ -4127,7 +4133,7 @@ compileBodyTypeTest(DECL_LD functor_t functor, Word arg, compileInfo *ci)
   return false;
 }
 
-static int
+static boolex_t
 compileBodyCallContinuation(DECL_LD Word arg, compileInfo *ci)
 { Word a1;
   int i1;
@@ -4144,7 +4150,7 @@ compileBodyCallContinuation(DECL_LD Word arg, compileInfo *ci)
   return false;
 }
 
-static int
+static boolex_t
 compileBodyShift(DECL_LD Word arg, compileInfo *ci, int for_copy)
 { Word a1;
   int i1;
@@ -4177,7 +4183,7 @@ For now, we copy the indirect using  the layout of the stacks into the
 code space.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static int
+static bool
 output_indirect(DECL_LD compileInfo *ci, code op, Word p)
 { word m = *p;
   size_t wn = wsizeofInd(m);
@@ -4193,7 +4199,7 @@ output_indirect(DECL_LD compileInfo *ci, code op, Word p)
 
 #ifdef O_ATOMGC
 
-int
+bool
 forAtomsInCodes(size_t size, Code PC, int (func)(atom_t a, void*), void *ctx)
 { Code ep = PC + size;
 
@@ -4224,7 +4230,7 @@ forAtomsInCodes(size_t size, Code PC, int (func)(atom_t a, void*), void *ctx)
   return true;
 }
 
-int
+bool
 forAtomsInClause(Clause clause, int (func)(atom_t a, void*), void *ctx)
 { return forAtomsInCodes(clause->code_size, clause->codes, func, ctx);
 }
@@ -4369,7 +4375,7 @@ assert_term(DECL_LD term_t term, Module module, ClauseRef where,
 	Sdprintf(" ... "););
 
   for(;;)
-  { int rc;
+  { ssize_t rc;
 
     h = valTermRef(head);
     b = valTermRef(body);
@@ -4748,7 +4754,7 @@ to skip H_VOID_N in small steps.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 Code
-skipArgs(Code PC, int skip, int *in_hvoid)
+skipArgs(Code PC, ssize_t skip, ssize_t *in_hvoid)
 { int nested = 0;
   Code nextPC;
 
@@ -4827,7 +4833,7 @@ skipArgs(Code PC, int skip, int *in_hvoid)
       case H_VOID_N:
 	if ( nested )
 	  continue;
-	skip -= (int)PC[1];
+	skip -= PC[1];
 	if ( skip <= 0 )
 	{ *in_hvoid = -skip;
 	  return PC;
@@ -4868,9 +4874,9 @@ pl-index.c.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 bool
-argKey(Code PC, int skip, word *key)
+argKey(Code PC, size_t skip, word *key)
 { if ( skip > 0 )
-  { int h_void = 0;
+  { ssize_t h_void = 0;
     PC = skipArgs(PC, skip, &h_void);
   }
 
@@ -5088,7 +5094,7 @@ typedef struct
 { Code	 pc;			/* pc for decompilation */
   Word   argp;			/* argument pointer */
   size_t arity;			/* Arity of the predicate */
-  int	 nvars;			/* size of var block */
+  size_t nvars;			/* size of var block */
   bit_vector *bvar_access;	/* Accessed as b_var<0..arity-1> */
   term_t bvar_args;		/* Arity size vector for moved unifications */
   term_t variables;		/* variable table (PL_new_term_refs() array) */
@@ -5904,7 +5910,7 @@ decompileBodyNoShift(DECL_LD decompileInfo *di, code end, Code until)
 			    continue;
 			  }
 	case A_ROUNDTOWARDS_A:
-			  { int i = *PC++;
+			  { size_t i = *PC++;
 			    *ARGP++ = float_rounding_name(i);
 			    continue;
 			  }
@@ -6432,7 +6438,7 @@ start_of_cdet(Clause cl, Code pc_error)
   return NULL;
 }
 
-int
+bool
 det_goal_error(DECL_LD LocalFrame fr, Code pc_error, atom_t found)
 { Clause cl   = fr->clause->value.clause;
   Code pc_det = start_of_cdet(cl, pc_error);
@@ -6458,7 +6464,7 @@ det_goal_error(DECL_LD LocalFrame fr, Code pc_error, atom_t found)
 
   if ( (fid=PL_open_foreign_frame()) )
   { term_t goal = PL_new_term_ref();
-    int rc;
+    bool rc;
 
     if ( (rc=decompile_body_range(goal, fr, cl, pc_det+3, C_DETTRUE)) )
     { if ( a == ATOM_warning )
@@ -7862,8 +7868,8 @@ PRED_IMPL("$vm_assert", 3, vm_assert, PL_FA_TRANSPARENT)
   ci.argvars      = 0;
 
   clause.predicate   = def;
-  clause.variables   = ci.arity;
-  clause.prolog_vars = ci.arity;
+  clause.variables   = (clsize_t)ci.arity;
+  clause.prolog_vars = (clsize_t)ci.arity;
   ci.clause	     = &clause;
   ci.module	     = m;
   initBuffer(&ci.codes);
@@ -8011,8 +8017,8 @@ add_1_if_not_at_end(DECL_LD Code PC, Code end, term_t tail)
 }
 
 
-static int
-not_breakable(atom_t op, Clause clause, int offset)
+static bool
+not_breakable(atom_t op, Clause clause, size_t offset)
 { GET_LD
   term_t av;
 
@@ -8327,7 +8333,7 @@ PRED_IMPL("$break_pc", 3, break_pc, PL_FA_NONDETERMINISTIC)
 
 typedef struct
 { Clause	clause;			/* Associated clause */
-  int		offset;			/* Offset of the instruction */
+  size_t	offset;			/* Offset of the instruction */
   code		saved_instruction;	/* The instruction saved */
 } break_point, *BreakPoint;
 
@@ -8342,8 +8348,8 @@ Concurrency issues are avoided because both  setBreak and clearBreak are
 called with L_BREAK locked.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static int				/* must hold L_BREAK */
-matching_unify_break(Clause clause, int offset, code op)
+static size_t				/* must hold L_BREAK */
+matching_unify_break(Clause clause, size_t offset, code op)
 { switch(op)
   { case B_UNIFY_VAR:
     case B_UNIFY_FIRSTVAR:
@@ -8381,12 +8387,14 @@ cleanupBreakPoints(void)
   }
 }
 
-#define BRK_NOTSET 0
-#define BRK_SET    1
-#define BRK_EXISTS 2
+typedef enum
+{ BRK_NOTSET = 0,
+  BRK_SET    = 1,
+  BRK_EXISTS = 2
+} rc_brk_t;
 
-static int				/* must hold L_BREAK */
-setBreak(Clause clause, int offset)	/* offset is already verified */
+static rc_brk_t				/* must hold L_BREAK */
+setBreak(Clause clause, size_t offset)	/* offset is already verified */
 { GET_LD
   int second_bp = false;
   Code PC;
@@ -8428,8 +8436,8 @@ set_second:
 }
 
 
-static int				/* must hold L_BREAK */
-clearBreak(Clause clause, int offset)
+static bool				/* must hold L_BREAK */
+clearBreak(Clause clause, size_t offset)
 { GET_LD
   Code PC, PC0;
   BreakPoint bp;
@@ -8472,14 +8480,14 @@ clear_second:
 int
 clearBreakPointsClause(Clause clause)
 { if ( breakTable && ison(clause, HAS_BREAKPOINTS) )
-  { int rc = true;
+  { bool rc = true;
 
     delayEvents();
     PL_LOCK(L_BREAK);
     FOR_TABLE(breakTable, name, value)
     { BreakPoint bp = val2ptr(value);
       if ( bp->clause == clause )
-      { int offset = bp->offset;
+      { size_t offset = bp->offset;
 	clearBreak(clause, bp->offset);
 	rc = callEventHook(PLEV_RETRACTNOBREAK, clause, offset) && rc;
       }
@@ -8536,31 +8544,33 @@ static
 PRED_IMPL("$break_at", 3, break_at, 0)
 { PRED_LD
   Clause clause = NULL;
-  int offset, doit, rc;
+  size_t offset;
+  int doit;
+  bool rc;
 
   if ( (PL_get_clref(A1, &clause) != true) ||
        !PL_get_bool_ex(A3, &doit) ||
-       !PL_get_integer_ex(A2, &offset) )
+       !PL_get_size_ex(A2, &offset) )
     fail;
-  if ( offset < 0 || offset >= (int)clause->code_size )
+  if ( offset >= (size_t)clause->code_size )
     return PL_error(NULL, 0, NULL, ERR_DOMAIN, ATOM_program_counter, A2);
 
+  pl_event_type et = PLEV_BREAK;
   PL_LOCK(L_BREAK);
   if ( doit )
-    rc = setBreak(clause, offset);
-  else
-    rc = clearBreak(clause, offset);
+  { switch(setBreak(clause, offset))
+    { case BRK_NOTSET: rc = false; break;
+      case BRK_SET:    rc = true;  break;
+      case BRK_EXISTS: rc = true; et = PLEV_BREAK_EXISTS; break;
+    }
+  } else
+  { rc = clearBreak(clause, offset);
+    et = PLEV_NOBREAK;
+  }
   PL_UNLOCK(L_BREAK);
 
   if ( rc )
-  { pl_event_type et;
-
-    if ( doit )
-      et = (rc == BRK_SET ? PLEV_BREAK : PLEV_BREAK_EXISTS);
-    else
-      et = PLEV_NOBREAK;
-
-    startCritical();			/* Call event handler sig_atomic */
+  { startCritical();			/* Call event handler sig_atomic */
     rc = callEventHook(et, clause, offset);
     rc = endCritical() && rc;
   }

@@ -184,7 +184,7 @@ mp_alloc(size_t bytes)
   ctx = LD->gmp.context;
 
   size_t fastunits = ROUND_SIZE(bytes)+1;
-  if ( ctx->allocated+fastunits <= GMP_STACK_ALLOC )
+  if ( ctx->allocated+fastunits+1 <= GMP_STACK_ALLOC )
   { size_t *data = &ctx->alloc_buf[ctx->allocated];
     *data++ = fastunits;
     ctx->allocated += fastunits;
@@ -212,7 +212,8 @@ mp_alloc(size_t bytes)
 
 static inline size_t *
 mp_on_stack(ar_context *ctx, void *ptr)
-{ if ( ptr > (void*)ctx->alloc_buf && ptr < (void*)&ctx->alloc_buf[GMP_STACK_ALLOC] )
+{ if ( ptr > (void*)ctx->alloc_buf &&
+       ptr < (void*)&ctx->alloc_buf[GMP_STACK_ALLOC] )
     return &((size_t*)ptr)[-1];
 
   return NULL;
@@ -474,7 +475,8 @@ saved version is the _mp_size field, followed by the limps.
 #define globalMPZ(at, mpz, flags) LDFUNC(globalMPZ, at, mpz, flags)
 static int
 globalMPZ(DECL_LD Word at, mpz_t mpz, int flags)
-{ DEBUG(CHK_SECURE, assert(!onStackArea(global, at) && !onStackArea(local, at)));
+{ DEBUG(CHK_SECURE, assert(!onStackArea(global, at) &&
+			   !onStackArea(local, at)));
 
   if ( !MPZ_ON_STACK(mpz) )
   { size_t size, wsz;
@@ -844,8 +846,8 @@ load_mpz_bits(const char *data, size_t size, size_t limpsize, int neg, Word p)
 { mpz_t mpz;
 
 #if O_GMP
-  mpz->_mp_size  = limpsize;
-  mpz->_mp_alloc = limpsize;
+  mpz->_mp_size  = (int) limpsize; /* dubious */
+  mpz->_mp_alloc = (int) limpsize; /* dubious */
   mpz->_mp_d     = (mp_limb_t*)p;
 
   mpz_import(mpz, size, 1, 1, 1, 0, data);
@@ -891,7 +893,7 @@ loadMPZFromCharp(const char *data, Word r, Word *store)
   *p++ = m;
   p[wsize+MPZ_STACK_EXTRA-1] = 0L;	/* pad out */
   p[wsize+MPZ_STACK_EXTRA] = m;
-  *p++ = mpz_size_stack(neg ? -limbsize : limbsize);
+  *p++ = mpz_size_stack((int) (neg ? -limbsize : limbsize)); /* dubious cast */
 #if O_BF
   *p++ = bf.expn;
 #endif
@@ -933,11 +935,11 @@ loadMPQFromCharp(const char *data, Word r, Word *store)
   *r = consPtr(p, TAG_INTEGER|STG_GLOBAL);
   m = mkIndHdr(wsize+2*MPZ_STACK_EXTRA, TAG_INTEGER);
   *p++ = m;
-  *p++ = mpq_size_stack(num_neg ? -num_limbsize : num_limbsize);
+  *p++ = mpq_size_stack((int) (num_neg ? -num_limbsize : num_limbsize)); /* dubious cast */
 #if O_BF
   *p++ = num_bf.expn;
 #endif
-  *p++ = mpq_size_stack(den_neg ? -den_limbsize : den_limbsize);
+  *p++ = mpq_size_stack((int) (den_neg ? -den_limbsize : den_limbsize)); /* dubious cast */
 #if O_BF
   *p++ = den_bf.expn;
 #endif
@@ -1302,12 +1304,12 @@ bool
 mpz_to_int64(mpz_t mpz, int64_t *i)
 { if ( mpz_cmp(mpz, MPZ_MIN_INT64) >= 0 &&
        mpz_cmp(mpz, MPZ_MAX_INT64) <= 0 )
-  { uint64_t v;
+  { uint64_t v = 0;
 
     mpz_export(&v, NULL, ORDER, sizeof(v), 0, 0, mpz);
-    DEBUG(2,
-	  { char buf[256];
-	    Sdprintf("Convert %s --> %I64d\n",
+    DEBUG(MSG_GMP,
+	  { char buf[1024];
+	    Sdprintf("Convert %s --> %"PRId64"\n",
 		     mpz_get_str(buf, 10, mpz), v);
 	  });
 
@@ -1333,7 +1335,7 @@ mpz_to_uint64(mpz_t mpz, uint64_t *i)
     return -1;
 
   if ( mpz_cmp(mpz, MPZ_MAX_UINT64) <= 0 )
-  { uint64_t v;
+  { uint64_t v = 0;
 
     mpz_export(&v, NULL, ORDER, sizeof(v), 0, 0, mpz);
     *i = v;
@@ -1511,7 +1513,7 @@ put_number(DECL_LD Word at, Number n, int flags)
 }
 
 
-int
+bool
 PL_unify_number(DECL_LD term_t t, Number n)
 { Word p = valTermRef(t);
   word w;
@@ -1546,10 +1548,10 @@ PL_unify_number(DECL_LD term_t t, Number n)
 #endif
       if ( isInteger(*p) )
       { number n2;
-	int rc;
+	bool rc;
 
 	get_integer(*p, &n2);
-	rc = (cmpNumbers(n, &n2) == CMP_EQUAL);
+	rc = (cmpNumbers(n, &n2) == CMPEX_EQUAL);
 	clearNumber(&n2);
 
 	return rc;
@@ -1559,10 +1561,10 @@ PL_unify_number(DECL_LD term_t t, Number n)
     case V_MPQ:
     { if ( isRational(*p) )
       { number n2;
-	int rc;
+	bool rc;
 
 	get_rational(*p, &n2);
-	rc = (cmpNumbers(n, &n2) == CMP_EQUAL);
+	rc = (cmpNumbers(n, &n2) == CMPEX_EQUAL);
 	clearNumber(&n2);
 
 	return rc;
@@ -1583,7 +1585,7 @@ PL_unify_number(DECL_LD term_t t, Number n)
 }
 
 
-int
+bool
 PL_put_number(DECL_LD term_t t, Number n)
 { word w;
   int rc;
@@ -1608,7 +1610,7 @@ get_number(DECL_LD word w, Number n)
 }
 
 
-int
+bool
 PL_get_number(DECL_LD term_t t, Number n)
 { Word p = valTermRef(t);
 
@@ -1763,7 +1765,7 @@ cmpFloatNumbers(Number n1, Number n2)
 }
 
 
-int
+cmpex_t
 cmpNumbers(Number n1, Number n2)
 { if ( unlikely(n1->type != n2->type) )
   { int rc;
@@ -1792,7 +1794,7 @@ cmpNumbers(Number n1, Number n2)
 #endif
     case V_FLOAT:
     { if ( n1->value.f == n2->value.f )
-	return CMP_EQUAL;
+	return CMPEX_EQUAL;
 
       int lt = n1->value.f  < n2->value.f;
       int gt = n1->value.f  > n2->value.f;
@@ -1803,7 +1805,7 @@ cmpNumbers(Number n1, Number n2)
     }
     default:
       assert(0);
-      return CMP_EQUAL;
+      return CMPEX_EQUAL;
   }
 }
 
@@ -1817,21 +1819,21 @@ statement  which  uses  the  targeted auxiliary  compare  function  to
 compute the return value.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static int
+static cmpex_t
 cmp_i_i(int64_t i1, int64_t i2)
-{ return (i1 == i2) ? CMP_EQUAL : ((i1 < i2) ? CMP_LESS : CMP_GREATER);
+{ return SCALAR_TO_CMP(i1, i2);
 }
 
-static int
+static cmpex_t
 cmp_f_f(double d1, double d2)
 { if ( isnan(d1) || isnan(d2) )
     return CMP_NOTEQ;
   else
-    return (d1 == d2) ? CMP_EQUAL : ((d1 < d2) ? CMP_LESS : CMP_GREATER);
+    return SCALAR_TO_CMP(d1, d2);
 }
 
 /* See https://stackoverflow.com/questions/58734034/ */
-static int
+static cmpex_t
 cmp_i_f(int64_t i1, double d2)
 { if ( isnan(d2) )
   { return CMP_NOTEQ;
@@ -1852,24 +1854,24 @@ cmp_i_f(int64_t i1, double d2)
 
 #ifdef O_BIGNUM
 
-static int
+static cmpex_t
 cmp_z_z(mpz_t z1, mpz_t z2)
 { int t = mpz_cmp(z1,z2);
-  return (t < 0) ? CMP_LESS : (t > 0);
+  return SCALAR_TO_CMP(t, 0);
 }
 
-static int
+static cmpex_t
 cmp_q_q(mpq_t q1, mpq_t q2)
 { int t = mpq_cmp(q1,q2);
-  return (t < 0) ? CMP_LESS : (t > 0);
+  return SCALAR_TO_CMP(t, 0);
 }
 
-static int
+static cmpex_t
 cmp_z_i(mpz_t z1, int64_t i2)
 {
 #if SIZEOF_LONG == 8
   int t = mpz_cmp_si(z1,i2);
-  return (t < 0) ? CMP_LESS : (t > 0);
+  return SCALAR_TO_CMP(t, 0);
 #else
   if ( i2 >= LONG_MIN && i2 <= LONG_MAX )
   { int t = mpz_cmp_si(z1,(long)i2);
@@ -1884,12 +1886,12 @@ cmp_z_i(mpz_t z1, int64_t i2)
 #endif
 }
 
-static int
+static cmpex_t
 cmp_q_i(mpq_t q1, int64_t i2)
 {
 #if SIZEOF_LONG == 8
   int t = mpq_cmp_si(q1,i2,1);
-  return (t < 0) ? CMP_LESS : (t > 0);
+  return SCALAR_TO_CMP(t, 0);
 #else
   if ( i2 >= LONG_MIN && i2 <= LONG_MAX )
   { int t = mpq_cmp_si(q1,(long)i2,1);
@@ -1908,34 +1910,34 @@ cmp_q_i(mpq_t q1, int64_t i2)
 #endif
 }
 
-static int
+static cmpex_t
 cmp_z_f(mpz_t z1, double d2)
-{ if (isnan(d2)) return CMP_NOTEQ;
-  else {
-    int t = mpz_cmp_d(z1,d2);        // mpz_cmp_d handles infinities
-    return (t < 0) ? CMP_LESS : (t > 0);
-  }
+{ if (isnan(d2))
+    return CMP_NOTEQ;
+
+  int t = mpz_cmp_d(z1,d2);        // mpz_cmp_d handles infinities
+  return SCALAR_TO_CMP(t, 0);
 }
 
-static int
+static cmpex_t
 cmp_f_q(double d1, mpq_t q2)
 { if      (isnan(d1))       return CMP_NOTEQ;
-  else if (d1 ==  INFINITY) return CMP_GREATER;
-  else if (d1 == -INFINITY) return CMP_LESS;
+  else if (d1 ==  INFINITY) return CMPEX_GREATER;
+  else if (d1 == -INFINITY) return CMPEX_LESS;
   else
   { mpq_t q1;
     mpq_init(q1);
     mpq_set_d(q1,d1);
     int t = cmp_q_q(q1,q2);
     mpq_clear(q1);
-    return t;
+    return SCALAR_TO_CMP(t, 0);
   }
 }
 
-static int
+static cmpex_t
 cmp_q_z(mpq_t q1, mpz_t z2)
 { int t = mpq_cmp_z(q1,z2);
-  return (t < 0) ? CMP_LESS : (t > 0);
+  return SCALAR_TO_CMP(t, 0);
 }
 
 #endif // O_BIGNUM
@@ -1944,9 +1946,9 @@ cmp_q_z(mpq_t q1, mpz_t z2)
    except those involving floats because -CMP_NOTEQ is wrong
 */
 
-int
+cmpex_t
 cmpReals(Number n1, Number n2)
-{ int rc;
+{ cmpex_t rc;
 
   switch(n1->type)
   { case V_INTEGER:
@@ -2111,7 +2113,7 @@ mpz_fdiv(mpz_t a, mpz_t b)
   mpz_clear(aa);
   mpz_clear(bb);
 
-  return ldexp(d, (long)sa - (long)sb);
+  return ldexp(d, (int) ((long)sa - (long)sb)); /* dubious cast */
 }
 
 /* Convert MPZ to a double by appropriate rounding of result from mpz_get_d */

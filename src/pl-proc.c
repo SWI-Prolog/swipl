@@ -123,7 +123,7 @@ lookupProcedure(functor_t f, Module m)
   memset(def, 0, sizeof(*def));
   def->functor = valueFunctor(f);
   def->module  = m;
-#ifdef __SANITIZE_ADDRESS__
+#if defined(__SANITIZE_ADDRESS__) && defined(HAVE_SANITIZER_LSAN_INTERFACE_H)
   def->name = strdup(predicateName(def));
   __lsan_ignore_object(def->name);
 #endif
@@ -1563,7 +1563,7 @@ MT: Caller must hold L_PREDICATE
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 size_t
-removeClausesPredicate(Definition def, int sfindex, int fromfile)
+removeClausesPredicate(Definition def, size_t sfindex, int fromfile)
 { GET_LD
   ClauseRef c, next;
   size_t deleted = 0;
@@ -1796,7 +1796,7 @@ generation contains the generation when pl_garbage_collect_clauses() was
 started.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static int	mustCleanDefinition(const Definition def);
+static bool	mustCleanDefinition(const Definition def);
 
 static ClauseRef
 find_prev(Definition def, ClauseRef prev, ClauseRef cref)
@@ -1896,7 +1896,7 @@ cleanDefinition(Definition def, DirtyDefInfo ddi, gen_t start,
 }
 
 
-static int
+static bool
 mustCleanDefinition(const Definition def)
 { return ( def->impl.clauses.erased_clauses > 0 );
 }
@@ -2125,7 +2125,7 @@ PRED_IMPL("mode", 1, mode, PL_FA_TRANSPARENT)
 
 #define unify_meta_argument(head, def, i) LDFUNC(unify_meta_argument, head, def, i)
 static int
-unify_meta_argument(DECL_LD term_t head, Definition def, int i)
+unify_meta_argument(DECL_LD term_t head, Definition def, size_t i)
 { term_t arg = PL_new_term_ref();
   int m = def->impl.any.args[i].meta;
 
@@ -2156,8 +2156,8 @@ unify_meta_pattern(Procedure proc, term_t head)
   Definition def = proc->definition;
 
   if ( PL_unify_functor(head, def->functor->functor) )
-  { int arity = def->functor->arity;
-    int i;
+  { size_t arity = def->functor->arity;
+    size_t i;
 
     for(i=0; i<arity; i++)
     { if ( !unify_meta_argument(head, def, i) )
@@ -2174,8 +2174,8 @@ unify_meta_pattern(Procedure proc, term_t head)
 bool
 PL_meta_predicate(predicate_t proc, const char *spec_s)
 { Definition def = proc->definition;
-  int arity = def->functor->arity;
-  int i;
+  size_t arity = def->functor->arity;
+  size_t i;
   int transparent = false;
   const unsigned char *s = (const unsigned char*)spec_s;
 
@@ -2234,7 +2234,7 @@ PL_meta_predicate(predicate_t proc, const char *spec_s)
 
 void
 clear_meta_declaration(Definition def)
-{ int i;
+{ size_t i;
 
   for(i=0; i<def->functor->arity; i++)
     def->impl.any.args[i].meta = MA_ANY;
@@ -3252,9 +3252,10 @@ PRED_IMPL("retract", 1, retract,
 
 
 #define allVars(argc, argv) LDFUNC(allVars, argc, argv)
-static int
-allVars(DECL_LD int argc, Word argv)
-{ int i, r, allvars = true;
+static bool
+allVars(DECL_LD size_t argc, Word argv)
+{ size_t i, r;
+  bool allvars = true;
   Word *reset = alloca(argc*sizeof(Word));
 
   for(i=0; i<argc; i++)
@@ -3311,7 +3312,7 @@ PRED_IMPL("retractall", 1, retractall, PL_FA_NONDETERMINISTIC|PL_FA_ISO)
   argv = valTermRef(thehead);
   deRef(argv);
   if ( isTerm(*argv) )
-  { int arity = arityTerm(*argv);
+  { size_t arity = arityTerm(*argv);
     argv = argTermP(*argv, 0);
 
     allvars = allVars(arity, argv);
@@ -4131,6 +4132,41 @@ PRED_IMPL("copy_predicate_clauses", 2, copy_predicate_clauses, PL_FA_TRANSPARENT
   return true;
 }
 
+/** '$foreign_predicate_source'(:Pred, -Description:string) is semidet.
+
+True when Description is the `addr2line`  description for the address of
+the implementing function Pred.  Fails silently if Pred is not a foreign
+predicate, there is no support to fetch   the description or there is no
+symbol table in the foreign library that holds the function.
+*/
+
+static
+PRED_IMPL("$foreign_predicate_source", 2, foreign_predicate_source,
+	  PL_FA_TRANSPARENT)
+{ PRED_LD
+  term_t pred  = A1;
+  Module module = (Module) NULL;
+  term_t head = PL_new_term_ref();
+  functor_t fd;
+  Procedure proc;
+
+  if ( !PL_strip_module(pred, &module, head) ||
+       !PL_get_functor(head, &fd) ||
+       !(proc = visibleProcedure(fd, module)) )
+    return false;
+
+  Definition def = getProcDefinition(proc);
+  if ( ison(def, P_FOREIGN) )
+  { Func f = def->impl.foreign.function;
+    char buf[1024];
+
+    if ( addr2line(f, buf, sizeof(buf)) )
+      return PL_unify_chars(A2, PL_STRING|REP_MB, (size_t)-1, buf);
+  }
+
+  return false;
+}
+
 
 #if defined(O_MAINTENANCE) || defined(O_DEBUG)
 
@@ -4262,4 +4298,6 @@ BeginPredDefs(proc)
 	   PL_FA_TRANSPARENT|PL_FA_NONDETERMINISTIC|PL_FA_ISO)
   PRED_DEF("copy_predicate_clauses", 2, copy_predicate_clauses, PL_FA_TRANSPARENT)
   PRED_DEF("$cgc_params", 6, cgc_params, 0)
+  PRED_DEF("$foreign_predicate_source", 2, foreign_predicate_source,
+	   PL_FA_TRANSPARENT)
 EndPredDefs

@@ -268,8 +268,8 @@ free_lingering(linger_list **list, gen_t generation)
 		*             STACKS            *
 		*********************************/
 
-int
-enableSpareStack(Stack s, int always)
+bool
+enableSpareStack(Stack s, bool always)
 { if ( s->spare && (roomStackP(s) < s->def_spare || always) )
   { DEBUG(MSG_SPARE_STACK,
 	  Sdprintf("Enabling spare on %s: %zd bytes\n", s->name, s->spare));
@@ -740,7 +740,7 @@ outOfStack(void *stack, stack_overflow_action how)
 
 
 bool
-raiseStackOverflow(int overflow)
+raiseStackOverflow(boolex_t overflow)
 { GET_LD
   Stack s;
 
@@ -1005,17 +1005,15 @@ packed into two `guards words'. We  cannot   just  copy the double as it
 might not be properly aligned.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+bool
 put_double(DECL_LD Word at, double d, int flags)
 { Word p;
   word m = mkIndHdr(WORDS_PER_DOUBLE, TAG_FLOAT);
 
-  if ( flags != ALLOW_CHECKED && !hasGlobalSpace(2+WORDS_PER_DOUBLE) )
-  { int rc = ensureGlobalSpace(2+WORDS_PER_DOUBLE, flags);
+  if ( flags != ALLOW_CHECKED &&
+       !ensureGlobalSpace(2+WORDS_PER_DOUBLE, flags) )
+    return false;
 
-    if ( rc != true )
-      return rc;
-  }
   p = gTop;
   gTop += 2+WORDS_PER_DOUBLE;
 
@@ -1037,7 +1035,7 @@ put_double(DECL_LD Word at, double d, int flags)
 		 *  GENERIC INDIRECT OPERATIONS	*
 		 *******************************/
 
-int
+bool
 equalIndirect(word w1, word w2)
 { Word p1 = addressIndirect(w1);
   Word p2 = addressIndirect(w2);
@@ -1045,15 +1043,10 @@ equalIndirect(word w1, word w2)
   if ( *p1 == *p2 )
   { size_t n = wsizeofInd(*p1);
 
-    while( n-- > 0 )
-    { if ( *++p1 != *++p2 )
-	fail;
-    }
-
-    succeed;
+    return memcmp(p1+1, p2+1, n*sizeof(word)) == 0;
   }
 
-  fail;
+  return false;
 }
 
 word
@@ -1301,7 +1294,7 @@ properly on Linux. Don't bother with it.
 
 typedef struct
 { size_t size;				/* Size (including header) */
-  int	 mmapped;			/* Is mmapped? */
+  bool	 mmapped;			/* Is mmapped? */
   double data[1];			/* ensure alignment */
 } map_region;
 
@@ -1360,7 +1353,7 @@ tmp_malloc_size(void *mem)
 void *
 tmp_malloc(size_t req)
 { map_region *reg;
-  int mmapped;
+  bool mmapped;
 
   req += SA_OFFSET;
   if ( req < MMAP_THRESHOLD )
@@ -1834,7 +1827,7 @@ initPTMalloc(void)
 }
 
 
-int
+bool
 initMalloc(void)
 { return ( initTCMalloc() ||
 	   initPTMalloc() ||

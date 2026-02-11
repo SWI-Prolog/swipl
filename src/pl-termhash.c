@@ -218,7 +218,8 @@ update_cycle(th_data *here, th_data *start, Buffer b)
 
 
 #define termHashValue(p, hval) LDFUNC(termHashValue, p, hval)
-static int
+
+static int  /* bool or -1 for out-of-memory */
 termHashValue(DECL_LD Word p, unsigned int *hval)
 { deRef(p);
   if ( !isTerm(*p) )
@@ -293,9 +294,6 @@ termHashValue(DECL_LD Word p, unsigned int *hval)
 
     discardBuffer(b);
 
-    if ( rc < 0 )
-      rc = PL_error(NULL, 0, NULL, ERR_NOMEM);
-
     return rc;
   }
 }
@@ -305,20 +303,17 @@ termHashValue(DECL_LD Word p, unsigned int *hval)
 
 static
 PRED_IMPL("term_hash", 2, term_hash, 0)
-{ GET_LD
+{ PRED_LD
   Word p = valTermRef(A1);
-  unsigned int hraw;
-  int rc;
+  unsigned int hash;
+  int rc = termHashValue(p, &hash);
 
-  rc = termHashValue(p, &hraw);
+  if ( rc < 0 )
+    return PL_resource_error("memory");
+  else if ( rc )
+    return PL_unify_integer(A2, hash);
 
-  if ( rc )
-  { hraw = hraw & PLMAXTAGGEDINT;	/* ensure tagged (portable) */
-
-    return PL_unify_integer(A2, hraw);
-  }
-
-  return true;
+  return true;			/* term is non-ground */
 }
 
 
@@ -522,14 +517,14 @@ variant_sha1(DECL_LD ac_term_agenda *agenda, sha1_state *state)
 	    return E_CYCLE;
 	  default:
 	  { FunctorDef fd = valueFunctor(f);
-	    int arity = arityFunctor(f);
+	    size_t arity = arityFunctor(f); /* was int, may affect code below */
 
 	    Atom fn = atomValue(fd->name);
 
 	    HASH("T", 1);
 	    HASH(&fn->length, sizeof(fn->length));
 	    HASH(fn->name, (unsigned long)fn->length);
-	    HASH(&arity, sizeof(arity));
+	    HASH(&arity, sizeof(arity));   /* here */
 	  }
 	}
 	continue;
@@ -849,12 +844,13 @@ VOID_RETURN sha1_begin(sha1_ctx ctx[1])
 /* SHA1 hash data in an array of bytes into hash buffer and */
 /* call the hash_compile function as required.              */
 
-VOID_RETURN sha1_hash(const unsigned char data[], unsigned long len, sha1_ctx ctx[1])
+VOID_RETURN sha1_hash(const unsigned char data[], long unsigned int len, sha1_ctx ctx[1])
 {   uint32_t pos = (uint32_t)(ctx->count[0] & SHA1_MASK),
             space = SHA1_BLOCK_SIZE - pos;
     const unsigned char *sp = data;
 
-    if((ctx->count[0] += len) < len)
+    ctx->count[0] = (uint32_t) (ctx->count[0] + len);
+    if(ctx->count[0] < len)
         ++(ctx->count[1]);
 
     while(len >= space)     /* tranfer whole blocks if possible  */

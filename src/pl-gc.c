@@ -919,7 +919,7 @@ forward:				/* Go into the tree */
     }
 #endif
     case TAG_COMPOUND:
-    { int args;
+    { size_t args;
 
       DEBUG(CHK_SECURE, assert(storage(val) == STG_GLOBAL));
       next = valPtr(val);
@@ -1026,7 +1026,7 @@ mark_term_refs()
 
   for( ; fr; fr = fr->parent )
   { Word sp = refFliP(fr, 0);
-    int n = fr->size;
+    size_t n = fr->size;
 
     DEBUG(MSG_GC_MARK_TERMREF,
 	  Sdprintf("Marking foreign frame %ld (size=%d)\n",
@@ -1412,7 +1412,7 @@ clearUninitialisedVarsFrame(LocalFrame fr, Code PC)
 }
 
 
-static inline int
+static inline size_t
 slotsInFrame(LocalFrame fr, Code PC)
 { Definition def = fr->predicate;
 
@@ -1427,8 +1427,8 @@ void
 clearLocalVariablesFrame(LocalFrame fr)
 { if ( fr->clause )
   { Definition def = fr->predicate;
-    int i     = def->functor->arity;
-    int slots = fr->clause->value.clause->prolog_vars;
+    size_t i     = def->functor->arity;
+    size_t slots = fr->clause->value.clause->prolog_vars;
     Word sp = argFrameP(fr, i);
 
     for( ; i<slots; i++, sp++)
@@ -1711,7 +1711,7 @@ typedef struct walk_state
   int flags;				/* general flags */
   Code c0;				/* start of code list */
   Word envtop;				/* just above environment */
-  int unmarked;				/* left when marking alt clauses */
+  size_t unmarked;			/* left when marking alt clauses */
   bit_vector *active;			/* When marking active */
   bit_vector *clear;			/* When marking active */
 #ifdef MARK_ALT_CLAUSES
@@ -1810,7 +1810,7 @@ mark_local_variable(DECL_LD Word p)
 static void
 mark_arguments(DECL_LD LocalFrame fr)
 { Word sp = argFrameP(fr, 0);
-  int slots = fr->predicate->functor->arity;
+  size_t slots = fr->predicate->functor->arity;
 
   for( ; slots-- > 0; sp++ )
   { if ( !is_marked(sp) )
@@ -1843,7 +1843,7 @@ static void
 mark_trie_gen(DECL_LD LocalFrame fr)
 { Word   sp = argFrameP(fr, 0);
   Clause cl = fr->clause->value.clause;
-  int    mv = cl->prolog_vars;
+  size_t mv = cl->prolog_vars;
 
   for(; mv-- > 0; sp++)
   { if ( !is_marked(sp) )
@@ -2281,8 +2281,8 @@ mark_active_environment(bit_vector *active, LocalFrame fr, Code PC)
 static void
 mark_alt_clauses(DECL_LD LocalFrame fr, ClauseRef cref)
 { Word sp = argFrameP(fr, 0);
-  int argc = fr->predicate->functor->arity;
-  int i;
+  size_t argc = fr->predicate->functor->arity;
+  size_t i;
   walk_state state;
   state.unmarked = 0;
 
@@ -2476,7 +2476,7 @@ mark_environments(DECL_LD mark_state *mstate, LocalFrame fr, Code PC)
       }
 
       if ( ison(fr, FR_WATCHED) )
-      { int slots;
+      { size_t slots;
 	Word sp;
 
 	slots  = slotsInFrame(fr, PC);
@@ -3112,7 +3112,7 @@ sweep_trail(void)
 
 #define sweep_frame(fr, slots) LDFUNC(sweep_frame, fr, slots)
 static void
-sweep_frame(DECL_LD LocalFrame fr, int slots)
+sweep_frame(DECL_LD LocalFrame fr, size_t slots)
 { Word sp;
 
   sp = argFrameP(fr, 0);
@@ -3149,7 +3149,7 @@ sweep_environments(LocalFrame fr, Code PC)
     return NULL;
 
   for( ; ; )
-  { int slots;
+  { size_t slots;
 
     if ( isoff(fr, FR_MARKED) )
       return NULL;
@@ -3733,7 +3733,7 @@ get_vmi_state(QueryFrame qf, vm_state *state)
       qlTop = lTop;
 
     if ( qlTop <= state->frame )
-    { int arity = state->frame->predicate->functor->arity;
+    { size_t arity = state->frame->predicate->functor->arity;
       qlTop = (LocalFrame)argFrameP(state->frame, arity);
       assert(!state->frame->clause);
     }
@@ -3820,7 +3820,7 @@ that calls PL_handle_signals() from time to   time  to enable interrupts
 and call GC.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+bool
 considerGarbageCollect(Stack s)
 { GET_LD
 
@@ -4399,7 +4399,7 @@ Thanks to Keri Harris for figuring out why   we must include ARGP in our
 lTop.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+boolex_t
 garbageCollect(gc_reason_t reason)
 { GET_LD
   vm_state state;
@@ -4407,7 +4407,7 @@ garbageCollect(gc_reason_t reason)
   term_t preShiftLTop;			/* safe over trimStacks() (shift) */
   int verbose = truePrologFlag(PLFLAG_TRACE_GC) && !LD->in_print_message;
   int no_mark_bar;
-  int rc;
+  boolex_t rc;
   fid_t gvars, astack, attvars;
   gc_wordptr *saved_bar_at;		/* LD->frozen_bar placed on top of local stack */
 #ifdef O_PROFILE
@@ -4597,7 +4597,7 @@ unblockGC(DECL_LD int flags)
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-makeMoreStackSpace(int overflow, int flags)
+makeMoreStackSpace(ssize_t overflow, int flags)
 
 Used in loops where the  low-level   implementation  does  not allow for
 stack-shifts.  Returns true or false and raises an exception.
@@ -4610,13 +4610,14 @@ is seen as satisfiable.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 bool
-makeMoreStackSpace(int overflow, int flags)
+makeMoreStackSpace(boolex_t overflow, int flags)
 { GET_LD
   Stack s = NULL;
   unsigned int gc_reason = 0;
 
   switch(overflow)
-  { case LOCAL_OVERFLOW:  s = (Stack)&LD->stacks.local;  break;
+  { case LOCAL_OVERFLOW:  s = (Stack)&LD->stacks.local;
+			  break;
     case GLOBAL_OVERFLOW: s = (Stack)&LD->stacks.global;
 			  gc_reason = GC_GLOBAL_OVERFLOW;
 			  break;
@@ -4624,6 +4625,8 @@ makeMoreStackSpace(int overflow, int flags)
 			  gc_reason = GC_TRAIL_OVERFLOW;
 			  break;
     case MEMORY_OVERFLOW: return raiseStackOverflow(overflow);
+    default:		  assert(0);
+			  return false;
   }
 
   if ( LD->exception.processing && s && enableSpareStack(s, true) )
@@ -4679,7 +4682,7 @@ Normally called through the inline function ensureStackSpace_ex() and
 the macros ensureTrailSpace() and ensureGlobalSpace()
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+boolex_t
 f_ensureStackSpace(DECL_LD size_t gcells, size_t tcells, int flags)
 { if ( hasGlobalSpace_(gcells) && hasTrailSpace(tcells) )
     return true;
@@ -4738,7 +4741,7 @@ NOTE: This is often called from ENSURE_LOCAL_SPACE(), while already lTop
 > lMax. The stack-shifter must be able to deal with this.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+boolex_t
 growLocalSpace(DECL_LD size_t bytes, int flags)
 { if ( addPointer(lTop, bytes) <= (void*)lMax )
     return true;
@@ -4849,7 +4852,7 @@ update_lg_pointer(DECL_LD Word *p, intptr_t ls, intptr_t gs)
 static void
 update_arguments(LocalFrame fr, intptr_t gs)
 { Word sp = argFrameP(fr, 0);
-  int slots = fr->predicate->functor->arity;
+  size_t slots = fr->predicate->functor->arity;
 
   for( ; slots-- > 0; sp++ )
     update_gpointer(sp, gs);
@@ -4859,7 +4862,7 @@ static void
 update_trie_gen(LocalFrame fr, intptr_t gs)
 { Word   sp = argFrameP(fr, 0);
   Clause cl = fr->clause->value.clause;
-  int    mv = cl->prolog_vars;
+  size_t mv = cl->prolog_vars;
 
   for(; mv-- > 0; sp++)
     update_gpointer(sp, gs);
@@ -5311,13 +5314,14 @@ needStack(DECL_LD Stack s)
 
 
 #define grow_stacks(l, g, t) LDFUNC(grow_stacks, l, g, t)
-static int
+
+static boolex_t
 grow_stacks(DECL_LD size_t l, size_t g, size_t t)
 { sigset_t mask;
   size_t lsize=0, gsize=0, tsize=0;
   vm_state state;
   Stack fatal = NULL;	/* stack we couldn't expand due to lack of memory */
-  int rc;
+  boolex_t rc;
 #if O_DEBUG
   word key=0;
   int emergency = false;
@@ -5623,10 +5627,10 @@ time-critical. trim_stacks normally isn't. This precaution is explicitly
 required for the trimStacks() that result from a stack-overflow.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+boolex_t
 growStacks(size_t l, size_t g, size_t t)
 { GET_LD
-  int rc;
+  boolex_t rc;
   LocalFrame olb = lBase;
   LocalFrame olm = lMax;
   Word ogb = gBase;
@@ -5703,7 +5707,7 @@ tight(DECL_LD Stack s)
 Return true on success or *_OVERFLOW when out of space.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-int
+boolex_t
 shiftTightStacks(void)
 { GET_LD
   size_t l = tight((Stack)&LD->stacks.local);

@@ -1048,7 +1048,7 @@ parseCommandLineOptions(int argc0, char **argv0, char **argvleft)
 	long sig = strtol(optval, &e, 10);
 
 	if ( e > optval && *e == EOS && sig >= 0 && sig < 32 )
-	  GD->signals.sig_alert = sig;
+	  GD->signals.sig_alert = (int) sig;
 	else
 	  return -1;
 #endif
@@ -1192,7 +1192,7 @@ Find the resource database.
 #endif
 
 static zipper *
-openResourceDB(int is_hash_bang)
+openResourceDB(bool is_hash_bang)
 { zipper *rc;
   char tmp[PATH_MAX];
   char plp[PATH_MAX];
@@ -1325,11 +1325,11 @@ Steps:
 
 bool
 PL_initialise(int argc, char **argv)
-{ int is_hash_bang = false;
+{ bool is_hash_bang = false;
   const char *rcpath = "<none>";
 
   if ( GD->initialised )
-    succeed;
+    return true;
 
 #ifdef O_DEBUG
   /* Initialize debug flag early, if first argument */
@@ -1350,7 +1350,7 @@ PL_initialise(int argc, char **argv)
   initDefaults();			/* Initialise global defaults */
   initPaths(argc, (const char**)argv);	/* fetch some useful paths */
 
-  { GET_LD
+  GET_LD
 #ifdef O_SIGNALS
     setPrologFlagMask(PLFLAG_SIGNALS);	/* default: handle signals */
 #endif
@@ -1524,7 +1524,6 @@ PL_initialise(int argc, char **argv)
   { int status = prologToplevel(PL_new_atom("$initialise"));
     return status;
   }
-  }					/* { GET_LD } */
 }
 
 
@@ -1919,7 +1918,7 @@ emergency:
     memset(&PL_local_data,  0, sizeof(PL_local_data));
   }
 
-#ifdef __SANITIZE_ADDRESS__
+#if defined(__SANITIZE_ADDRESS__) && defined(HAVE_SANITIZER_LSAN_INTERFACE_H)
   char *s;
 
   if ( (s=getenv("ASAN_OPTIONS")) && strstr(s,"detect_leaks=1") )
@@ -1928,7 +1927,7 @@ emergency:
     if ( __lsan_do_recoverable_leak_check() )
     { fprintf(stderr, "Leaks detected; sleeping 60 sec.  Attach using\n"
 	     "   gdb -p %d\n", getpid());
-      sleep(60);
+      Pause(60.0);
     } else
     { fprintf(stderr, "No leaks detected\n");
     }

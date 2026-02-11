@@ -876,14 +876,14 @@ reperror(int c, IOSTREAM *s)
     const char *q;
 
     if ( (s->flags & SIO_REPPL) )
-    { sprintf(buf, "\\x%X\\", c);
+    { snprintf(buf, sizeof buf, "\\x%X\\", c);
     } else if ( (s->flags & SIO_REPPLU) )
     { if ( c <= 0xffff )
-	sprintf(buf, "\\u%04X", c);
+	snprintf(buf, sizeof buf, "\\u%04X", c);
       else
-	sprintf(buf, "\\U%08X", c);
+	snprintf(buf, sizeof buf, "\\U%08X", c);
     } else
-    { sprintf(buf, "&#%d;", c);
+    { snprintf(buf, sizeof buf, "&#%d;", c);
     }
 
     for(q = buf; *q; q++)
@@ -2043,8 +2043,8 @@ Sgetttysize(IOSTREAM *s, short *cols, short *rows)
     return -1;
   }
 
-  *cols = s->tty_size >> 16;
-  *rows = s->tty_size & 0xffff;
+  *cols = (short) (s->tty_size >> 16); /* safe cast */
+  *rows = (short) (s->tty_size & 0xffff); /* safe cast */
   return 0;
 }
 
@@ -2831,7 +2831,7 @@ Sdprintf_ex(const char *channel, const char *file, int line, const char *fm, ...
   return rval;
 }
 
-#define Sdprintf(fmt...) Sdprintf_ex(NULL, __FILE__, __LINE__, fmt)
+#define Sdprintf(...) Sdprintf_ex(NULL, __FILE__, __LINE__, __VA_ARGS__)
 #endif /*O_DEBUG*/
 
 #if 0

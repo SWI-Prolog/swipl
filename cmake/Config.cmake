@@ -54,6 +54,7 @@ check_include_file(sys/stropts.h HAVE_SYS_STROPTS_H)
 check_include_file(zlib.h HAVE_ZLIB_H)
 check_include_file(crt_externs.h HAVE_CRT_EXTERNS_H)
 check_include_file(gperftools/malloc_extension_c.h HAVE_TCMALLOC_EXTENSION_C_H)
+check_include_file(sanitizer/lsan_interface.h HAVE_SANITIZER_LSAN_INTERFACE_H)
 
 check_c_source_compiles(
     "int val = 1;
@@ -240,9 +241,6 @@ check_function_exists(srand HAVE_SRAND)
 check_function_exists(srandom HAVE_SRANDOM)
 check_function_exists(random HAVE_RANDOM)
 check_function_exists(rint HAVE_RINT)
-check_function_exists(fpclass HAVE_FPCLASS)
-check_function_exists(_fpclass HAVE_FPCLASS)
-# check_function_exists(fpclassify HAVE_FPCLASSIFY)
 check_function_exists(fpresetsticky HAVE_FPRESETSTICKY)
 check_function_exists(fpsetmask HAVE_FPSETMASK)
 check_function_exists(isnan HAVE_ISNAN)
