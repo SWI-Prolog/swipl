@@ -15,7 +15,7 @@ buildbin=false
 push=false
 pgpkey=266FF04C52056213BECDDDA04EF5383C7C11B85B
 program="$0"
-branch=devel
+branch=stable
 
 usage()
 { cat << EOM

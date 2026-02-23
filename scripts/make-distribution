@@ -150,7 +150,7 @@ ubuntu()
 
 reset_nox()
 { git -C debian checkout nox
-  git -C debian reset --hard origin/nox-devel
+  git -C debian reset --hard origin/nox-stable
   git submodule update debian
 }
 
