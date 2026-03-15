@@ -20,7 +20,6 @@ include(CheckCSourceRuns)
 include(Dependencies)
 include(Config)
 include(GCCBuiltins)
-include(TestSignalType)
 include(TestSCNProcessors)
 include(TestHeaderTime)
 include(TestLLRound)
@@ -158,7 +157,7 @@ set(SWIPL_DATA_library explain.pl sort.pl prolog_config.pl
     oset.pl ordsets.pl occurs.pl lists.pl pprint.pl atom.pl
     url.pl utf8.pl main.pl assoc.pl nb_set.pl
     qpforeign.pl dif.pl when.pl ugraphs.pl streams.pl
-    operators.pl date.pl
+    operators.pl date.pl tableutil.pl
     prolog_stack.pl prolog_clause.pl prolog_xref.pl prolog_source.pl
     broadcast.pl pairs.pl base64.pl record.pl rbtrees.pl settings.pl
     dialect.pl apply_macros.pl apply.pl nb_rbtrees.pl

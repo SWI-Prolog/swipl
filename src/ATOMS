@@ -206,6 +206,7 @@ A deadline		"deadline"
 A deadlock		"deadlock"
 A deepbind		"deepbind"
 A debug			"debug"
+A debug_mode		"debug_mode"
 A debug_on_error	"debug_on_error"
 A debug_on_interrupt	"debug_on_interrupt"
 A debug_topic		"debug_topic"
@@ -1087,6 +1088,7 @@ F dcont			3
 F dcut			1
 F dde_error		2
 F debug			1
+F debug_mode		1
 F debugging		1
 F decimal_point		1
 F deep			1

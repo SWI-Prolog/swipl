@@ -446,7 +446,7 @@ PRED_IMPL("mutex_statistics", 0, mutex_statistics, 0)
 #ifdef PTW32_STATIC_LIB
 static void
 win_thread_initialize(void)
-{ static int done = false;
+{ static bool done = false;
 
   if ( done )
     return;
@@ -460,7 +460,7 @@ ThError(int e)
 { return strerror(e);
 }
 
-static int
+static bool
 ldata_in_use(PL_local_data_t *ld)
 { int i;
 
@@ -558,10 +558,12 @@ static void	set_system_thread_id(PL_thread_info_t *info);
 static thread_handle *symbol_thread_handle(atom_t a);
 static void	destroy_interactor(thread_handle *th, int gc);
 static void	detach_engine(PL_engine_t e);
-
 static void	initMessageQueues(void);
 static bool	get_thread(term_t t, PL_thread_info_t **info, bool warn);
 #if O_PLMT
+static bool	update_debug_mode_from_class(PL_local_data_t *ld,
+					     bool *old);
+static atom_t	symbol_alias(atom_t symbol);
 static bool	unify_queue(term_t t, message_queue *q);
 static bool	get_message_queue_unlocked(term_t t, message_queue **queue);
 static bool	get_message_queue(term_t t, message_queue **queue);
@@ -1032,6 +1034,7 @@ initPrologThreads(void)
     pthread_cond_init(&GD->thread.index.cond, NULL);
     initMutexes();
     link_mutexes();
+    GD->thread.debug_classes = newHTable(2);
 #endif
     threads_ready = true;
   }
@@ -2049,14 +2052,18 @@ set_os_thread_name(atom_t alias)
 {
 #ifdef HAVE_PTHREAD_SETNAME_NP
   GET_LD
-  term_t t = PL_new_term_ref();
-  PL_put_atom(t, alias);
+  size_t len;
   char *s;
+  bool rc;
 
-  if ( PL_get_chars(t, &s, CVT_ATOM|REP_MB|BUF_DISCARDABLE) )
-    return set_os_thread_name_from_charp(s);
-#endif
+  PL_STRINGS_MARK();
+  rc = ( PL_atom_mbchars(alias, &len, &s, REP_MB) &&
+	 set_os_thread_name_from_charp(s) );
+  PL_STRINGS_RELEASE();
+  return rc;
+#else
   return false;
+#endif
 }
 
 static const PL_option_t make_thread_options[] =
@@ -2069,6 +2076,7 @@ static const PL_option_t make_thread_options[] =
   { ATOM_inherit_from,	 OPT_TERM },
   { ATOM_affinity,	 OPT_TERM },
   { ATOM_queue_max_size, OPT_SIZE },
+  { ATOM_class,		 OPT_ATOM },
   { NULL_ATOM,		 0 }
 };
 
@@ -2131,6 +2139,7 @@ start_thread(void *closure)
 	 (th=symbol_thread_handle(info->symbol)) &&
 	 th->alias )
       set_os_thread_name(th->alias);
+    update_debug_mode_from_class(LD, NULL);
 
     goal = PL_new_term_ref();
     PL_put_atom(goal, ATOM_dthread_init);
@@ -2211,7 +2220,7 @@ copy_local_data(PL_local_data_t *ldnew, PL_local_data_t *ldold,
   ldnew->_debugstatus.retryFrame  = 0;
   ldnew->_debugstatus.suspendTrace= 0;
   if ( ldold->_debugstatus.skiplevel != SKIP_VERY_DEEP )
-  { ldnew->_debugstatus.debugging = DBG_OFF;
+  { ldnew->_debugstatus.debugging = false;
     ldnew->_debugstatus.tracing = false;
     ldnew->_debugstatus.skiplevel = SKIP_VERY_DEEP;
   }
@@ -2240,7 +2249,7 @@ copy_local_data(PL_local_data_t *ldnew, PL_local_data_t *ldold,
   ldnew->tabling.in_assert_propagation = false;
   if ( !ldnew->thread.info->debug )
   { ldnew->_debugstatus.tracing   = false;
-    ldnew->_debugstatus.debugging = DBG_OFF;
+    ldnew->_debugstatus.debugging = false;
     setPrologRunMode_LD(ldnew, RUN_MODE_NORMAL);
   }
 #ifdef O_PLMT
@@ -2322,6 +2331,7 @@ pl_thread_create(term_t goal, term_t id, term_t options)
   thread_handle *th;
   PL_local_data_t *ldnew, *ldold = LD;
   atom_t alias = NULL_ATOM, idname;
+  atom_t class = ATOM_user;
   size_t stack = 0;
   size_t c_stack = (size_t)-1;
   term_t inherit_from = 0;
@@ -2354,7 +2364,8 @@ pl_thread_create(term_t goal, term_t id, term_t options)
 			&at_exit,
 			&inherit_from,
 			&affinity,
-			&attr.max_queue_size) )
+			&attr.max_queue_size,
+		        &class) )
   { free_thread_info(info);
     fail;
   }
@@ -2416,6 +2427,9 @@ pl_thread_create(term_t goal, term_t id, term_t options)
   ldnew->thread.creator_seq_id = ldold->thread.seq_id;
   if ( at_exit )
     register_event_hook(&ldnew->event.hook.onthreadexit, 0, false, at_exit, 0);
+  info->class = class;
+  if ( info->class )
+    PL_register_atom(info->class);
 
   int rc = 0;
   const char *func;
@@ -2737,6 +2751,10 @@ free_thread_info(PL_thread_info_t *info)
     info->return_value = NULL;
   if ( (rec_g=info->goal) )
     info->goal = NULL;
+  if ( info->class )
+  { PL_unregister_atom(info->class);
+    info->class = NULL_ATOM;
+  }
 
   if ( info->pl_tid == GD->thread.highest_id )
   { int i;
@@ -2760,8 +2778,43 @@ free_thread_info(PL_thread_info_t *info)
   if ( rec_g )  PL_erase(rec_g);
 }
 
-
 #ifdef O_PLMT
+#define debug_thread_class(class) LDFUNC(debug_thread_class, class)
+
+static bool
+debug_thread_class(DECL_LD atom_t class)
+{ table_value_t val = lookupHTable(GD->thread.debug_classes,
+				   (table_key_t)class);
+  return val == ATOM_true;
+}
+
+static bool
+update_debug_mode_from_class(PL_local_data_t *ld, bool *old)
+{ atom_t class = ld->thread.info->class;
+  bool rc = false;
+
+  if ( class )
+  { WITH_LD(ld)
+    { rc = debugmode(ld, debug_thread_class(class), old, 0);
+    }
+  }
+
+  return rc;
+}
+
+static bool
+set_thread_class(PL_thread_info_t *info, atom_t class)
+{ if ( info->class != class )
+  { atom_t old = info->class;
+    info->class = class;
+    if ( old )   PL_unregister_atom(old);
+    if ( class ) PL_register_atom(class);
+    update_debug_mode_from_class(info->thread_data, NULL);
+  }
+
+  return true;
+}
+
 static int
 pthread_join_interruptible(pthread_t thread, void **retval)
 {
@@ -2924,28 +2977,6 @@ PRED_IMPL("thread_exit", 1, thread_exit, 0)
 }
 
 static
-PRED_IMPL("thread_alias", 1, thread_alias, 0)
-{
-#ifdef O_PLMT
-  PRED_LD
-#endif
-  PL_thread_info_t *info = LD->thread.info;
-  thread_handle *th;
-  atom_t alias;
-
-  if ( (th = create_thread_handle(info)) &&
-       th->alias )
-  { term_t ex = PL_new_term_ref();
-
-    return ( unify_thread_id(ex, info) &&
-	     PL_permission_error("re-alias", "thread", ex) );
-  }
-
-  return ( PL_get_atom_ex(A1, &alias) &&
-	   aliasThread(PL_thread_self(), ATOM_thread, alias) );
-}
-
-static
 PRED_IMPL("set_thread", 2, set_thread, 0)
 { PRED_LD
   PL_thread_info_t *info;
@@ -2962,11 +2993,30 @@ PRED_IMPL("set_thread", 2, set_thread, 0)
   { term_t arg = PL_new_term_ref();
     _PL_get_arg(1, A2, arg);
 
-    if ( name == ATOM_debug )
+    if ( name == ATOM_alias )
+    { atom_t alias;
+      if ( PL_get_atom_ex(arg, &alias) )
+      { if ( info->symbol && symbol_alias(info->symbol) )
+	  return PL_permission_error("re-alias", "thread", A1);
+	return aliasThread(PL_thread_self(), ATOM_thread, alias);
+      }
+      return false;
+    } else if ( name == ATOM_debug )
     { int val;
       if ( PL_get_bool_ex(arg, &val) )
       { info->debug = (val == true);
 	return true;
+      }
+      return false;
+    } else if ( name == ATOM_debug_mode )
+    { int val;
+      if ( PL_get_bool_ex(arg, &val) )
+	return debugmode(info->thread_data, val, NULL, 0);
+      return false;
+    } else if ( name == ATOM_class )
+    { atom_t class;
+      if ( PL_get_atom_ex(arg, &class) )
+      { return set_thread_class(info, class);
       }
       return false;
     } else
@@ -2976,6 +3026,59 @@ PRED_IMPL("set_thread", 2, set_thread, 0)
     return PL_type_error("property", A2);
 }
 
+/** '$debug_thread_class'(+Class:atom, +Debug:bool, -Matching, -Set)
+*/
+
+static
+PRED_IMPL("$debug_thread_class", 4, debug_thread_class, 0)
+{ PRED_LD
+  atom_t class;
+  int dbg;
+
+  if ( PL_get_atom_ex(A1, &class) &&
+       PL_get_bool_ex(A2, &dbg) )
+  { if ( debug_thread_class(class) != dbg )
+    { int matching = 0;
+      int set = 0;
+
+      updateHTable(GD->thread.debug_classes,
+		   (table_key_t)class,
+		   (table_value_t)(dbg ? ATOM_true : ATOM_false));
+
+
+      for(int i=1; i<=GD->thread.highest_id; i++ )
+      { PL_thread_info_t *info = GD->thread.threads[i];
+	if ( info && info->class == class &&
+	     info->thread_data &&
+	   ( info->status == PL_THREAD_RUNNING || info->in_exit_hooks ) )
+	{ PL_local_data_t *ld;
+	  matching++;
+
+	  if ( (ld = acquire_ldata(info)) )
+	  { bool old;
+	    update_debug_mode_from_class(ld, &old);
+	    if ( old != dbg )
+	      set++;
+	  }
+	}
+      }
+      return ( PL_unify_integer(A3, matching) &&
+	       PL_unify_integer(A4, set) );
+    }
+
+    return true;
+  }
+
+  return false;
+}
+
+static
+PRED_IMPL("debug_reset_from_class", 0, debug_reset_from_class, 0)
+{ PRED_LD
+
+  update_debug_mode_from_class(LD, NULL);
+  return true;
+}
 
 #endif /*O_PLMT*/
 
@@ -3076,6 +3179,28 @@ thread_debug_property(DECL_LD void *ctx, term_t prop)
   return PL_unify_bool_ex(prop, info->debug);
 }
 
+#define thread_debug_mode_property(info, prop) \
+	LDFUNC(thread_debug_mode_property, info, prop)
+
+static bool
+thread_debug_mode_property(DECL_LD void *ctx, term_t prop)
+{ PL_thread_info_t *info = ctx;
+  int dbgmode = -1;
+
+  PL_LOCK(L_THREAD);
+  if ( info->thread_data )
+  { WITH_LD(info->thread_data)
+      dbgmode = debugstatus.debugging;
+  }
+  PL_UNLOCK(L_THREAD);
+
+  if ( dbgmode != -1 )
+    return PL_unify_bool_ex(prop, dbgmode == true);
+
+  return false;
+}
+
+
 #define thread_engine_property(info, prop) \
 	LDFUNC(thread_engine_property, info, prop)
 
@@ -3143,16 +3268,33 @@ thread_size_property(DECL_LD void *ctx, term_t prop)
   return false;
 }
 
+#define thread_class_property(info, prop) \
+	LDFUNC(thread_class_property, info, prop)
+
+static bool
+thread_class_property(DECL_LD void *ctx, term_t prop)
+{ IGNORE_LD
+  PL_thread_info_t *info = ctx;
+
+  if ( info->class )
+  { return PL_unify_atom(prop, info->class);
+  }
+
+  return false;
+}
+
 static const tprop tprop_list [] =
 { { FUNCTOR_id1,	       LDFUNC_REF(thread_id_property) },
   { FUNCTOR_alias1,	       LDFUNC_REF(thread_alias_property) },
   { FUNCTOR_status1,	       LDFUNC_REF(thread_status_property) },
   { FUNCTOR_detached1,	       LDFUNC_REF(thread_detached_property) },
   { FUNCTOR_debug1,	       LDFUNC_REF(thread_debug_property) },
+  { FUNCTOR_debug_mode1,       LDFUNC_REF(thread_debug_mode_property) },
   { FUNCTOR_engine1,	       LDFUNC_REF(thread_engine_property) },
   { FUNCTOR_thread1,	       LDFUNC_REF(thread_thread_property) },
   { FUNCTOR_system_thread_id1, LDFUNC_REF(thread_tid_property) },
   { FUNCTOR_size1,	       LDFUNC_REF(thread_size_property) },
+  { FUNCTOR_class1,	       LDFUNC_REF(thread_class_property) },
   { 0,			       NULL }
 };
 
@@ -4031,17 +4173,14 @@ PRED_IMPL("engine_destroy", 1, engine_destroy, 0)
 
 static void
 copy_debug_mode(PL_local_data_t *to, PL_local_data_t *from)
-{ PL_local_data_t *current = PL_current_engine();
-
-  if ( to->_debugstatus.debugging != from->_debugstatus.debugging )
-  { TLD_set_LD(to);
-    debugmode(from->_debugstatus.debugging, NULL);
-    TLD_set_LD(current);
+{ if ( to->_debugstatus.debugging != from->_debugstatus.debugging )
+  { debugmode(to, from->_debugstatus.debugging, NULL, 0);
   }
   if ( to->_debugstatus.tracing != from->_debugstatus.tracing )
-  { TLD_set_LD(to);
-    tracemode(from->_debugstatus.tracing, NULL);
-    TLD_set_LD(current);
+  { WITH_LD(to)
+    { tracemode(from->_debugstatus.tracing, NULL);
+      (void)__PL_ld;
+    }
   }
 }
 
@@ -6756,6 +6895,10 @@ PL_thread_attach_engine(PL_thread_attr_t *attr)
     return -1;
   }
   set_system_thread_id(info);
+  if ( attr->thread_class )
+    info->class = PL_new_atom(attr->thread_class);
+  else
+    info->class = ATOM_user;
   PL_LOCK(L_THREAD);
   info->status = PL_THREAD_RUNNING;
   PL_UNLOCK(L_THREAD);
@@ -6771,7 +6914,7 @@ PL_thread_attach_engine(PL_thread_attr_t *attr)
 
   if ( ison(attr, PL_THREAD_NO_DEBUG) )
   { ldnew->_debugstatus.tracing   = false;
-    ldnew->_debugstatus.debugging = DBG_OFF;
+    ldnew->_debugstatus.debugging = false;
     setPrologRunMode_LD(ldnew, RUN_MODE_NORMAL);
     info->debug = false;
   }
@@ -6973,6 +7116,7 @@ GCmain(void *closure)
   attrs.alias = "gc";
   attrs.flags = ( PL_THREAD_NO_DEBUG|
 		  PL_THREAD_NOT_DETACHED );
+  attrs.thread_class = "system";
   set_os_thread_name_from_charp("gc");
 
   if ( PL_thread_attach_engine(&attrs) > 0 )
@@ -8093,6 +8237,11 @@ PL_get_thread_alias(int tid, atom_t *alias)
   return true;
 }
 
+static
+PRED_IMPL("debug_reset_from_class", 0, debug_reset_from_class, 0)
+{ return true;
+}
+
 #endif  /*O_PLMT*/
 
 int
@@ -8581,7 +8730,6 @@ BeginPredDefs(thread)
 #endif
 
 #ifdef O_PLMT
-  PRED_DEF("thread_alias",           1, thread_alias,	       0)
   PRED_DEF("set_thread",             2, set_thread,            0)
   PRED_DEF("thread_detach",	     1,	thread_detach,	       PL_FA_ISO)
   PRED_DEF("thread_join",	     2,	thread_join,	       0)
@@ -8622,5 +8770,8 @@ BeginPredDefs(thread)
   PRED_DEF("$gc_wait",               1, gc_wait,               0)
   PRED_DEF("$gc_clear",              1, gc_clear,              0)
   PRED_DEF("$gc_stop",               0, gc_stop,               0)
+
+  PRED_DEF("$debug_thread_class",    4, debug_thread_class,    0)
+  PRED_DEF("debug_reset_from_class", 0, debug_reset_from_class,0)
 #endif
 EndPredDefs

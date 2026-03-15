@@ -1,9 +1,9 @@
 /*  Part of SWI-Prolog
 
     Author:        Jan Wielemaker
-    E-mail:        J.Wielemaker@vu.nl
-    WWW:           http://www.swi-prolog.org
-    Copyright (c)  1997-2025, University of Amsterdam
+    E-mail:        jan@swi-prolog.org
+    WWW:           https://www.swi-prolog.org
+    Copyright (c)  1997-2026, University of Amsterdam
                               VU University Amsterdam
                               CWI, Amsterdam
                               SWI-Prolog Solutions b.v.
@@ -520,12 +520,6 @@ swi_message(conditional_compilation_error(no_if, What)) -->
     [ ':- ~w without :- if'-[What] ].
 swi_message(duplicate_key(Key)) -->
     [ 'Duplicate key: ~p'-[Key] ].
-swi_message(initialization_error(failed, Goal, File:Line)) -->
-    !,
-    [ url(File:Line), ': ~p: false'-[Goal] ].
-swi_message(initialization_error(Error, Goal, File:Line)) -->
-    [ url(File:Line), ': ~p '-[Goal] ],
-    translate_message(Error).
 swi_message(determinism_error(PI, det, Found, property)) -->
     (   { '$pi_head'(user:PI, Head),
           predicate_property(Head, det)
@@ -743,6 +737,14 @@ prolog_message(initialization_failure(Goal, _)) -->
 prolog_message(initialization_exception(E)) -->
     [ 'Prolog initialisation failed:', nl ],
     translate_message(E).
+prolog_message(initialization(halt(Status), Goal, File:Line)) -->
+    [ url(File:Line), ': '], goal(Goal), [nl,
+      '  Initialization goal called ', ansi(code, '~p', [halt(Status)]),
+      '.', nl,
+      '  The program entry point should be called using ',
+      ansi(code, 'initialization/2', []), '.', nl,
+      '  Consider using ', ansi(code, 'library(main)', []), '.'
+    ].
 prolog_message(init_goal_syntax(Error, Text)) -->
     !,
     [ '-g ~w: '-[Text] ],
@@ -948,15 +950,16 @@ load_module(Module) -->
 
 goal_to_predicate_indicator(Goal, PI) :-
     strip_module(Goal, Module, Head),
-    callable_name_arity(Head, Name, Arity),
-    user_predicate_indicator(Module:Name/Arity, PI).
+    '$pi_head'(PI0, Module:Head),
+    (   current_predicate(PI0),
+        predicate_property(Module:Head, non_terminal)
+    ->  dcg_pi(PI0, PI)
+    ;   PI = PI0
+    ),
+    user_predicate_indicator(PI, PI).
 
-callable_name_arity(Goal, Name, Arity) :-
-    compound(Goal),
-    !,
-    compound_name_arity(Goal, Name, Arity).
-callable_name_arity(Goal, Goal, 0) :-
-    atom(Goal).
+dcg_pi(Module:Name/Arity, Module:Name//DCGArity) :-
+    DCGArity is Arity-2.
 
 user_predicate_indicator(Module:PI, PI) :-
     hidden_module(Module),
@@ -1630,8 +1633,9 @@ prolog_message(trace_mode(OnOff)) -->
     [ 'Trace mode switched to ~w'-[OnOff] ].
 prolog_message(debug_mode(OnOff)) -->
     [ 'Debug mode switched to ~w'-[OnOff] ].
-prolog_message(debugging(OnOff)) -->
-    [ 'Debug mode is ~w'-[OnOff] ].
+prolog_message(debugging(OnOff, Threads)) -->
+    [ 'Debug mode is ~w'-[OnOff] ],
+    debugging_threads(Threads).
 prolog_message(spying([])) -->
     !,
     [ 'No spy points' ].
@@ -1666,7 +1670,7 @@ goal_predicate(Head) -->
 goal_predicate(Head) -->
     { goal_to_predicate_indicator(Head, PI)
     },
-    [ '~p'-[PI] ].
+    [ ansi(code, '~p', [PI]) ].
 
 
 predicate_list([]) -->                  % TBD: Share with dwim, etc.
@@ -1680,6 +1684,22 @@ tracing_list([]) -->
 tracing_list([trace(Head, Ports)|T]) -->
     translate_message(trace(Head, Ports)),
     tracing_list(T).
+
+debugging_threads([]) -->
+    [].
+debugging_threads(ThreadsByClass) -->
+    [ nl, 'Threads in the following classes run in debug mode:', nl],
+    list_threads_by_class(ThreadsByClass).
+
+list_threads_by_class([]) -->
+    [].
+list_threads_by_class([H|T]) -->
+    list_thread_class(H),
+    list_threads_by_class(T).
+
+list_thread_class(Class-Threads) -->
+    { length(Threads, Count) },
+    [ '    Class ', ansi(code, '~p', [Class]), ': ~D threads'-[Count] ].
 
 % frame(+Frame, +Choice, +Port, +PC) - Print for the debugger.
 prolog_message(frame(Frame, _Choice, backtrace, _PC)) -->

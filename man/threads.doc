@@ -127,6 +127,10 @@ goal, the thread prints a message using print_message/2.  If such
 termination is considered normal, the code must be wrapped using
 ignore/1 and/or catch/3 to ensure successful completion.
 
+    \termitem{class}{+Atom}
+Register the thread as belonging to the given class.  This is
+used by the debugger to control \jargon{debug mode}.
+
     \termitem{inherit_from}{+ThreadId}
 Inherit defaults from the given \arg{ThreadId} instead of the calling
 thread. This option was added to ensure that the
@@ -215,19 +219,23 @@ signalling threads blocked in thread_join/2 using thread_signal/2.
 
     \predicate{set_thread}{2}{+Thread, +Property}
 Set a property for \arg{Thread}.  The currently defined properties are
-below.  Future versions of this predicate will absorb predicates such
-as thread_alias/1.
+below.
 
     \begin{description}
+    \termitem{alias}{+Atom}
+    Set the alias name of the thread. An error is raised if \arg{Thread}
+    already has an alias or \arg{Alias} is in use for a thread or message
+    queue.
     \termitem{debug}{+Bool}
-    Set the debug mode for \arg{Thread}.  See also thread_create/3 and
-    thread_property/2.
+    Set whether \arg{Thread} can be debugged. See also thread_create/3
+    and thread_property/2.
+    \termitem{debug_mode}{+Bool}
+    Set or clear the Prolog flag \prologflag{debug} in \arg{Thread}
+    \termitem{class}{+Atom}
+    Set the \jargon{class} of \arg{Thread}.  This may enable or disable
+    the debug mode of the thread depending on whether or not debug mode
+    is enabled for the specified thread class.
     \end{description}
-
-    \predicate{thread_alias}{1}{+Alias}
-Set the alias name of the calling thread to \arg{Alias}.  An error is
-raised if the calling thread already has an alias or \arg{Alias} is
-in use for a thread or message queue.
 
     \predicate{thread_detach}{1}{+Id}
 Switch thread into detached state (see \term{detached}{Bool} option at
@@ -319,7 +327,7 @@ exceptions using catch/3 is the only safe way to deal with
 thread-existence errors.
 
 These predicates are provided for diagnosis and monitoring tasks. See
-also \secref{thutil}, describing more high-level primitives.
+also \secref{threadutil}, describing more high-level primitives.
 
 
 \begin{description}
@@ -341,6 +349,12 @@ Defined properties are:
 	\termitem{debug}{Boolean}
 Whether the thread is a \jargon{debug} thread.   No-debug threads may be
 created using the \term{debug}{false} option of thread_create/3.
+
+	\termitem{debug_mode}{Boolean}
+Obtain the value of the Prolog flag \prologflag{debug} for the thread.
+
+	\termitem{class}{Atom}
+True when the thread's class is set to \arg{Atom}.  See thread_create/3.
 
 	\termitem{detached}{Boolean}
 Current detached status of the thread.
@@ -1169,108 +1183,7 @@ purposes.%
     \end{description}
 \end{description}
 
-
-\section{Thread support library(threadutil)}	\label{sec:thutil}
-
-This library defines a couple of useful predicates for demonstrating and
-debugging multithreaded applications. This library is certainly not
-complete.
-
-\begin{description}
-    \predicate{threads}{0}{}
-Lists all current threads and their status.
-
-    \predicate{join_threads}{0}{}
-Join all terminated threads. For normal applications,
-dealing with terminated threads must be part of the application logic,
-either detaching the thread before termination or making sure it will be
-joined. The predicate join_threads/0 is intended for interactive
-sessions to reclaim resources from threads that died unexpectedly
-during development.
-
-    \predicate{interactor}{0}{}
-Create a new console and run the Prolog top level in this new console.
-See also attach_console/0.  In the Windows version a new interactor
-can also be created from the {\sf Run/New thread} menu.
-\end{description}
-
-
-\subsection{Debugging threads}
-\label{sec:threaddebug}
-
-Support for debugging threads is still very limited. Debug and trace
-mode are flags that are local to each thread. Individual threads can be
-debugged either using the graphical debugger described in
-\secref{guitracer} (see tspy/1 and friends) or by attaching a console to
-the thread and running the traditional command line debugger (see
-attach_console/0).  When using the graphical debugger, the debugger
-must be \emph{loaded} from the main thread (for example using guitracer)
-before gtrace/0 can be called from a thread.
-
-
-\begin{description}
-    \predicate{attach_console}{0}{}
-If the current thread has no console attached yet, attach one and
-redirect the user streams (input, output, and error) to the new console
-window. On Unix systems the console is an \program{xterm} application.
-On Windows systems this requires the GUI version \program{swipl-win.exe}
-rather than the console-based \program{swipl.exe}.
-
-This predicate has a couple of useful applications.  One is to separate
-(debugging) I/O of different threads.  Another is to start debugging a
-thread that is running in the background.  If thread 10 is running, the
-following sequence starts the tracer on this thread:
-
-\begin{code}
-?- thread_signal(10, (attach_console, trace)).
-\end{code}
-
-    \predicate{tdebug}{1}{+ThreadId}
-Prepare \arg{ThreadId} for debugging using the graphical tracer.  This
-implies installing the tracer hooks in the thread and switching the
-thread to debug mode using debug/0.  The call is injected into the
-thread using thread_signal/2.  We refer to the documentation of this
-predicate for asynchronous interaction with threads.  New threads
-created inherit their debug mode from the thread that created them.
-
-    \predicate{tdebug}{0}{}
-Call tdebug/1 in all running threads.
-
-    \predicate{tnodebug}{1}{+ThreadId}
-Disable debugging thread \arg{ThreadId}.
-
-    \predicate{tnodebug}{0}{}
-Disable debugging in all threads.
-
-    \predicate{tspy}{2}{:Spec, +ThreadId}
-Set a spy point as spy/1 and enable the thread for debugging using
-tdebug/1.  Note that a spy point is a global flag on a predicate that
-is visible from all threads.  Spy points are honoured in all threads
-that are in debug mode and ignored in threads that are in nodebug
-mode.
-
-    \predicate{tspy}{1}{:Spec}
-Set a spy point as spy/1 and enable debugging in all threads using
-tdebug/0.  Note that removing spy points can be done using nospy/1.
-Disabling spy points in	a specific thread is achieved by tnodebug/1.
-\end{description}
-
-\subsection{Profiling threads}
-\label{sec:tprofile}
-
-In the current implementation, at most one thread can be profiled at
-any moment.  Any thread can call profile/1 to profile the execution
-of some part of its code.  The predicate tprofile/1 allows for profiling
-the execution of another thread until the user stops collecting profile
-data.
-
-\begin{description}
-    \predicate{tprofile}{1}{+ThreadId}
-Start collecting profile data in \arg{ThreadId} and ask the user to hit
-<return> to stop the profiler.  See \secref{profile} for details on the
-execution profiler.
-\end{description}
-
+\InputIfFileExists{lib/threadutil}{}{}
 
 \section{Multithreaded mixed C and Prolog applications}
 \label{sec:foreignthread}
@@ -1320,13 +1233,20 @@ Thread identifiers are normally returned from PL_thread_self().  Returns
 Creates a new Prolog engine in the calling thread. If the calling thread
 already has an engine the reference count of the engine is incremented.
 The \arg{attr} argument can be \const{NULL} to create a thread with
-default attributes.  Otherwise it is a pointer to a structure with
-the definition below. For any field with value `0', the default is used. The
+default attributes. Otherwise it is a pointer to a structure as defined
+below. The structure must be fully initialized, \emph{including} hidden
+fields. For any field with value `0', the default is used. The
 \const{cancel} field may be filled with a pointer to a function that is
-called when PL_cleanup() terminates the running Prolog engines. If this
-function is not present or returns \const{FALSE} pthread_cancel() is
-used.  The new thread inherits is properties from Prolog's \const{main}
-thread.  The \const{flags} field defines the following flags:
+called when PL_cleanup() terminates the running Prolog engines. The
+function is called with the thread id (see PL_thread_self()) as argument
+and must return \const{PL_THREAD_CANCEL_JOINED} if the thread was
+reclaimed successfully, \const{PL_THREAD_CANCEL_MUST_JOIN} if the thread
+as cancelled, but must still be joined or
+\const{PL_THREAD_CANCEL_FAILED} if the request cannot be honoured. If
+this function is not present or returns \const{PL_THREAD_CANCEL_FAILED}
+pthread_cancel() is used. The new thread inherits is properties from
+Prolog's \const{main} thread. The \const{flags} field defines the
+following flags:
 
 \begin{description}
     \termitem{PL_THREAD_NO_DEBUG}{}
@@ -1351,6 +1271,7 @@ typedef struct
   int	    (*cancel)(int thread);	/* cancel function */
   intptr_t  flags;			/* PL_THREAD_* flags */
   size_t    max_queue_size;		/* Max size of associated queue */
+  char *    thread_class;		/* Class property of the thread */
 } PL_thread_attr_t;
 \end{code}
 

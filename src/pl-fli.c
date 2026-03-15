@@ -5495,7 +5495,7 @@ PL_set_prolog_flag(const char *name, int type, ...)
 { GET_LD
   va_list args;
   int rval = true;
-  unsigned short flags = ((unsigned short)type & FF_MASK);
+  unsigned int flags = ((unsigned int)type & FF_MASK);
   fid_t fid;
   term_t av;
 
@@ -5631,7 +5631,7 @@ PL_action(int action, ...)
       rval = (bool)pl_trace();
       break;
     case PL_ACTION_DEBUG:
-      debugmode(DBG_ALL, NULL);
+      debugmode(NULL, true, NULL, DBG_ALL);
       break;
     case PL_ACTION_BACKTRACE:
 #ifdef O_DEBUGGER

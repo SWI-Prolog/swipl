@@ -133,6 +133,7 @@ typedef struct _PL_thread_info_t
   record_t	    goal;		/* Goal to start thread */
   record_t	    return_value;	/* Value (term) returned */
   atom_t	    symbol;		/* thread_handle symbol */
+  atom_t	    class;		/* Class of thread */
   struct _PL_thread_info_t *next_free;	/* Next in free list */
   struct
   { double cputime;			/* Final CPU time */
@@ -327,6 +328,13 @@ countingMutexUnlock(counting_mutex *cm)
 
 #define LOCKMODULE(module)	countingMutexLock((module)->mutex)
 #define UNLOCKMODULE(module)	countingMutexUnlock((module)->mutex)
+
+/* Intended for assertions */
+static inline bool
+holdsLock(int id)
+{ counting_mutex *lock = &_PL_mutexes[id];
+  return lock->lock_count > 0;
+}
 
 		 /*******************************
 		 *     CONDITION VARIABLES	*

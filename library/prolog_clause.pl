@@ -1,9 +1,9 @@
 /*  Part of SWI-Prolog
 
     Author:        Jan Wielemaker
-    E-mail:        J.Wielemaker@vu.nl
-    WWW:           http://www.swi-prolog.org
-    Copyright (c)  2005-2024, University of Amsterdam
+    E-mail:        jan@swi-prolog.org
+    WWW:           https://www.swi-prolog.org
+    Copyright (c)  2005-2026, University of Amsterdam
                               VU University Amsterdam
                               CWI, Amsterdam
                               SWI-Prolog Solutions b.v.
@@ -43,6 +43,7 @@
             predicate_name/2,           % +Head, -Name
             clause_name/2               % +ClauseRef, -Name
           ]).
+:- encoding(utf8).
 :- use_module(library(debug),[debugging/1,debug/3]).
 :- autoload(library(listing),[portray_clause/1]).
 :- autoload(library(lists),[append/3]).
@@ -89,9 +90,9 @@ clause_info/4 as below can be slow.
 %   variable allocation in a stack-frame.   See  make_varnames/5 for
 %   details.
 %
-%   Note that positions are  _|character   positions|_,  i.e., _not_
-%   bytes. Line endings count as a   single character, regardless of
-%   whether the actual ending is =|\n|= or =|\r\n|_.
+%   Note that positions are _character   positions_,  i.e., _not_ bytes.
+%   Line endings count as a single  character, regardless of whether the
+%   actual ending is ``\n`` or ``\r\n``.
 %
 %   Defined options are:
 %
@@ -179,6 +180,9 @@ unify_term(X, Y) :-
 unify_term(_, Y) :-
     Y == '...',
     !.                          % elipses left by max_depth
+unify_term(_, Y) :-
+    Y == '…',
+    !.                          % Unicode elipses left by max_depth
 unify_term(_:X, Y) :-
     unify_term(X, Y),
     !.
