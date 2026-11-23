@@ -52,6 +52,7 @@
 #include "pl-fli.h"
 #include "pl-gc.h"
 #include "pl-funct.h"
+#include "pl-attvar.h"
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 General  handling  of  procedures:  creation;  adding/removing  clauses;
@@ -939,8 +940,8 @@ destroyDefinition(Definition def)
 
     LOCKDEF(def);
     deleteIndexesDefinition(def);
-    UNLOCKDEF(def);
     removeClausesPredicate(def, 0, false);
+    UNLOCKDEF(def);
     if ( GD->halt.cleaning != CLN_DATA )
     { registerDirtyDefinition(def);
       DEBUG(MSG_PRED_COUNT, Sdprintf("Erased %s at\n", predicateName(def), def));
@@ -1018,6 +1019,8 @@ unallocDefinition(Definition def)
     freeHeap(def->tabling, sizeof(*def->tabling));
   if ( def->impl.any.args )
     freeHeap(def->impl.any.args, sizeof(arg_info)*def->functor->arity);
+  if ( def->erased_args )
+    freeHeap(def->erased_args, sizeof(arg_info)*def->functor->arity);
   if ( def->events )
     destroy_event_list(&def->events);
   freeCodesDefinition(def, false);
@@ -1390,7 +1393,8 @@ various possible format or representation errors.  ISO compliant.
 
 static bool
 get_arity(term_t t, int extra, int maxarity, int *arity)
-{ int a;
+{ GET_LD
+  int a;
 
   if ( !PL_get_integer_ex(t, &a) )
     fail;
@@ -2388,15 +2392,17 @@ assertDefinition_(DECL_LD Definition def, Clause clause, ClauseRef where,
   if ( proc && unlikely(!(LOAD_SEQ_CST(proc->flags)&PROC_PINNED)) )
     unvolatileProcedure(proc);
   acquire_def(def);
+  waitIndexFills(def);
   if ( !def->impl.clauses.last_clause )
-  { def->impl.clauses.first_clause = def->impl.clauses.last_clause = cref;
+  { def->impl.clauses.last_clause = cref;
+    STORE_RELEASE(def->impl.clauses.first_clause, cref);
   } else if ( where == CL_START || where == def->impl.clauses.first_clause )
   { cref->next = def->impl.clauses.first_clause;
-    def->impl.clauses.first_clause = cref;
+    STORE_RELEASE(def->impl.clauses.first_clause, cref);
   } else if ( where == CL_END )
   { ClauseRef last = def->impl.clauses.last_clause;
 
-    last->next = cref;
+    STORE_RELEASE(last->next, cref);
     def->impl.clauses.last_clause = cref;
   } else				/* insert before */
   { ClauseRef cr;
@@ -2404,7 +2410,7 @@ assertDefinition_(DECL_LD Definition def, Clause clause, ClauseRef where,
     for(cr = def->impl.clauses.first_clause; cr; cr = cr->next)
     { if ( cr->next == where )
       { cref->next = where;
-	cr->next = cref;
+	STORE_RELEASE(cr->next, cref);
 	break;
       }
     }
@@ -2435,10 +2441,13 @@ assertDefinition_(DECL_LD Definition def, Clause clause, ClauseRef where,
       goto error;
     }
   } else
-  { PL_LOCK(L_GENERATION);
-    clause->generation.created = created = ++GD->_generation;
+  { PL_LOCK(L_GENERATION);		/* as retract_clause(): stamp, */
+    created = GD->_generation+1;	/* then publish the generation */
+    clause->generation.created = created;
     if ( isoff(clause, CL_ERASED) )	/* See (***) */
       clause->generation.erased  = max_generation(def);
+    STORE_RELEASE(GD->_generation, created);
+
     PL_UNLOCK(L_GENERATION);
   }
 					/* clause is visible; see (**) */
@@ -2538,6 +2547,28 @@ abolishProcedure(Procedure proc, Module module)
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+`def->last_erased` is the latest generation at which a clause of `def`
+was erased.  A goal of this generation or later sees no erased clause.
+A goal that finds no clauses that are not erased uses this to decide
+that it has no clauses at all, see no_visible_clause() in pl-index.c.
+Therefore the functions that erase a clause call setLastErased() while
+they hold the predicate lock and before they update the clause counts
+of the predicate and its indexes.  They increment the number of erased
+clauses before they decrement the number of clauses, with a release
+barrier in between, so a goal that reads the decremented number of
+clauses also reads the erased clauses and `def->last_erased`.  A clause
+that is erased inside a transaction is not included: it was created in
+this transaction and goals outside the transaction cannot see it.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+static inline void
+setLastErased(Definition def, gen_t egen)
+{ if ( egen < GEN_MAX && egen > def->last_erased )
+    def->last_erased = egen;
+}
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Remove (mark for  deletion)  all  clauses   that  come  from  the  given
 source-file or any sourcefile. Note   that thread-local predicates don't
 have clauses from files, so we don't   need to bother. Returns number of
@@ -2546,6 +2577,15 @@ clauses that has been deleted.
 This is called for (re)consult and abolish/1.
 
 MT: Caller must hold L_PREDICATE
+
+(*) The supervisors of static predicates with one or two clauses
+(S_TRUSTME, S_LIST) embed their clauses and run them without checking
+whether they are visible.  A goal of a generation in which one of these
+clauses is erased must not run it.  Therefore, the supervisor is reset
+to S_VIRGIN before the generation that erases them is published: a goal
+in that generation, which reads DEF->codes after reading the generation
+(see setGenerationFrame()), finds S_VIRGIN and creates a supervisor
+without them.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 size_t
@@ -2558,9 +2598,13 @@ removeClausesPredicate(Definition def, size_t sfindex, int fromfile)
 
   if ( ison(def, P_THREAD_LOCAL) )
     return 0;
+					/* before goals can see the erasure */
+  if ( isoff(def, P_DYNAMIC) && def->impl.clauses.number_of_clauses )
+    registerDirtyDefinition(def);
 
   if ( GD->halt.cleaning != CLN_DATA )		/* normal operation */
-  { PL_LOCK(L_GENERATION);
+  { waitIndexFills(def);
+    PL_LOCK(L_GENERATION);
     update = global_generation()+1;
     acquire_def(def);
     for(c = def->impl.clauses.first_clause; c; c = next)
@@ -2575,10 +2619,12 @@ removeClausesPredicate(Definition def, size_t sfindex, int fromfile)
 #ifdef O_LOGICAL_UPDATE
 	cl->generation.erased = update;
 #endif
+	setLastErased(def, update);
 	deleted++;
 	memory += sizeofClause(cl->code_size) + SIZEOF_CREF_CLAUSE;
-	def->impl.clauses.number_of_clauses--;
 	def->impl.clauses.erased_clauses++;
+	MEMORY_RELEASE();		/* see setLastErased() */
+	def->impl.clauses.number_of_clauses--;
 	if ( isoff(cl, UNIT_CLAUSE) )
 	  def->impl.clauses.number_of_rules--;
 	deleteActiveClauseFromIndexes(def, cl);
@@ -2586,6 +2632,9 @@ removeClausesPredicate(Definition def, size_t sfindex, int fromfile)
       }
     }
     release_def(def);
+    if ( deleted && isoff(def, P_DYNAMIC|P_LOCKED_SUPERVISOR) )
+      freeCodesDefinition(def, true);	/* see (*) */
+    MEMORY_RELEASE();
     GD->_generation = update;
     PL_UNLOCK(L_GENERATION);
 
@@ -2665,10 +2714,13 @@ retract_clause(DECL_LD Clause clause, gen_t generation)
   }
 
   DEBUG(CHK_SECURE, checkDefinition(def));
+  waitIndexFills(def);
   set(clause, CL_ERASED);
+  setLastErased(def, clause->generation.erased);
   deleteActiveClauseFromIndexes(def, clause); /* just updates "dirtyness" */
-  def->impl.clauses.number_of_clauses--;
   def->impl.clauses.erased_clauses++;
+  MEMORY_RELEASE();			/* see setLastErased() */
+  def->impl.clauses.number_of_clauses--;
   if ( isoff(clause, UNIT_CLAUSE) )
     def->impl.clauses.number_of_rules--;
   DEBUG(CHK_SECURE, checkDefinition(def));
@@ -2884,6 +2936,7 @@ cleanDefinition(Definition def, DirtyDefInfo ddi, gen_t start,
     }
     if ( removed )
     { LOCKDEF(def);
+      waitIndexFills(def);
       cleanClauseIndexes(def, &def->impl.clauses, ddi, start, tr_starts);
       UNLOCKDEF(def);
     }
@@ -2930,7 +2983,10 @@ reconsultFinalizePredicate(DECL_LD sf_reload *rl, Definition def, p_reload *r)
     size_t deleted = 0;
     size_t added   = 0;
     size_t memory  = 0;
+    bool was_dirty;
 
+    LOCKDEF(def);
+    waitIndexFills(def);
     PL_LOCK(L_GENERATION);
     update = global_generation()+1;
     acquire_def(def);
@@ -2940,10 +2996,12 @@ reconsultFinalizePredicate(DECL_LD sf_reload *rl, Definition def, p_reload *r)
       if ( cl->generation.erased == rl->reload_gen && isoff(cl, CL_ERASED) )
       { set(cl, CL_ERASED);
 	cl->generation.erased = update;
+	setLastErased(def, update);
 	deleted++;
 	memory += sizeofClause(cl->code_size) + SIZEOF_CREF_CLAUSE;
-	def->impl.clauses.number_of_clauses--;
 	def->impl.clauses.erased_clauses++;
+	MEMORY_RELEASE();		/* see setLastErased() */
+	def->impl.clauses.number_of_clauses--;
 	if ( isoff(cl, UNIT_CLAUSE) )
 	  def->impl.clauses.number_of_rules--;
 	deleteActiveClauseFromIndexes(def, cl);
@@ -2956,8 +3014,18 @@ reconsultFinalizePredicate(DECL_LD sf_reload *rl, Definition def, p_reload *r)
       }
     }
     release_def(def);
+    if ( deleted && isoff(def, P_DYNAMIC|P_LOCKED_SUPERVISOR) )
+      freeCodesDefinition(def, true);	/* see removeClausesPredicate() */
+    MEMORY_RELEASE();
     GD->_generation = update;
     PL_UNLOCK(L_GENERATION);
+    was_dirty = ison(def, P_DIRTYREG);
+    if ( added || deleted )		/* see maybeUnregisterDirtyDefinition() */
+    { def->last_modified = update;
+      registerDirtyDefinition(def);
+    }
+    DEBUG(CHK_SECURE, checkDefinition(def));
+    UNLOCKDEF(def);
 
     DEBUG(MSG_RECONSULT_CLAUSE,
 	  Sdprintf("%s: added %ld, deleted %ld clauses "
@@ -2976,14 +3044,12 @@ reconsultFinalizePredicate(DECL_LD sf_reload *rl, Definition def, p_reload *r)
     { ATOMIC_SUB(&def->module->code_size, memory);
       ATOMIC_ADD(&GD->clauses.erased_size, memory);
       ATOMIC_ADD(&GD->clauses.erased, deleted);
-      if( ison(def, P_DIRTYREG) )
+      if ( was_dirty )
 	ATOMIC_SUB(&GD->clauses.dirty, deleted);
-
-      registerDirtyDefinition(def);
     }
+    if ( added && !deleted && !isSignalledGCThread(SIG_CLAUSE_GC) )
+      signalGCThread(SIG_CLAUSE_GC);	/* to unregister it soon */
     clear(def, P_MODIFIED);
-
-    DEBUG(CHK_SECURE, checkDefinition(def));
   }
 }
 
@@ -3564,6 +3630,11 @@ ddi_oldest_generation(DirtyDefInfo ddi)
 }
 
 #ifdef O_DEBUG
+/* Several threads may protect the same clause reference, so the count
+   is updated under a lock.  L_CGCGEN is only held for short updates
+   that call nothing else.
+*/
+
 static TablePW protectedCRefs = NULL;
 
 static void
@@ -3571,8 +3642,9 @@ protectCRef(ClauseRef cref)
 { GET_LD
   table_value_t k;
 
-  if ( !protectedCRefs )		/* may waste a table.  Only O_DEBUG */
-    COMPARE_AND_SWAP_PTR(&protectedCRefs, NULL, newHTablePW(64));
+  PL_LOCK(L_CGCGEN);
+  if ( !protectedCRefs )
+    protectedCRefs = newHTablePW(64);
 
   if ( (k=lookupHTablePW(protectedCRefs, cref)) )
   { k = k+1;
@@ -3582,6 +3654,7 @@ protectCRef(ClauseRef cref)
   { addNewHTablePW(protectedCRefs, cref, 1);
     // Sdprintf("Protect %p\n", cref);
   }
+  PL_UNLOCK(L_CGCGEN);
 }
 
 static void
@@ -3589,6 +3662,7 @@ unprotectCRef(ClauseRef cref)
 { GET_LD
   table_value_t k;
 
+  PL_LOCK(L_CGCGEN);
   if ( (k=lookupHTablePW(protectedCRefs, cref)) )
   { k = k-1;
     if ( k )
@@ -3601,14 +3675,20 @@ unprotectCRef(ClauseRef cref)
   } else
   { assert(0);
   }
+  PL_UNLOCK(L_CGCGEN);
 }
 
 static bool
 isProtectedCRef(ClauseRef cref)
 { GET_LD
+  int rc;
 
-  return ( protectedCRefs &&
-	   lookupHTablePW(protectedCRefs, cref) );
+  PL_LOCK(L_CGCGEN);
+  rc = ( protectedCRefs &&
+	 lookupHTablePW(protectedCRefs, cref) );
+  PL_UNLOCK(L_CGCGEN);
+
+  return rc;
 }
 #endif /*O_DEBUG*/
 
@@ -3663,15 +3743,34 @@ may leave this predicate as non-dirty while it is dirty.
 				def->impl.clauses.erased_clauses++
 				registerDirtyDefinition()
   unregisterDirtyDefinition()
+
+The generation test is repeated under the lock for the same reason: a
+reload of a static predicate sets last_modified and registers the
+predicate under the lock after it published the new clauses, so we
+either see the new last_modified, or we unregister before the reload
+registers it again, while it is still reloading.  Unregistering it after
+the reload while a goal runs at an older generation would let that goal
+skip the generation tests and see the new clauses (see
+is_clean_definition()).  A predicate that was registered after we reset
+the marks (ddi_reset()) is not marked in this run: its goals are not
+known, so it stays registered until the next run.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
+static bool
+no_older_goal(Definition def, DirtyDefInfo ddi)
+{ return ( ison(ddi, DDI_MARKING) &&
+	   ddi_oldest_generation(ddi) > def->last_modified );
+}
+
 static void
-maybeUnregisterDirtyDefinition(Definition def)
+maybeUnregisterDirtyDefinition(Definition def, DirtyDefInfo ddi)
 { if ( ison(def, P_DIRTYREG) &&
-       def->impl.clauses.erased_clauses == 0 )
+       def->impl.clauses.erased_clauses == 0 &&
+       ( ison(def, P_DYNAMIC) || no_older_goal(def, ddi) ) )
   { LOCKDEF(def);			/* See (*) */
     if ( ison(def, P_DIRTYREG) &&
-	 def->impl.clauses.erased_clauses == 0 )
+	 def->impl.clauses.erased_clauses == 0 &&
+	 ( ison(def, P_DYNAMIC) || no_older_goal(def, ddi) ) )
       unregisterDirtyDefinition(def);
     UNLOCKDEF(def);
   }
@@ -4135,6 +4234,7 @@ pl_garbage_collect_clauses(void)
     int verbose = truePrologFlag(PLFLAG_TRACE_GC) && !LD->in_print_message;
     tmp_buffer tr_starts;
 
+    MEMORY_BARRIER();			/* see setTransactionStart() */
     if ( verbose )
     { if ( (rc=printMessage(ATOM_informational,
 			    PL_FUNCTOR_CHARS, "cgc", 1,
@@ -4190,7 +4290,7 @@ pl_garbage_collect_clauses(void)
 		       (int)def->impl.clauses.erased_clauses));
       }
 
-      maybeUnregisterDirtyDefinition(def);
+      maybeUnregisterDirtyDefinition(def, ddi);
     }
 
     discardBuffer(&tr_starts);
@@ -4557,15 +4657,18 @@ pl_require(term_t pred)
 typedef struct
 { Definition def;
   struct clause_choice chp;
-  int allocated;
+  int flags;			/* RETRACT_* */
 } retract_context;
+
+#define RETRACT_ALLOCATED 0x1	/* by alloc_retract_context() */
+#define RETRACT_MOVED	  0x2	/* a second access object, see (*) */
 
 static retract_context *
 alloc_retract_context(retract_context *ctx0)
 { retract_context *ctx = allocForeignState(sizeof(*ctx));
 
   *ctx = *ctx0;
-  ctx->allocated = true;
+  ctx->flags |= RETRACT_ALLOCATED;
 
   return ctx;
 }
@@ -4576,9 +4679,70 @@ free_retract_context(DECL_LD retract_context *ctx)
 { popPredicateAccess(ctx->def);
   leaveDefinition(ctx->def);
 
-  if ( ctx->allocated )
-    freeForeignState(ctx, sizeof(*ctx));
+  if ( ctx->flags )
+  { if ( (ctx->flags&RETRACT_MOVED) )
+      popPredicateAccess(ctx->def);
+    if ( (ctx->flags&RETRACT_ALLOCATED) )
+      freeForeignState(ctx, sizeof(*ctx));
+  }
 }
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Unifying a clause with a pattern whose variables carry constraints only
+schedules the constraint goals.  A clause is removed only if it unifies
+with the pattern, constraints included.
+
+retract/1 does not run these goals itself:  they are normal goals that
+may leave choicepoints.   Instead, retract_after_wakeup() appends
+'$retract'(ClauseRef, false) to the scheduled goals.   The clause is
+erased by uhook/3 in boot/attvar.pl, after the constraint goals
+succeeded.  Backtracking into these goals finds the clause erased by us
+and succeeds again.  If they fail, the clause is not erased and
+retract/1 continues with the next clause.  This is compatible with
+SICStus Prolog.
+
+retractall/1 is deterministic and uses the constraints as a filter.
+CONSTRAINTS_HOLD() runs the goals with the implicit cut of foreignWakeup()
+before the clause is erased.  Without pending goals it is a single test.
+clause_constraints_run() fails if the goals fail or raise; an exception
+is left pending.  The goals may shift the stacks, as decompile() may
+already, so the head arguments are taken again afterwards
+(head_arguments()).
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+#define WAKEUP_PENDING() \
+	( unlikely(LD->alerted & ALERT_WAKEUP) && *valTermRef(LD->attvar.head) )
+#define retract_after_wakeup(clause) LDFUNC(retract_after_wakeup, clause)
+
+static COLD bool
+retract_after_wakeup(DECL_LD Clause clause)
+{ term_t ref, state;
+
+  return ( (ref=PL_new_term_ref()) &&
+	   (state=PL_new_term_ref()) &&
+	   PL_unify_clref(ref, clause) &&
+	   PL_unify_term(state,
+			 PL_FUNCTOR, FUNCTOR_dretract2,
+			   PL_TERM, ref,
+			   PL_ATOM, ATOM_false) &&
+	   appendWakeupHook(ATOM_dretract, state) );
+}
+
+#define CONSTRAINTS_HOLD(_) \
+	( !WAKEUP_PENDING() || clause_constraints_run() )
+#define clause_constraints_run(_) LDFUNC(clause_constraints_run, _)
+
+static COLD bool
+clause_constraints_run(DECL_LD)
+{ term_t ex = PL_new_term_ref();
+  bool rc = ex && foreignWakeup(ex);
+
+  if ( !rc && ex && !PL_is_variable(ex) )
+    PL_raise_exception(ex);
+
+  return rc && !PL_exception(0);
+}
+
 
 /* head_arguments() returns a pointer to the arguments of the clause
    head `head` or NULL if the head is an atom.  The pointer is only
@@ -4595,11 +4759,122 @@ head_arguments(DECL_LD term_t head)
 }
 
 
-/* (*) If retract/1 lost the race for the first matching clause, it
-   continues at the current generation.  Clause GC protects the clauses
-   visible at the generation of our predicate access, so we must update
-   that as well.  Otherwise clause GC may reclaim clauses that we see.
-*/
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+(*) Clause GC keeps what is visible at the generations it marks: those of
+the frames running a predicate and those of the predicate access objects
+(pushPredicateAccessObj()).  The frame of retract/1 runs retract/1, so
+only its access objects protect what retract/1 uses: the clause it
+erases, and ctx->chp, the next candidate, which it keeps until it is
+called again.  ctx->chp may point into a clause index that a resize
+replaced since; the old index is freed once every generation clause GC
+marks is after its replacement (free_lingering() in cleanDefinition()).
+`dref` therefore keeps the generation at which firstClause() chose the
+index until retract/1 is done.
+
+If another thread erased the first candidate (or an update event refused
+to erase it), retract/1 continues at the current generation.  The clauses
+that nextClause() then selects are known to be visible only at that
+generation, so a second access object publishes it first and stays until
+retract/1 is done.  If this happens again, a third access object
+publishes the newer generation, the second takes it and the third goes.
+Clause GC marks the access objects of another thread under that thread's
+scan_lock, so this last step holds it: a scan sees the newer generation
+in one of the two.
+
+At the current generation, the candidates are the clauses after the one
+retract/1 lost, and ctx->chp does not suffice to find them: it was chosen
+at the older generation, so it skips a clause that only the current
+generation sees, is NULL if the lost clause was the last candidate, and
+may be in a clause index that was replaced or deleted since, which lacks
+the clauses added after that.  retract/1 therefore walks again from
+firstClause() to the lost clause, at the generation at which it found it,
+and continues from that clause at the current generation.  firstClause()
+only uses the current indexes, which receive every new clause.  If this
+walk does not reach the lost clause (the index it chose was filled after
+the clause was erased, or the predicate has no clauses left that are not
+erased), retract/1 continues in the clause list, which has every clause.
+The lost clause is visible at a generation that an access object
+publishes, so its clause reference stays linked until nextClause() has
+moved on.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+/* Position ctx->chp at `lost`, which is visible at the generation of the
+ * environment frame, in a walk that has every clause added since.
+ */
+
+#define retract_find_lost(ctx, lost, argv) \
+	LDFUNC(retract_find_lost, ctx, lost, argv)
+
+static void
+retract_find_lost(DECL_LD retract_context *ctx, Clause lost, Word argv)
+{ Definition def = ctx->def;
+  struct clause_choice chp;
+  ClauseRef c;
+
+  for(c = firstClause(argv, environment_frame, def, &chp);
+      c;
+      c = nextClause(&chp, argv, environment_frame, def))
+  { if ( c->value.clause == lost )
+    { ctx->chp.cref = c;
+      ctx->chp.key  = chp.key;
+      return;
+    }
+  }
+
+  acquire_def(def);
+  for(c = def->impl.clauses.first_clause; c; c = c->next)
+  { if ( c->value.clause == lost )
+    { ctx->chp.cref = c;
+      ctx->chp.key  = argv ? index_of_word(argv[def->impl.clauses.primary_index])
+			   : 0;
+      break;
+    }
+  }
+  release_def(def);
+}
+
+#define retract_move_generation(ctx, lost, head, fid) \
+	LDFUNC(retract_move_generation, ctx, lost, head, fid)
+
+#ifdef __GNUC__				/* keep its frame out of retract/1 */
+#define RETRACT_NOINLINE __attribute__((noinline))
+#else
+#define RETRACT_NOINLINE
+#endif
+
+static COLD RETRACT_NOINLINE ClauseRef
+retract_move_generation(DECL_LD retract_context *ctx, Clause lost,
+			term_t head, fid_t fid)
+{ definition_ref *moved = ( (ctx->flags&RETRACT_MOVED) ?
+			     findPredicateAccessObj(ctx->def) : NULL );
+  definition_ref *now = pushPredicateAccessObj(ctx->def);
+  ClauseRef cref;
+  Word argv;
+
+  if ( !now )
+    return NULL;			/* exception ends retract/1 */
+  PL_rewind_foreign_frame(fid);
+  argv = head_arguments(head);		/* decompile() may have shifted */
+  retract_find_lost(ctx, lost, argv);
+  setGenerationFrameVal(environment_frame, now->generation);
+  DEBUG(MSG_CGC_RETRACT,
+	Sdprintf("Retract: first clause deleted; set gen to %lld\n",
+		 generationFrame(environment_frame)));
+  cref = nextClause(&ctx->chp, argv, environment_frame, ctx->def);
+  if ( cref && cref->value.clause == lost )	/* an event refused to erase */
+    cref = nextClause(&ctx->chp, argv, environment_frame, ctx->def);
+  if ( moved )
+  { simpleMutexLock(&LD->thread.scan_lock);
+    moved->generation = now->generation;
+    popPredicateAccess(ctx->def);
+    simpleMutexUnlock(&LD->thread.scan_lock);
+  } else
+  { ctx->flags |= RETRACT_MOVED;
+  }
+
+  return cref;
+}
+
 
 static
 PRED_IMPL("retract", 1, retract,
@@ -4681,6 +4956,10 @@ PRED_IMPL("retract", 1, retract,
       enterDefinition(def);			/* reference the predicate */
       dref = pushPredicateAccessObj(def);
       releaseProcedureRef(proc);	/* def is now accessed */
+      if ( !dref )
+      { leaveDefinition(def);
+	return false;
+      }
       setGenerationFrameVal(environment_frame, dref->generation);
       cref = firstClause(argv, environment_frame, def, &ctxbuf.chp);
       DEBUG(MSG_CGC_RETRACT,
@@ -4695,7 +4974,7 @@ PRED_IMPL("retract", 1, retract,
 
       ctx = &ctxbuf;
       ctx->def = def;
-      ctx->allocated = 0;
+      ctx->flags = 0;
     } else
     { ctx  = CTX_PTR;
       DEBUG(MSG_CGC_RETRACT,
@@ -4716,8 +4995,17 @@ PRED_IMPL("retract", 1, retract,
 
       if ( (clause->flags&CLAUSE_SSU_FLAGS) == (flags&CLAUSE_SSU_FLAGS) &&
 	   decompile(clause, cl, 0) )
-      { if ( retractClauseDefinition(ctx->def, clause, true) ||
-	     CTX_CNTRL != FRG_FIRST_CALL )
+      { bool erased;
+
+	if ( WAKEUP_PENDING() )		/* erase after the constraints */
+	{ if ( !retract_after_wakeup(clause) )
+	    break;			/* exception */
+	  erased = true;
+	} else
+	{ erased = retractClauseDefinition(ctx->def, clause, true);
+	}
+
+	if ( erased || CTX_CNTRL != FRG_FIRST_CALL )
 	{ if ( !ctx->chp.cref )		/* deterministic last one */
 	  { free_retract_context(ctx);
 	    PL_close_foreign_frame(fid);
@@ -4735,14 +5023,12 @@ PRED_IMPL("retract", 1, retract,
 
 	  PL_close_foreign_frame(fid);
 	  ForeignRedoPtr(ctx);
-	} else				/* See (*) */
-	{ do
-	  { dref->generation = current_generation(ctx->def);
-	  } while ( dref->generation != current_generation(ctx->def) );
-	  setGenerationFrameVal(environment_frame, dref->generation);
-	  DEBUG(MSG_CGC_RETRACT,
-		Sdprintf("Retract: first clause deleted; set gen to %lld\n",
-			 generationFrame(environment_frame)));
+	} else if ( !PL_exception(0) )
+	{ /* The clause was not erased, usually because another thread
+	     erased it first: continue at the current generation.  See
+	     (*) above. */
+	  cref = retract_move_generation(ctx, clause, head, fid);
+	  continue;
 	}
       }
 
@@ -4872,7 +5158,8 @@ PRED_IMPL("retractall", 1, retractall, PL_FA_NONDETERMINISTIC|PL_FA_ISO)
     }
 
     while( cref )
-    { if ( decompileHead(cref->value.clause, thehead) )
+    { if ( decompileHead(cref->value.clause, thehead) &&
+	   CONSTRAINTS_HOLD() )
       { if ( !(rc=retractClauseDefinition(def, cref->value.clause, true)) )
 	{ if ( PL_exception(0) )
 	    break;

@@ -15,7 +15,7 @@ buildbin=false
 push=false
 pgpkey=266FF04C52056213BECDDDA04EF5383C7C11B85B
 program="$0"
-branch=stable
+branch=devel
 
 usage()
 { cat << EOM
@@ -189,7 +189,7 @@ if [ $push = true ]; then
   echo " - Pushing source package to PPA"
 
   ( cd build-ppa-tmp &&
-    dput ppa:swi-prolog/stable swi-prolog_${VERSION}_source.changes
+    dput ppa:swi-prolog/devel swi-prolog_${VERSION}_source.changes
   )
 fi
 

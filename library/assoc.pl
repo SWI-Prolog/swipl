@@ -197,11 +197,9 @@ gen_assoc_(Key, _,_,_,R, Val) :-
 %
 %   True if Key-Value is an association in Assoc.
 
-:- if(current_predicate('$btree_find_node'/5)).
+:- if(current_predicate('$btree_avl_get'/3)).
 get_assoc(Key, Tree, Val) :-
-    Tree \== t,
-    '$btree_find_node'(Key, Tree, 0x010405, Node, =),
-    arg(2, Node, Val).
+    '$btree_avl_get'(Key, Tree, Val).
 :- else.
 get_assoc(Key, t(K,V,_,L,R), Val) =>
     compare(Rel, Key, K),
@@ -357,8 +355,13 @@ min_assoc(t(K,V,_,L,_), _, _, Key, Val) :-
 %   Assoc is Assoc0, except that Key is  associated with Value. This can
 %   be used to insert and change associations.
 
+% '$btree_avl_put'/4 does the common case in C. It fails if it finds
+% anything it does not handle, which we leave to the Prolog definition.
 put_assoc(Key, A0, Value, A) :-
-    insert(A0, Key, Value, A, _).
+    (   '$btree_avl_put'(Key, A0, Value, A)
+    ->  true
+    ;   insert(A0, Key, Value, A, _)
+    ).
 
 insert(t, Key, Val, Assoc, Changed) =>
     Assoc = t(Key,Val,-,t,t),

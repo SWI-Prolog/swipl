@@ -8531,6 +8531,9 @@ localiseDefinition(DECL_LD Definition def)
   set(local, P_LOCALISED);
   local->impl.clauses.first_clause = NULL;
   local->impl.clauses.clause_indexes = NULL;
+  local->filling = 0;
+  local->last_erased = 0;
+  local->erased_args = NULL;
   ATOMIC_INC(&GD->statistics.predicates);
   ATOMIC_ADD(&local->module->code_size, sizeof(*local));
   DEBUG(MSG_PRED_COUNT, Sdprintf("Localise def[%d] %s at %p\n",
@@ -9144,6 +9147,35 @@ completes, while the reference to  chain_modules/1   is  popped when the
 enumeration completes.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
+/* Popping an access object that is not the latest moves the later ones
+ * down.  Clause GC reads the access objects of another thread under that
+ * thread's scan_lock (markAccessedPredicates()), so the move holds it.
+ */
+
+#define popPredicateAccessOutOfOrder(refs, def) \
+	LDFUNC(popPredicateAccessOutOfOrder, refs, def)
+
+static COLD void
+popPredicateAccessOutOfOrder(DECL_LD definition_refs *refs, Definition def)
+{ DEBUG(MSG_CGC_PRED_REF, Sdprintf("  Out or order!\n"));
+  for(size_t top = refs->top; top > 0; top-- )
+  { definition_ref *dref = def_ref(refs, top);
+
+    if ( dref->predicate == def )
+    { simpleMutexLock(&LD->thread.scan_lock);
+      for(; top < refs->top; top++)
+      { definition_ref *dr2 = def_ref(refs, top+1);
+
+	*dref = *dr2;
+	dref = dr2;
+      }
+      simpleMutexUnlock(&LD->thread.scan_lock);
+      return;
+    }
+  }
+  assert(0);
+}
+
 void
 popPredicateAccess(DECL_LD Definition def)
 { definition_refs *refs = &LD->predicate_references;
@@ -9157,27 +9189,27 @@ popPredicateAccess(DECL_LD Definition def)
   { dref->predicate  = NULL;
     dref->generation = 0;
   } else
-  { size_t top;
-
-    DEBUG(MSG_CGC_PRED_REF, Sdprintf("  Out or order!\n"));
-    for(top = refs->top; top > 0; top-- )
-    { dref = def_ref(refs, top);
-      if ( dref->predicate == def )
-      { for(; top < refs->top; top++)
-	{ definition_ref *dr2 = def_ref(refs, top+1);
-
-	  *dref = *dr2;
-	  dref = dr2;
-	}
-	goto out;
-      }
-    }
-    assert(0);
+  { popPredicateAccessOutOfOrder(refs, def);
   }
-out:
   leaveDefinition(def);			/* probably not needed in the end */
 
   refs->top--;
+}
+
+/* The topmost access object of `def` in this thread */
+
+definition_ref *
+findPredicateAccessObj(DECL_LD Definition def)
+{ definition_refs *refs = &LD->predicate_references;
+
+  for(size_t top = refs->top; top > 0; top--)
+  { definition_ref *dref = def_ref(refs, top);
+
+    if ( dref->predicate == def )
+      return dref;
+  }
+
+  return NULL;
 }
 
 size_t

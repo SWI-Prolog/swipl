@@ -95,6 +95,14 @@ test(add_clause, all(X == [a,b,c])) :-
     reload(add_clause, 1),
     reload(add_clause, 2),
     add_clause:p1(X).
+test(add_clause_running, Xs == [1,2]) :- % logical update view
+    reload(add_clause_running, 1),
+    findall(X, ( add_clause_running:p(X),
+                 (   X == 1
+                 ->  reload(add_clause_running, 2)
+                 ;   true
+                 )
+               ), Xs).
 test(del_clause, all(X == [a,c])) :-
     reload(del_clause, 1),
     reload(del_clause, 2),
@@ -114,6 +122,14 @@ test(del_clause_indexed, [P == [], Q == []]) :-
     reload(del_clause_indexed, 2),
     findall(x, del_clause_indexed:p(a), P),
     findall(x, del_clause_indexed:q([a]), Q).
+test(del_clause_meta) :-                        % the supervisor embeds
+    reload(del_clause_meta, 1),                 % the deleted clause
+    assertion(del_clause_meta:p([a])),
+    reload(del_clause_meta, 2),
+    assertion(\+ del_clause_meta:p([a])),
+    garbage_collect_clauses,
+    assertion(\+ del_clause_meta:p([a])),
+    assertion(del_clause_meta:p([])).
 test(replace_clause, all(X == [b])) :-
     reload(replace_clause, 1),
     reload(replace_clause, 2),

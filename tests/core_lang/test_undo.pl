@@ -54,6 +54,14 @@ test(undo_or) :-
         fail
     ;   \+ a(1)
     ).
+test(undo_or_other_clause) :-          % a/1 is not empty after the undo
+    assert(a(0), Ref0),
+    (   assert(a(1), Ref),
+        undo(erase(Ref)),
+        fail
+    ;   \+ a(1)
+    ),
+    erase(Ref0).
 test(clauses) :-
     t1.
 test(error, throws(x)) :-
@@ -70,7 +78,16 @@ test(error2) :-
     \+ a(3).
 test(cleanup, fail) :-                 % issue #1414
     \+ \+ once((undo(true), fail)).
-test(reclaimed, true(Left < 100)) :-    % undo goals were never reclaimed
+test(gc, Ran == [first,second]) :-       % GC merged the undo list trail
+    nb_setval(undo_ran, []),
+    (   undo(undo_ran(first)),
+        undo(undo_ran(second)),
+        garbage_collect,
+        fail
+    ;   nb_getval(undo_ran, Ran0),
+        msort(Ran0, Ran)
+    ).
+test(reclaimed, true(Left < 100)) :-   % undo goals were never reclaimed
     forall(between(1, 1000, _), (undo(true), fail ; true)),
     garbage_collect,
     garbage_collect_atoms,
@@ -84,6 +101,10 @@ undo_churn(N, Collected) :-
     forall(between(1, N, _), (undo(true), fail ; true)),
     '$local_atoms'(collected, C1),
     Collected is C1-C0.
+
+undo_ran(X) :-
+    nb_getval(undo_ran, L),
+    nb_setval(undo_ran, [X|L]).
 
 ok.
 

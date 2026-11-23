@@ -302,16 +302,14 @@ handy for it someone wants to add a data type to the system.
 #endif
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-The ia64 says setjmp()/longjmp() buffer must be aligned at 128 bits
+PL_open_query() allocates the queryFrame on the local stack, which is
+only word aligned.  The queryFrame has 64-bit members, so align it if
+these need more than word alignment.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-#ifndef JMPBUF_ALIGNMENT
-#ifdef __ia64__
-#define JMPBUF_ALIGNMENT 128
-#else
+#ifndef QUERY_FRAME_ALIGNMENT
 #if ALIGNOF_DOUBLE != ALIGNOF_VOIDP
-#define JMPBUF_ALIGNMENT ALIGNOF_DOUBLE
-#endif
+#define QUERY_FRAME_ALIGNMENT ALIGNOF_DOUBLE
 #endif
 #endif
 
@@ -404,6 +402,24 @@ typedef _sigset_t sigset_t;
 #define __USE_MINGW_SETJMP_NON_SEH 1
 #endif
 #include <setjmp.h>
+
+/* Non-local exits for PL_throw() and PL_next_solution().  Some systems
+ * (BSD, macOS) save and restore the signal mask in setjmp()/longjmp().
+ * These are system calls, which take a process-wide lock on macOS.  We
+ * never need this, so use sigsetjmp(env, 0) if available.  Code that
+ * jumps out of a signal handler must unblock the signal.  The buffers
+ * are C locals, so the compiler takes care of their alignment.
+ */
+#ifdef HAVE_SIGSETJMP
+typedef sigjmp_buf pl_jmp_buf;
+#define PL_SETJMP(env)		sigsetjmp(env, 0)
+#define PL_LONGJMP(env, val)	siglongjmp(env, val)
+#else
+typedef jmp_buf pl_jmp_buf;
+#define PL_SETJMP(env)		setjmp(env)
+#define PL_LONGJMP(env, val)	longjmp(env, val)
+#endif
+
 #ifdef ASSERT_H_REQUIRES_STDIO_H
 #include <stdio.h>
 #endif /*ASSERT_H_REQUIRES_STDIO_H*/
@@ -1821,10 +1837,13 @@ struct clause_index
   unsigned	 is_list : 1;		/* Index with lists */
   unsigned	 incomplete : 1;	/* Index is incomplete */
   unsigned	 invalid : 1;		/* Index is invalid */
-  unsigned	 good : 1;		/* Index is (near) perfect */
+  unsigned	 keeps_erased : 1;	/* Filled with the erased clauses */
+  unsigned	 skipped_tr : 1;	/* Skipped clause erased in transaction */
   iarg_t	 args[MAX_MULTI_INDEX];	/* Indexed arguments */
   iarg_t	 position[MAXINDEXDEPTH+1]; /* Deep index position */
   float		 speedup;		/* Estimated speedup */
+  gen_t		 skipped_erased;	/* Erased clauses not in the index */
+  int64_t	 good_from;		/* (Near) perfect for goals from gen */
   ClauseBucket	 entries;		/* chains holding the clauses */
 };
 
@@ -1849,9 +1868,12 @@ struct definition
   unsigned int  shared;			/* #procedures sharing this def */
   unsigned int  clause_refs;		/* 1 + #CL_DEF_REF clauses */
   bool		functor_ref;		/* Holds a counted functor reference */
+  unsigned int	filling;		/* #clause indexes being filled */
   Module	module;			/* module of the predicate */
   struct linger_list  *lingering;	/* Assocated lingering objects */
   gen_t		last_modified;		/* Generation I was last modified */
+  gen_t		last_erased;		/* Generation I last erased a clause */
+  arg_info     *erased_args;		/* Assessments of old goals */
   struct event_list  *events;		/* Forward update events */
   struct table_props *tabling;		/* Extended properties for tabling */
 #if defined(__SANITIZE_ADDRESS__)
@@ -1991,12 +2013,19 @@ cannot be store-forwarded from the narrower stores that wrote the data
 and stall until these have retired.  The empty asm keeps GCC from
 merging the moves into vector moves.  copyWordsScalarUp() allows `to` <
 `from` to overlap and copyWordsScalarDown() `to` > `from`.
+
+The copies access the data as `alias_word` because the structures copied
+contain pointers.  Without MAY_ALIAS, clang considers the stores through
+`word*` not to initialise the pointer fields and, at -Os, removes code that
+reads them as reading uninitialised memory.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+typedef word MAY_ALIAS alias_word;
 
 static inline void
 copyWordsScalarUp(void *to, const void *from, size_t n)
-{ word *t = to;
-  const word *f = from;
+{ alias_word *t = to;
+  const alias_word *f = from;
 
   for(size_t i=0; i<n; i++)
   { word w = f[i];
@@ -2007,8 +2036,8 @@ copyWordsScalarUp(void *to, const void *from, size_t n)
 
 static inline void
 copyWordsScalarDown(void *to, const void *from, size_t n)
-{ word *t = to;
-  const word *f = from;
+{ alias_word *t = to;
+  const alias_word *f = from;
 
   for(size_t i=n; i-- > 0; )
   { word w = f[i];
@@ -2045,7 +2074,7 @@ stack overflow.
 #define EXCEPTION_GUARDED(code, cleanup) \
 	{ exception_frame __throw_env; \
 	  __throw_env.parent = LD->exception.throw_environment; \
-	  if ( setjmp(__throw_env.exception_jmp_env) != 0 ) \
+	  if ( PL_SETJMP(__throw_env.exception_jmp_env) != 0 ) \
 	  { LD->exception.throw_environment = __throw_env.parent; \
 	    cleanup; \
 	  } else \
@@ -2063,7 +2092,7 @@ stack overflow.
 typedef struct exception_frame		/* PL_throw exception environments */
 { struct exception_frame * volatile parent;	/* parent frame */
   volatile int	  magic;			/* THROW_MAGIC */
-  jmp_buf	exception_jmp_env;	/* longjmp environment */
+  pl_jmp_buf	exception_jmp_env;	/* longjmp environment */
 } exception_frame;
 
 

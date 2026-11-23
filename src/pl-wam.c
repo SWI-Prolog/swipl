@@ -1863,7 +1863,10 @@ m_qualify_argument(DECL_LD LocalFrame fr, int arg)
 	  break;
 	p = ap;
 	if ( --depth == 0 && !is_acyclic(p) )
-	{ term_t t = pushWordAsTermRef(p);
+	{ term_t t;
+					/* PL_error() uses the local stack */
+	  lTop = (LocalFrame)argFrameP(fr, fr->predicate->functor->arity);
+	  t = pushWordAsTermRef(p);
 	  PL_error(NULL, 0, NULL, ERR_TYPE, ATOM_acyclic_term, t);
 	  popTermRef();
 	  return false;
@@ -3040,8 +3043,8 @@ PL_open_query(Module ctx, int flags, Procedure proc, term_t args)
   def = getProcDefinedDefinition(proc->definition);
   arity = def->functor->arity;
 
-#ifdef JMPBUF_ALIGNMENT
-  lneeded = JMPBUF_ALIGNMENT + sizeof(struct queryFrame)+MAXARITY*sizeof(word);
+#ifdef QUERY_FRAME_ALIGNMENT
+  lneeded = QUERY_FRAME_ALIGNMENT + sizeof(struct queryFrame)+MAXARITY*sizeof(word);
 #else
   lneeded = sizeof(struct queryFrame)+MAXARITY*sizeof(word);
 #endif
@@ -3056,8 +3059,8 @@ PL_open_query(Module ctx, int flags, Procedure proc, term_t args)
 					/* but for now, I think this */
 					/* is always the same */
   qf = (QueryFrame)lTop;
-#ifdef JMPBUF_ALIGNMENT
-  while ( (uintptr_t)qf % JMPBUF_ALIGNMENT )
+#ifdef QUERY_FRAME_ALIGNMENT
+  while ( (uintptr_t)qf % QUERY_FRAME_ALIGNMENT )
     qf = addPointer(qf, sizeof(word));
 #endif
   IS_WORD_ALIGNED(qf);
@@ -3643,7 +3646,7 @@ typedef struct register_file
 #endif
 #if O_THROW
 #define _SOLUTION_RETURN(val)		LD->vm.return_code = (val); \
-					longjmp(LD->exception.throw_environment->exception_jmp_env, 2)
+					PL_LONGJMP(LD->exception.throw_environment->exception_jmp_env, 2)
 #else
 #define _SOLUTION_RETURN(val)		LD->vm.return_code = (val); return NULL
 #endif
@@ -3783,7 +3786,7 @@ PL_next_solution(DECL_LD qid_t qid)
 #if O_THROW
   exception_frame throw_env;
   bool except = false;
-  int jc = setjmp(throw_env.exception_jmp_env);
+  int jc = PL_SETJMP(throw_env.exception_jmp_env);
 
   if ( jc == 1 )
   { except = true;
